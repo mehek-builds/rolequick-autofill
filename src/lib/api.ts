@@ -7,7 +7,9 @@ import type {
   Channel,
 } from './types';
 
-const BASE_URL = 'http://localhost:3001';
+// Set VITE_API_BASE at build time (e.g. your Vercel URL) to point the extension at the
+// deployed backend; defaults to the local dev server.
+const BASE_URL = import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 
 async function request<T>(
   path: string,

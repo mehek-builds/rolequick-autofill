@@ -1,4 +1,6 @@
-const API_BASE = 'http://localhost:3001';
+// Set VITE_API_BASE at build time (e.g. your Vercel URL) to point at the deployed backend;
+// defaults to the local dev server.
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 
 // Must match the key the popup writes to in lib/storage.ts (TOKEN_KEY).
 // Previously read 'token', which never matched, so the Apply auto-draft never authed.
