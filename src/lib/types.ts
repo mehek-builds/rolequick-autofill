@@ -36,15 +36,20 @@ export interface OutreachEvent {
   status: OutreachStatus;
 }
 
+// Matches the parsed-resume JSON returned by POST/GET /profile (backend ParsedProfile),
+// which is also the exact shape the /draft route expects as user_profile.
 export interface Profile {
-  id: string;
-  email: string;
-  name?: string;
-  school?: string;
-  major?: string;
-  graduation_year?: string;
-  skills?: string[];
-  summary?: string;
+  experience: Array<{
+    company: string;
+    title: string;
+    start: string;
+    end: string;
+    description: string;
+  }>;
+  skills: string[];
+  school: string;
+  grad_year: number;
+  target_roles?: string[];
   voice_pref?: string;
 }
 

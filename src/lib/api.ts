@@ -77,11 +77,30 @@ export interface ResolveParams {
   user_school?: string;
 }
 
+// Backend /resolve returns { contacts: [{ contact, email_resolution }] }.
+// Flatten each item into the UI's Contact shape (email/tier/status live on email_resolution).
+interface ResolveResponseItem {
+  contact: {
+    id: string;
+    full_name: string;
+    title: string;
+    persona: Contact['persona'];
+    school_match: boolean;
+    linkedin_url: string;
+    company_domain: string;
+  };
+  email_resolution: {
+    email: string;
+    status: Contact['status'];
+    tier: Contact['tier'];
+  };
+}
+
 export async function resolveContacts(
   token: string,
   params: ResolveParams,
 ): Promise<Contact[]> {
-  return request<Contact[]>(
+  const { contacts } = await request<{ contacts: ResolveResponseItem[] }>(
     '/resolve',
     {
       method: 'POST',
@@ -89,6 +108,19 @@ export async function resolveContacts(
     },
     token,
   );
+
+  return (contacts ?? []).map(({ contact, email_resolution }) => ({
+    id: contact.id,
+    full_name: contact.full_name,
+    title: contact.title,
+    persona: contact.persona,
+    company_domain: contact.company_domain,
+    school_match: contact.school_match,
+    linkedin_url: contact.linkedin_url,
+    email: email_resolution.email,
+    tier: email_resolution.tier,
+    status: email_resolution.status,
+  }));
 }
 
 export interface GenerateDraftParams {

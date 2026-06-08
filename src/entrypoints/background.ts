@@ -1,30 +1,79 @@
 const API_BASE = 'http://localhost:3001';
 
+// Must match the key the popup writes to in lib/storage.ts (TOKEN_KEY).
+// Previously read 'token', which never matched, so the Apply auto-draft never authed.
+const TOKEN_KEY = 'warmpath_token';
+
 async function getStoredToken(): Promise<string | null> {
-  const result = await chrome.storage.local.get('token');
-  return result.token ?? null;
+  const result = await chrome.storage.local.get(TOKEN_KEY);
+  return result[TOKEN_KEY] ?? null;
+}
+
+// Shape returned by GET /profile (the resume-parsed JSON, sent unwrapped by the backend).
+// Must satisfy the /draft route's user_profile schema, so we fall back to a valid empty
+// profile when the user hasn't uploaded a resume yet (otherwise /draft 400s).
+interface UserProfile {
+  experience: Array<{ company: string; title: string; start: string; end: string; description: string }>;
+  skills: string[];
+  school: string;
+  grad_year: number;
+}
+
+const EMPTY_PROFILE: UserProfile = { experience: [], skills: [], school: '', grad_year: 0 };
+
+// Shape of each item in the /resolve response: { contacts: [{ contact, email_resolution }] }
+interface ResolvedContact {
+  contact: {
+    id: string;
+    full_name: string;
+    first_name: string;
+    last_name: string;
+    title: string;
+    persona: string;
+    school_match: boolean;
+    linkedin_url: string;
+    company_domain: string;
+  };
+  email_resolution: {
+    id: string;
+    email: string;
+    status: string;
+    tier: string;
+    source: string;
+    pattern_used: string;
+  };
 }
 
 async function resolveAndDraft(title: string, company: string, url: string, token: string) {
+  // Fetch the user's profile first so we can (a) feed their school into contact
+  // resolution for alumni matches and (b) ground the drafts. The backend returns the
+  // parsed JSON unwrapped, and 404s when no resume has been uploaded yet.
+  const profileRes = await fetch(`${API_BASE}/profile`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const userProfile: UserProfile = profileRes.ok ? await profileRes.json() : EMPTY_PROFILE;
+
   // Resolve contacts
   const resolveRes = await fetch(`${API_BASE}/resolve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ company, role: title, domain: company.toLowerCase().replace(/\s+/g, '') + '.com' }),
+    body: JSON.stringify({
+      company,
+      role: title,
+      domain: company.toLowerCase().replace(/\s+/g, '') + '.com',
+      ...(userProfile.school ? { user_school: userProfile.school } : {}),
+    }),
   });
   if (!resolveRes.ok) throw new Error('resolve failed');
-  const contacts: Array<{ id: string; full_name: string; title: string; persona: string; tier: string; email?: string; school_match: boolean; company_domain: string }> = await resolveRes.json();
+  const { contacts }: { contacts: ResolvedContact[] } = await resolveRes.json();
 
-  // Draft for top 2 verified/likely contacts
-  const top = contacts.filter(c => c.tier === 'green' || c.tier === 'amber').slice(0, 2);
+  // Draft for the top 2 verified/likely contacts (tier lives on email_resolution).
+  const top = (contacts ?? [])
+    .filter(c => c.email_resolution.tier === 'green' || c.email_resolution.tier === 'amber')
+    .slice(0, 2);
   if (top.length === 0) return [];
 
-  const profileRes = await fetch(`${API_BASE}/profile`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const userProfile = profileRes.ok ? await profileRes.json() : null;
-
-  const drafts = await Promise.all(top.map(async (contact) => {
+  const drafts = await Promise.all(top.map(async ({ contact, email_resolution }) => {
     const draftRes = await fetch(`${API_BASE}/draft`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -35,15 +84,20 @@ async function resolveAndDraft(title: string, company: string, url: string, toke
           persona: contact.persona,
           company,
           school_match: contact.school_match,
+          linkedin_url: contact.linkedin_url,
         },
         role: title,
         company,
-        user_profile: userProfile?.parsed_json ?? {},
+        user_profile: userProfile,
       }),
     });
     if (!draftRes.ok) return null;
     const draft = await draftRes.json();
-    return { contact, draft, job: { company, role: title, url } };
+    return {
+      contact: { ...contact, email: email_resolution.email, tier: email_resolution.tier },
+      draft,
+      job: { company, role: title, url },
+    };
   }));
 
   return drafts.filter(Boolean);
