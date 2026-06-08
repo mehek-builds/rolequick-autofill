@@ -1,0 +1,68 @@
+export default defineContentScript({
+  matches: ['<all_urls>'],
+  runAt: 'document_idle',
+  main() {
+    if (
+      window.location.protocol === 'chrome:' ||
+      window.location.protocol === 'chrome-extension:' ||
+      document.getElementById('warmpath-persistent')
+    ) return;
+
+    const el = document.createElement('div');
+    el.id = 'warmpath-persistent';
+    el.innerHTML = `
+      <div id="warmpath-persistent-btn" style="
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        z-index: 2147483645;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: #4f46e5;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        box-shadow: 0 2px 12px rgba(79,70,229,0.35);
+        opacity: 0.55;
+        transition: opacity 0.2s, transform 0.2s;
+        font-size: 17px;
+        user-select: none;
+      " title="Warmpath">🔥</div>
+      <div id="warmpath-persistent-tip" style="
+        display: none;
+        position: fixed;
+        bottom: 68px;
+        right: 16px;
+        z-index: 2147483645;
+        background: #1e1b4b;
+        color: white;
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 12px;
+        max-width: 190px;
+        text-align: center;
+        line-height: 1.4;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+        pointer-events: none;
+      ">Click the Warmpath icon in your toolbar to draft outreach emails</div>
+    `;
+    document.body.appendChild(el);
+
+    const btn = el.querySelector<HTMLElement>('#warmpath-persistent-btn')!;
+    const tip = el.querySelector<HTMLElement>('#warmpath-persistent-tip')!;
+
+    btn.addEventListener('mouseenter', () => {
+      btn.style.opacity = '1';
+      btn.style.transform = 'scale(1.1)';
+      tip.style.display = 'block';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.opacity = '0.55';
+      btn.style.transform = 'scale(1)';
+      tip.style.display = 'none';
+    });
+  },
+});
