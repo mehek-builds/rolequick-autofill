@@ -67,11 +67,26 @@ async function resolveAndDraft(title: string, company: string, url: string, toke
   if (!resolveRes.ok) throw new Error('resolve failed');
   const { contacts }: { contacts: ResolvedContact[] } = await resolveRes.json();
 
-  // Draft for the top 2 verified/likely contacts (tier lives on email_resolution).
-  const top = (contacts ?? [])
+  // We verify all sourced contacts but only draft the best two. For a student, reply
+  // likelihood (and referral value) matters more than seniority: alumni and near-peers
+  // reply far more than busy execs, so a Head of Eng is a poor cold-email target. Rank by
+  // that priority and force the two picks to be DIFFERENT personas (e.g. a near-peer for the
+  // referral + a recruiter who owns the req), rather than two of whatever sorts first.
+  const DRAFT_PRIORITY = ['alumni', 'near_peer', 'recruiter', 'hiring_manager', 'senior_ic'];
+  const rank = (persona: string) => {
+    const i = DRAFT_PRIORITY.indexOf(persona);
+    return i === -1 ? 99 : i;
+  };
+
+  const reachable = (contacts ?? [])
     .filter(c => c.email_resolution.tier === 'green' || c.email_resolution.tier === 'amber')
-    .slice(0, 2);
-  if (top.length === 0) return [];
+    .sort((a, b) => rank(a.contact.persona) - rank(b.contact.persona));
+  if (reachable.length === 0) return [];
+
+  const top = [reachable[0]];
+  const second =
+    reachable.find(c => c.contact.persona !== reachable[0].contact.persona) ?? reachable[1];
+  if (second) top.push(second);
 
   const drafts = await Promise.all(top.map(async ({ contact, email_resolution }) => {
     const draftRes = await fetch(`${API_BASE}/draft`, {
