@@ -57,7 +57,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
     <div className="flex flex-col min-h-full">
       {/* Header */}
       <div className="bg-indigo-600 px-4 py-5 text-center">
-        <h1 className="text-xl font-bold text-white tracking-tight">Warmpath</h1>
+        <h1 className="text-xl font-bold text-white tracking-tight">Volley</h1>
         <p className="text-indigo-200 text-xs mt-1">Student outreach, powered by real contacts</p>
       </div>
 
@@ -72,7 +72,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
             <div>
               <h2 className="text-base font-semibold text-gray-900">Get started</h2>
               <p className="text-xs text-gray-500 mt-0.5">
-                Upload your resume so Warmpath can personalize your outreach.
+                Upload your resume so Volley can personalize your outreach.
               </p>
             </div>
 

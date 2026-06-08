@@ -105,7 +105,7 @@ export default function MainScreen({
     <div className="flex flex-col min-h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-        <span className="text-base font-bold text-indigo-600 tracking-tight">Warmpath</span>
+        <span className="text-base font-bold text-indigo-600 tracking-tight">Volley</span>
         <div className="flex items-center gap-2">
           <button
             onClick={onViewTracking}
@@ -138,7 +138,7 @@ export default function MainScreen({
                 <span className="text-base flex-shrink-0">✉️</span>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-semibold text-green-800">{pendingDraftCount} outreach draft{pendingDraftCount > 1 ? 's' : ''} ready</p>
-                  <p className="text-xs text-green-600">Warmpath drafted emails in the background - tap to review</p>
+                  <p className="text-xs text-green-600">Volley drafted emails in the background - tap to review</p>
                 </div>
                 <span className="text-green-400 text-sm">›</span>
               </div>

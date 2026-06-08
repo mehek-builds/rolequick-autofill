@@ -1,7 +1,7 @@
 import type { Profile } from './types';
 
-const TOKEN_KEY = 'warmpath_token';
-const PROFILE_KEY = 'warmpath_profile';
+const TOKEN_KEY = 'volley_token';
+const PROFILE_KEY = 'volley_profile';
 
 function chromeStorageGet<T>(key: string): Promise<T | null> {
   return new Promise((resolve) => {

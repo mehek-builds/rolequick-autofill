@@ -151,7 +151,7 @@ export default defineContentScript({
         btn.addEventListener('click', () => {
           if (approved) return; // Already drafting from card 1
           // Remove card 1 if still showing
-          document.getElementById('warmpath-action-card')?.remove();
+          document.getElementById('volley-action-card')?.remove();
           cardInjected = false;
           injectSubmitCard(title, company, url);
         });
@@ -267,7 +267,7 @@ export default defineContentScript({
             <span style="font-size:20px;">⏳</span>
             <div>
               <div style="font-weight:700;font-size:13px;color:#1e1b4b;">Finding contacts &amp; drafting...</div>
-              <div style="font-size:12px;color:#6366f1;margin-top:2px;">Open Warmpath when ready</div>
+              <div style="font-size:12px;color:#6366f1;margin-top:2px;">Open Volley when ready</div>
             </div>
           </div>
         `;
@@ -278,13 +278,13 @@ export default defineContentScript({
 
     // Card 1: fires when application form loads
     function injectActionCard(title: string, company: string, url: string) {
-      if (cardInjected || document.getElementById('warmpath-action-card')) return;
+      if (cardInjected || document.getElementById('volley-action-card')) return;
       cardInjected = true;
 
       chrome.runtime.sendMessage({ type: 'JOB_DETECTED', payload: { title, company, url } });
 
       const card = document.createElement('div');
-      card.id = 'warmpath-action-card';
+      card.id = 'volley-action-card';
       card.innerHTML = cardShell(
         'Draft recruiter emails?',
         `${title} at ${company}`
@@ -295,11 +295,11 @@ export default defineContentScript({
 
     // Card 2: fires when Submit button is clicked (only if not already approved)
     function injectSubmitCard(title: string, company: string, url: string) {
-      if (approved || document.getElementById('warmpath-submit-card')) return;
+      if (approved || document.getElementById('volley-submit-card')) return;
       cardInjected = true;
 
       const card = document.createElement('div');
-      card.id = 'warmpath-submit-card';
+      card.id = 'volley-submit-card';
       card.innerHTML = cardShell(
         "You're applying - draft outreach emails while you wait?",
         `${title} at ${company}`
@@ -339,8 +339,8 @@ export default defineContentScript({
         lastUrl = currentUrl;
         cardInjected = false;
         approved = false;
-        document.getElementById('warmpath-action-card')?.remove();
-        document.getElementById('warmpath-submit-card')?.remove();
+        document.getElementById('volley-action-card')?.remove();
+        document.getElementById('volley-submit-card')?.remove();
         setTimeout(init, 800);
       }
     }).observe(document.body, { childList: true, subtree: true });

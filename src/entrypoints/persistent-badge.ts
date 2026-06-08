@@ -5,13 +5,13 @@ export default defineContentScript({
     if (
       window.location.protocol === 'chrome:' ||
       window.location.protocol === 'chrome-extension:' ||
-      document.getElementById('warmpath-persistent')
+      document.getElementById('volley-persistent')
     ) return;
 
     const el = document.createElement('div');
-    el.id = 'warmpath-persistent';
+    el.id = 'volley-persistent';
     el.innerHTML = `
-      <div id="warmpath-persistent-btn" style="
+      <div id="volley-persistent-btn" style="
         position: fixed;
         bottom: 20px;
         right: 20px;
@@ -29,8 +29,8 @@ export default defineContentScript({
         transition: opacity 0.2s, transform 0.2s;
         font-size: 17px;
         user-select: none;
-      " title="Warmpath">🔥</div>
-      <div id="warmpath-persistent-tip" style="
+      " title="Volley">🔥</div>
+      <div id="volley-persistent-tip" style="
         display: none;
         position: fixed;
         bottom: 68px;
@@ -47,12 +47,12 @@ export default defineContentScript({
         line-height: 1.4;
         box-shadow: 0 2px 8px rgba(0,0,0,0.25);
         pointer-events: none;
-      ">Click the Warmpath icon in your toolbar to draft outreach emails</div>
+      ">Click the Volley icon in your toolbar to draft outreach emails</div>
     `;
     document.body.appendChild(el);
 
-    const btn = el.querySelector<HTMLElement>('#warmpath-persistent-btn')!;
-    const tip = el.querySelector<HTMLElement>('#warmpath-persistent-tip')!;
+    const btn = el.querySelector<HTMLElement>('#volley-persistent-btn')!;
+    const tip = el.querySelector<HTMLElement>('#volley-persistent-tip')!;
 
     btn.addEventListener('mouseenter', () => {
       btn.style.opacity = '1';

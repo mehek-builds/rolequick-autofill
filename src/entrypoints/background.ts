@@ -4,7 +4,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 
 // Must match the key the popup writes to in lib/storage.ts (TOKEN_KEY).
 // Previously read 'token', which never matched, so the Apply auto-draft never authed.
-const TOKEN_KEY = 'warmpath_token';
+const TOKEN_KEY = 'volley_token';
 
 async function getStoredToken(): Promise<string | null> {
   const result = await chrome.storage.local.get(TOKEN_KEY);
