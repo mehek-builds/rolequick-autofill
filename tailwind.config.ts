@@ -87,6 +87,26 @@ export default {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.55' },
         },
+        // Gentle vertical float for the onboarding logo mark
+        float: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-5px)' },
+        },
+        // Slow ambient drift for the decorative header orbs
+        'blob-drift': {
+          '0%, 100%': { transform: 'translate(0, 0) scale(1)' },
+          '50%': { transform: 'translate(10px, -12px) scale(1.1)' },
+        },
+        // Very slow animated gradient pan across the header
+        'gradient-pan': {
+          '0%, 100%': { backgroundPosition: '0% 50%' },
+          '50%': { backgroundPosition: '100% 50%' },
+        },
+        // Breathing glow ring behind the logo
+        glow: {
+          '0%, 100%': { opacity: '0.45', transform: 'scale(1)' },
+          '50%': { opacity: '0.8', transform: 'scale(1.08)' },
+        },
       },
       animation: {
         'fade-in': 'fade-in 0.2s ease-out',
@@ -99,6 +119,11 @@ export default {
         'pop-in': 'pop-in 0.4s cubic-bezier(0.18,1.25,0.4,1) both',
         'confetti-fall': 'confetti-fall 0.9s ease-out forwards',
         'soft-pulse': 'soft-pulse 2s ease-in-out infinite',
+        float: 'float 4s ease-in-out infinite',
+        'blob-drift': 'blob-drift 11s ease-in-out infinite',
+        'blob-drift-slow': 'blob-drift 16s ease-in-out infinite',
+        'gradient-pan': 'gradient-pan 9s ease-in-out infinite',
+        glow: 'glow 3.5s ease-in-out infinite',
       },
     },
   },

@@ -53,19 +53,31 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
   };
 
   return (
-    <div className="flex min-h-full animate-fade-in flex-col">
-      {/* Header with a soft brand gradient */}
-      <div className="bg-gradient-to-br from-brand-500 to-brand-700 px-5 py-6 text-center">
-        <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 text-lg font-bold text-white backdrop-blur">
-          V
+    <div className="flex min-h-full animate-fade-in flex-col bg-white">
+      {/* Header: animated brand gradient with soft drifting orbs and a floating logo */}
+      <div className="relative overflow-hidden bg-gradient-to-br from-brand-400 via-brand-600 to-brand-700 bg-[length:200%_200%] px-5 pb-12 pt-7 text-center animate-gradient-pan">
+        {/* Ambient depth orbs */}
+        <div className="pointer-events-none absolute -left-8 -top-10 h-32 w-32 rounded-full bg-brand-300/40 blur-2xl animate-blob-drift" />
+        <div className="pointer-events-none absolute -bottom-10 right-0 h-28 w-28 rounded-full bg-violet-400/30 blur-2xl animate-blob-drift-slow" />
+        <div className="pointer-events-none absolute right-8 top-2 h-16 w-16 rounded-full bg-white/20 blur-2xl animate-blob-drift" />
+
+        <div className="relative z-10">
+          {/* Logo with a breathing glow ring */}
+          <div className="relative mx-auto mb-3 h-12 w-12">
+            <div className="absolute inset-0 rounded-2xl bg-white/40 blur-md animate-glow" />
+            <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-white/20 text-xl font-bold text-white ring-1 ring-white/30 backdrop-blur animate-float">
+              V
+            </div>
+          </div>
+          <h1 className="text-xl font-bold tracking-tight text-white">Volley</h1>
+          <p className="mx-auto mt-1 max-w-[260px] text-xs leading-relaxed text-brand-100">
+            Skip the volume game. Reach the right person.
+          </p>
         </div>
-        <h1 className="text-xl font-bold tracking-tight text-white">Volley</h1>
-        <p className="mt-1 text-xs text-brand-100">
-          Skip the volume game. Reach the right human.
-        </p>
       </div>
 
-      <div className="flex-1 px-4 py-6">
+      {/* Body floats up over the gradient as a rounded sheet - no hard seam */}
+      <div className="relative z-10 -mt-6 flex-1 rounded-t-[26px] bg-white px-5 pb-6 pt-6 shadow-[0_-10px_30px_-12px_rgba(31,18,90,0.22)]">
         {loading ? (
           <div className="flex flex-col items-center gap-4 py-8">
             <div className="relative h-12 w-12">
@@ -81,7 +93,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <div>
+            <div className="animate-fade-in-up" style={{ animationDelay: '40ms' }}>
               <h2 className="text-base font-semibold text-gray-900">Let's set you up</h2>
               <p className="mt-0.5 text-xs leading-relaxed text-gray-500">
                 Two quick things, then Volley personalizes every message from your real
@@ -91,7 +103,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
 
             {error && <WarningBanner message={error} variant="error" />}
 
-            <div className="flex flex-col gap-1.5">
+            <div className="flex animate-fade-in-up flex-col gap-1.5" style={{ animationDelay: '90ms' }}>
               <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
                 <span className="flex h-4 w-4 items-center justify-center rounded-full bg-brand-100 text-[10px] font-bold text-brand-700">
                   1
@@ -108,7 +120,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
               />
             </div>
 
-            <div className="flex flex-col gap-1.5">
+            <div className="flex animate-fade-in-up flex-col gap-1.5" style={{ animationDelay: '140ms' }}>
               <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
                 <span className="flex h-4 w-4 items-center justify-center rounded-full bg-brand-100 text-[10px] font-bold text-brand-700">
                   2
@@ -117,10 +129,10 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
               </label>
               <div
                 onClick={() => fileRef.current?.click()}
-                className={`cursor-pointer rounded-xl border-2 border-dashed px-4 py-5 text-center transition-all duration-200 ${
+                className={`group cursor-pointer rounded-xl border-2 border-dashed px-4 py-5 text-center transition-all duration-200 ${
                   file
                     ? 'border-brand-400 bg-brand-50'
-                    : 'border-gray-200 hover:border-brand-300 hover:bg-gray-50/60'
+                    : 'border-gray-200 hover:border-brand-300 hover:bg-brand-50/40'
                 }`}
               >
                 {file ? (
@@ -133,7 +145,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
                   </div>
                 ) : (
                   <div className="flex flex-col items-center gap-1">
-                    <svg className="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="h-6 w-6 text-gray-400 transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:text-brand-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                     </svg>
                     <span className="text-xs text-gray-500">Drop in your resume</span>
@@ -152,12 +164,13 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
 
             <button
               type="submit"
-              className="w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:bg-brand-700 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+              className="w-full animate-fade-in-up rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:bg-brand-700 hover:shadow-card-hover active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+              style={{ animationDelay: '190ms' }}
             >
               Get started
             </button>
 
-            <p className="text-center text-[11px] leading-relaxed text-gray-400">
+            <p className="animate-fade-in-up text-center text-[11px] leading-relaxed text-gray-400" style={{ animationDelay: '240ms' }}>
               Your resume stays private and is only used to personalize your own drafts.
             </p>
           </form>
