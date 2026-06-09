@@ -15,7 +15,7 @@ export default function LoadingSpinner({
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-6">
       <svg
-        className={`animate-spin text-indigo-600 ${sizeClass}`}
+        className={`animate-spin text-brand-600 ${sizeClass}`}
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"

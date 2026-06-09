@@ -2,7 +2,6 @@ import React, { useState, useRef } from 'react';
 import { createSession, uploadProfile } from '../lib/api';
 import { setToken, setProfile } from '../lib/storage';
 import type { Profile } from '../lib/types';
-import LoadingSpinner from './LoadingSpinner';
 import WarningBanner from './WarningBanner';
 
 interface OnboardingScreenProps {
@@ -54,32 +53,49 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
   };
 
   return (
-    <div className="flex flex-col min-h-full">
-      {/* Header */}
-      <div className="bg-indigo-600 px-4 py-5 text-center">
-        <h1 className="text-xl font-bold text-white tracking-tight">Volley</h1>
-        <p className="text-indigo-200 text-xs mt-1">Student outreach, powered by real contacts</p>
+    <div className="flex min-h-full animate-fade-in flex-col">
+      {/* Header with a soft brand gradient */}
+      <div className="bg-gradient-to-br from-brand-500 to-brand-700 px-5 py-6 text-center">
+        <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 text-lg font-bold text-white backdrop-blur">
+          V
+        </div>
+        <h1 className="text-xl font-bold tracking-tight text-white">Volley</h1>
+        <p className="mt-1 text-xs text-brand-100">
+          Skip the volume game. Reach the right human.
+        </p>
       </div>
 
       <div className="flex-1 px-4 py-6">
         {loading ? (
-          <LoadingSpinner
-            message="Uploading and parsing your resume..."
-            size="lg"
-          />
+          <div className="flex flex-col items-center gap-4 py-8">
+            <div className="relative h-12 w-12">
+              <div className="absolute inset-0 rounded-full border-[3px] border-brand-100" />
+              <div className="absolute inset-0 animate-spin rounded-full border-[3px] border-transparent border-t-brand-600" />
+            </div>
+            <div className="text-center">
+              <p className="text-sm font-medium text-gray-700">Reading your resume...</p>
+              <p className="mt-0.5 text-xs text-gray-400">
+                Pulling out your experience so drafts sound like you.
+              </p>
+            </div>
+          </div>
         ) : (
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div>
-              <h2 className="text-base font-semibold text-gray-900">Get started</h2>
-              <p className="text-xs text-gray-500 mt-0.5">
-                Upload your resume so Volley can personalize your outreach.
+              <h2 className="text-base font-semibold text-gray-900">Let's set you up</h2>
+              <p className="mt-0.5 text-xs leading-relaxed text-gray-500">
+                Two quick things, then Volley personalizes every message from your real
+                background.
               </p>
             </div>
 
             {error && <WarningBanner message={error} variant="error" />}
 
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-gray-700">
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
+                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-brand-100 text-[10px] font-bold text-brand-700">
+                  1
+                </span>
                 Email address
               </label>
               <input
@@ -87,38 +103,41 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@university.edu"
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded-lg border border-gray-200 bg-gray-50/60 px-3 py-2 text-sm transition-colors focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100"
                 required
               />
             </div>
 
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-gray-700">
-                Resume (PDF only)
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
+                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-brand-100 text-[10px] font-bold text-brand-700">
+                  2
+                </span>
+                Your resume
               </label>
               <div
                 onClick={() => fileRef.current?.click()}
-                className={`cursor-pointer rounded-md border-2 border-dashed px-4 py-5 text-center transition-colors ${
+                className={`cursor-pointer rounded-xl border-2 border-dashed px-4 py-5 text-center transition-all duration-200 ${
                   file
-                    ? 'border-indigo-400 bg-indigo-50'
-                    : 'border-gray-300 hover:border-indigo-400'
+                    ? 'border-brand-400 bg-brand-50'
+                    : 'border-gray-200 hover:border-brand-300 hover:bg-gray-50/60'
                 }`}
               >
                 {file ? (
-                  <div className="flex flex-col items-center gap-1">
-                    <svg className="h-6 w-6 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <div className="flex animate-pop-in flex-col items-center gap-1">
+                    <svg className="h-6 w-6 text-brand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
-                    <span className="text-xs font-medium text-indigo-700">{file.name}</span>
-                    <span className="text-xs text-gray-400">Click to change</span>
+                    <span className="max-w-full truncate text-xs font-medium text-brand-700">{file.name}</span>
+                    <span className="text-[11px] text-gray-400">Tap to change</span>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center gap-1">
                     <svg className="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                     </svg>
-                    <span className="text-xs text-gray-500">Click to upload your resume</span>
-                    <span className="text-xs text-gray-400">PDF only</span>
+                    <span className="text-xs text-gray-500">Drop in your resume</span>
+                    <span className="text-[11px] text-gray-400">PDF only</span>
                   </div>
                 )}
               </div>
@@ -133,10 +152,14 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
 
             <button
               type="submit"
-              className="w-full rounded-md bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+              className="w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:bg-brand-700 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
             >
               Get started
             </button>
+
+            <p className="text-center text-[11px] leading-relaxed text-gray-400">
+              Your resume stays private and is only used to personalize your own drafts.
+            </p>
           </form>
         )}
       </div>
