@@ -36,7 +36,7 @@ export default function WarningBanner({
     );
 
   return (
-    <div className={`flex items-start gap-2 rounded-md border px-3 py-2 text-xs ${colors}`}>
+    <div className={`flex animate-slide-down items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-relaxed ${colors}`}>
       {icon}
       <span>{message}</span>
     </div>

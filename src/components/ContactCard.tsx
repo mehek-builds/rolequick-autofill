@@ -1,5 +1,6 @@
-import React from 'react';
-import type { Contact, Persona, Tier } from '../lib/types';
+import React, { useState } from 'react';
+import type { Contact, Persona } from '../lib/types';
+import Avatar from './Avatar';
 
 interface ContactCardProps {
   contact: Contact;
@@ -7,33 +8,53 @@ interface ContactCardProps {
 }
 
 const PERSONA_LABELS: Record<Persona, string> = {
-  alumni: 'Alumni',
-  near_peer: 'Near Peer',
+  alumni: 'Alum',
+  near_peer: 'Near peer',
   senior_ic: 'Senior IC',
-  hiring_manager: 'Hiring Manager',
+  hiring_manager: 'Hiring manager',
   recruiter: 'Recruiter',
 };
 
+// Neutral-leaning pills. Brand color is reserved for the CTA + the alum signal,
+// which is Volley's differentiator and the one badge that earns real color.
 const PERSONA_COLORS: Record<Persona, string> = {
-  alumni: 'bg-blue-100 text-blue-800',
-  near_peer: 'bg-teal-100 text-teal-800',
-  senior_ic: 'bg-violet-100 text-violet-800',
-  hiring_manager: 'bg-purple-100 text-purple-800',
-  recruiter: 'bg-gray-100 text-gray-700',
+  alumni: 'bg-brand-50 text-brand-700',
+  near_peer: 'bg-teal-50 text-teal-700',
+  senior_ic: 'bg-violet-50 text-violet-700',
+  hiring_manager: 'bg-fuchsia-50 text-fuchsia-700',
+  recruiter: 'bg-gray-100 text-gray-600',
 };
 
-function TierBadge({ tier, status }: { tier: Tier; status: Contact['status'] }) {
+// The universal green/amber/grey confidence model, as an 8px dot left of the email.
+function ConfidenceDot({ status }: { status: Contact['status'] }) {
+  const map: Record<Contact['status'], { color: string; label: string }> = {
+    verified: { color: '#22C55E', label: 'Verified email' },
+    likely: { color: '#EAB308', label: 'Likely email' },
+    linkedin_only: { color: '#9CA3AF', label: 'LinkedIn only' },
+    none: { color: '#D1D5DB', label: 'No contact' },
+  };
+  const { color, label } = map[status];
+  return (
+    <span
+      className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
+      style={{ backgroundColor: color }}
+      title={label}
+    />
+  );
+}
+
+function StatusBadge({ status }: { status: Contact['status'] }) {
   if (status === 'linkedin_only') {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
-        <span className="font-bold text-blue-600 text-[10px]">in</span>
+      <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">
+        <span className="text-[9px] font-bold">in</span>
         LinkedIn only
       </span>
     );
   }
   if (status === 'verified') {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
+      <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700">
         <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
           <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
         </svg>
@@ -43,10 +64,7 @@ function TierBadge({ tier, status }: { tier: Tier; status: Contact['status'] }) 
   }
   if (status === 'likely') {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800">
-        <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-        </svg>
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
         Likely
       </span>
     );
@@ -56,45 +74,81 @@ function TierBadge({ tier, status }: { tier: Tier; status: Contact['status'] }) 
 
 export default function ContactCard({ contact, onDraft }: ContactCardProps) {
   const isLinkedInOnly = contact.status === 'linkedin_only';
+  const contactLine = isLinkedInOnly ? contact.linkedin_url : contact.email;
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!contactLine) return;
+    try {
+      await navigator.clipboard.writeText(contactLine);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard blocked - silently ignore, the value is still visible */
+    }
+  };
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-3 flex flex-col gap-2 shadow-sm">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-sm font-semibold text-gray-900 truncate">{contact.full_name}</p>
+    <div className="group rounded-xl border border-gray-100 bg-white p-3.5 shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:border-brand-100 hover:shadow-card-hover">
+      <div className="flex items-start gap-3">
+        <Avatar name={contact.full_name} size={40} ring={contact.school_match} />
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <p className="truncate text-sm font-semibold text-gray-900">{contact.full_name}</p>
             {contact.school_match && (
-              <span className="text-xs text-indigo-600 font-medium">(alum)</span>
+              <span className="flex-shrink-0 rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700">
+                alum
+              </span>
             )}
           </div>
-          <p className="text-xs text-gray-500 truncate">{contact.title}</p>
-          {contact.email && !isLinkedInOnly && (
-            <p className="text-xs text-gray-400 truncate mt-0.5">{contact.email}</p>
-          )}
-          {isLinkedInOnly && contact.linkedin_url && (
-            <p className="text-xs text-gray-400 truncate mt-0.5">{contact.linkedin_url}</p>
+          <p className="truncate text-[13px] leading-snug text-gray-500">{contact.title}</p>
+
+          {contactLine && (
+            <div className="mt-1 flex animate-reveal items-center gap-1.5">
+              <ConfidenceDot status={contact.status} />
+              <span className="truncate text-xs text-gray-400">{contactLine}</span>
+              {!isLinkedInOnly && (
+                <button
+                  onClick={handleCopy}
+                  className="ml-auto flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-gray-300 transition-colors hover:bg-gray-100 hover:text-gray-500"
+                  title={copied ? 'Copied' : 'Copy email'}
+                >
+                  {copied ? (
+                    <svg className="h-3.5 w-3.5 animate-check-pop text-green-500" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                  ) : (
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2v-2m-6-12h6a2 2 0 012 2v6m-8-8V3a2 2 0 012-2" />
+                    </svg>
+                  )}
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5 flex-wrap">
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${PERSONA_COLORS[contact.persona]}`}>
+      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${PERSONA_COLORS[contact.persona]}`}>
           {PERSONA_LABELS[contact.persona]}
         </span>
-        <TierBadge tier={contact.tier} status={contact.status} />
+        <StatusBadge status={contact.status} />
       </div>
 
       {contact.status === 'likely' && (
-        <p className="text-xs text-yellow-700 bg-yellow-50 rounded px-2 py-1">
-          Double-check before sending
+        <p className="mt-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-700">
+          Worth a double-check before you send.
         </p>
       )}
 
       <button
         onClick={() => onDraft(contact)}
-        className="w-full rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1"
+        className="mt-3 w-full rounded-lg bg-brand-600 px-3 py-2 text-[13px] font-semibold text-white shadow-sm transition-all duration-150 hover:bg-brand-700 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1"
       >
-        {isLinkedInOnly ? 'Draft DM' : 'Draft email'}
+        {isLinkedInOnly ? 'Draft a DM' : 'Draft email'}
       </button>
     </div>
   );

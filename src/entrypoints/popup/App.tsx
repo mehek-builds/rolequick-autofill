@@ -104,14 +104,14 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <div className="w-[380px] min-h-[200px] flex items-center justify-center">
+      <div className="w-[380px] min-h-[200px] flex items-center justify-center bg-white font-sans">
         <LoadingSpinner size="md" />
       </div>
     );
   }
 
   return (
-    <div className="w-[380px] max-h-[580px] overflow-y-auto bg-white flex flex-col">
+    <div className="w-[380px] max-h-[580px] overflow-y-auto bg-white flex flex-col font-sans text-gray-900 antialiased">
       {screen === 'onboarding' && (
         <OnboardingScreen onComplete={handleOnboardingComplete} />
       )}
