@@ -52,7 +52,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
       setStep('code');
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
-      if (msg.includes('503')) {
+      if (msg.includes('503') || msg.includes('verification_unavailable')) {
         // Email sending not configured on the backend yet: legacy passwordless path.
         try {
           const { token } = await createSession(email.trim());

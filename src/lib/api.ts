@@ -11,6 +11,19 @@ import type {
 // deployed backend; defaults to the local dev server.
 const BASE_URL = import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 
+// Throw the backend's human-readable message (quota, rate limit, bad code, etc.)
+// when present; raw status-prefixed text otherwise.
+async function throwApiError(res: Response): Promise<never> {
+  const text = await res.text().catch(() => res.statusText);
+  try {
+    const parsed = JSON.parse(text) as { error?: string };
+    if (parsed.error) throw new Error(parsed.error);
+  } catch (e) {
+    if (e instanceof Error && !(e instanceof SyntaxError)) throw e;
+  }
+  throw new Error(`API error ${res.status}: ${text}`);
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -30,8 +43,7 @@ async function request<T>(
   });
 
   if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(`API error ${res.status}: ${text}`);
+    await throwApiError(res);
   }
 
   return res.json() as Promise<T>;
@@ -76,8 +88,7 @@ export async function uploadProfile(
   });
 
   if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(`API error ${res.status}: ${text}`);
+    await throwApiError(res);
   }
 
   return res.json() as Promise<Profile>;
