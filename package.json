@@ -11,7 +11,7 @@
     "zip:firefox": "wxt zip -b firefox",
     "postinstall": "wxt prepare",
     "compile": "tsc --noEmit",
-    "preview": "node preview/mock-server.mjs & vite --port 4700"
+    "preview": "node preview/mock-server.mjs & VITE_API_BASE=http://localhost:3001 vite --port 4700"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
@@ -19,6 +19,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/chrome": "^0.1.43",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@wxt-dev/module-react": "^1.2.2",

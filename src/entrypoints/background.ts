@@ -8,7 +8,7 @@ const TOKEN_KEY = 'volley_token';
 
 async function getStoredToken(): Promise<string | null> {
   const result = await chrome.storage.local.get(TOKEN_KEY);
-  return result[TOKEN_KEY] ?? null;
+  return (result[TOKEN_KEY] as string | undefined) ?? null;
 }
 
 // Shape returned by GET /profile (the resume-parsed JSON, sent unwrapped by the backend).
@@ -124,7 +124,7 @@ export default defineBackground(() => {
   let lastDetectedJob: { title: string; company: string; url: string } | null = null;
 
   chrome.storage.session.get('lastDetectedJob').then((result) => {
-    if (result.lastDetectedJob) lastDetectedJob = result.lastDetectedJob;
+    if (result.lastDetectedJob) lastDetectedJob = result.lastDetectedJob as { title: string; company: string; url: string };
   }).catch(() => {});
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { createSession, uploadProfile } from '../lib/api';
+import { createSession, requestCode, verifyCode, uploadProfile } from '../lib/api';
 import { setToken, setProfile } from '../lib/storage';
 import type { Profile } from '../lib/types';
 import WarningBanner from './WarningBanner';
@@ -11,9 +11,10 @@ interface OnboardingScreenProps {
 export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) {
   const [email, setEmail] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [step, setStep] = useState<'form' | 'uploading'>('form');
+  const [step, setStep] = useState<'form' | 'code' | 'uploading'>('form');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -27,6 +28,15 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
     setFile(f);
   };
 
+  // Shared tail of signup: store token, parse resume, hand off to the app.
+  const finishSignup = async (token: string) => {
+    setStep('uploading');
+    await setToken(token);
+    const profile = await uploadProfile(token, file!);
+    await setProfile(profile);
+    onComplete(profile, token);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim()) { setError('Please enter your email.'); return; }
@@ -34,19 +44,60 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
 
     setError(null);
     setLoading(true);
-    setStep('uploading');
 
     try {
-      const { token } = await createSession(email.trim());
-      await setToken(token);
-
-      const profile = await uploadProfile(token, file);
-      await setProfile(profile);
-
-      onComplete(profile, token);
+      // Verified signup: email a 6-digit code, then collect it.
+      await requestCode(email.trim());
+      setCode('');
+      setStep('code');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong. Is the backend running?');
-      setStep('form');
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('503')) {
+        // Email sending not configured on the backend yet: legacy passwordless path.
+        try {
+          const { token } = await createSession(email.trim());
+          await finishSignup(token);
+          return;
+        } catch (e2) {
+          setError(e2 instanceof Error ? e2.message : 'Something went wrong. Is the backend running?');
+          setStep('form');
+        }
+      } else {
+        setError(msg || 'Could not send the verification code.');
+        setStep('form');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!/^\d{6}$/.test(code.trim())) { setError('Enter the 6-digit code from your email.'); return; }
+
+    setError(null);
+    setLoading(true);
+
+    try {
+      const { token } = await verifyCode(email.trim(), code.trim());
+      await finishSignup(token);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Verification failed.';
+      setError(msg.includes('Incorrect') || msg.includes('400') ? 'That code is not right. Check your email and try again.' : msg);
+      setStep('code');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      await requestCode(email.trim());
+      setCode('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not resend the code.');
     } finally {
       setLoading(false);
     }
@@ -78,7 +129,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
 
       {/* Body floats up over the gradient as a rounded sheet - no hard seam */}
       <div className="relative z-10 -mt-6 flex-1 rounded-t-[26px] bg-white px-5 pb-6 pt-6 shadow-[0_-10px_30px_-12px_rgba(31,18,90,0.22)]">
-        {loading ? (
+        {step === 'uploading' ? (
           <div className="flex flex-col items-center gap-4 py-8">
             <div className="relative h-12 w-12">
               <div className="absolute inset-0 rounded-full border-[3px] border-brand-100" />
@@ -91,6 +142,48 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
               </p>
             </div>
           </div>
+        ) : step === 'code' ? (
+          <form onSubmit={handleVerify} className="flex flex-col gap-4">
+            <div className="animate-fade-in-up">
+              <h2 className="text-base font-semibold text-gray-900">Check your email</h2>
+              <p className="mt-0.5 text-xs leading-relaxed text-gray-500">
+                We sent a 6-digit code to <span className="font-medium text-gray-700">{email}</span>.
+                Enter it below to verify it's you.
+              </p>
+            </div>
+
+            {error && <WarningBanner message={error} variant="error" />}
+
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+              placeholder="000000"
+              autoFocus
+              className="w-full rounded-lg border border-gray-200 bg-gray-50/60 px-3 py-2.5 text-center text-xl font-semibold tracking-[0.4em] transition-colors focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100"
+            />
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:bg-brand-700 hover:shadow-card-hover active:scale-[0.98] disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+            >
+              {loading ? 'Verifying...' : 'Verify and continue'}
+            </button>
+
+            <div className="flex items-center justify-center gap-3 text-[11px] text-gray-400">
+              <button type="button" onClick={handleResend} disabled={loading} className="font-medium text-brand-600 hover:text-brand-700 disabled:opacity-60">
+                Resend code
+              </button>
+              <span>·</span>
+              <button type="button" onClick={() => { setStep('form'); setError(null); }} className="hover:text-gray-600">
+                Wrong email? Go back
+              </button>
+            </div>
+          </form>
         ) : (
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div className="animate-fade-in-up" style={{ animationDelay: '40ms' }}>
@@ -164,10 +257,11 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
 
             <button
               type="submit"
-              className="w-full animate-fade-in-up rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:bg-brand-700 hover:shadow-card-hover active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+              disabled={loading}
+              className="w-full animate-fade-in-up rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:bg-brand-700 hover:shadow-card-hover active:scale-[0.98] disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
               style={{ animationDelay: '190ms' }}
             >
-              Get started
+              {loading ? 'Sending code...' : 'Get started'}
             </button>
 
             <p className="animate-fade-in-up text-center text-[11px] leading-relaxed text-gray-400" style={{ animationDelay: '240ms' }}>

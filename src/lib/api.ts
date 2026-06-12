@@ -44,6 +44,22 @@ export async function createSession(email: string): Promise<{ token: string }> {
   });
 }
 
+// Step 1 of verified signup. Throws "API error 503: ...verification_unavailable..."
+// while the backend has no email provider configured; callers fall back to createSession.
+export async function requestCode(email: string): Promise<{ sent: boolean }> {
+  return request<{ sent: boolean }>('/auth/request-code', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function verifyCode(email: string, code: string): Promise<{ token: string }> {
+  return request<{ token: string }>('/auth/verify-code', {
+    method: 'POST',
+    body: JSON.stringify({ email, code }),
+  });
+}
+
 export async function uploadProfile(
   token: string,
   file: File,
