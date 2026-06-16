@@ -9,7 +9,7 @@ interface MainScreenProps {
   token: string;
   detectedJob?: JobContext | null;
   pendingDraftCount?: number;
-  onDraftsCleared?: () => void;
+  onViewDrafts?: () => void;
   onContactsFound: (contacts: Contact[], job: JobContext) => void;
   onViewTracking: () => void;
   onLogout: () => void;
@@ -30,11 +30,45 @@ function StatusDot({ status }: { status: string }) {
 const inputClass =
   'w-full rounded-lg border border-gray-200 bg-gray-50/60 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 transition-colors focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100';
 
+function slugToName(slug: string): string {
+  return slug
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function parseJobUrl(url: string): { company?: string } {
+  try {
+    const u = new URL(url);
+    const h = u.hostname;
+    const parts = u.pathname.split('/').filter(Boolean);
+
+    if (h.includes('greenhouse.io') && parts[0]) {
+      return { company: slugToName(parts[0]) };
+    }
+    if (h.includes('lever.co') && parts[0]) {
+      return { company: slugToName(parts[0]) };
+    }
+    if (h.includes('ashbyhq.com') && parts[0]) {
+      return { company: slugToName(parts[0]) };
+    }
+    if (h.includes('myworkdayjobs.com') || h.includes('workday.com')) {
+      const slug = h.split('.')[0].replace(/^www/, '');
+      if (slug) return { company: slugToName(slug) };
+    }
+    if (h.includes('joinhandshake.com') && parts[1]) {
+      return { company: slugToName(parts[1]) };
+    }
+  } catch {
+    // invalid URL, ignore
+  }
+  return {};
+}
+
 export default function MainScreen({
   token,
   detectedJob,
   pendingDraftCount = 0,
-  onDraftsCleared,
+  onViewDrafts,
   onContactsFound,
   onViewTracking,
   onLogout,
@@ -56,17 +90,30 @@ export default function MainScreen({
       .finally(() => setEventsLoading(false));
   }, [token]);
 
+  // detectedJob arrives asynchronously (the background GET_LAST_JOB callback and the live
+  // JOB_DETECTED listener both resolve after this component has already mounted). The field
+  // state is seeded via useState, which only reads its initial value once, so a job spotted
+  // on the page would never reach the inputs without this sync. Only fill blank fields so we
+  // never clobber what the user is actively typing.
+  useEffect(() => {
+    if (!detectedJob) return;
+    if (detectedJob.company) setCompany((prev) => prev || detectedJob.company);
+    if (detectedJob.role) setRole((prev) => prev || detectedJob.role);
+    if (detectedJob.url) setJobUrl((prev) => prev || detectedJob.url!);
+    if (detectedJob.company || detectedJob.role) setShowManual(true);
+  }, [detectedJob]);
+
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setJobUrl(val);
     setError(null);
-    if (val.includes('linkedin.com/jobs/')) {
-      setShowManual(true);
-    } else if (val.trim() === '') {
+    if (val.trim() === '') {
       setShowManual(false);
-    } else {
-      setShowManual(true);
+      return;
     }
+    setShowManual(true);
+    const parsed = parseJobUrl(val);
+    if (parsed.company && !company) setCompany(parsed.company);
   };
 
   const handleFind = async (e: React.FormEvent) => {
@@ -136,7 +183,7 @@ export default function MainScreen({
           <>
             {pendingDraftCount > 0 && (
               <button
-                onClick={onDraftsCleared}
+                onClick={onViewDrafts}
                 className="flex w-full animate-slide-down items-center gap-2.5 rounded-xl border border-green-200 bg-green-50 px-3 py-2.5 text-left transition-colors hover:bg-green-100/70"
               >
                 <span className="flex-shrink-0 text-base">✉️</span>

@@ -127,57 +127,69 @@ export default defineBackground(() => {
     if (result.lastDetectedJob) lastDetectedJob = result.lastDetectedJob as { title: string; company: string; url: string };
   }).catch(() => {});
 
+  // IMPORTANT: only return true for branches that call sendResponse asynchronously.
+  // Returning true from a fire-and-forget handler (or a blanket return at the end) leaves
+  // the message channel open with no response coming, which surfaces in the sender (the
+  // popup) as "A listener indicated an asynchronous response... but the message channel
+  // closed before a response was received" once the popup unmounts.
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message.type === 'JOB_DETECTED') {
-      lastDetectedJob = message.payload;
-      chrome.storage.session.set({ lastDetectedJob }).catch(() => {});
-      chrome.action.setBadgeText({ text: '!' });
-      chrome.action.setBadgeBackgroundColor({ color: '#4f46e5' });
-      chrome.runtime.sendMessage(message).catch(() => {});
-    }
+    switch (message.type) {
+      case 'JOB_DETECTED': {
+        lastDetectedJob = message.payload;
+        chrome.storage.session.set({ lastDetectedJob }).catch(() => {});
+        chrome.action.setBadgeText({ text: '!' });
+        chrome.action.setBadgeBackgroundColor({ color: '#4f46e5' });
+        chrome.runtime.sendMessage(message).catch(() => {});
+        return false;
+      }
 
-    if (message.type === 'GET_LAST_JOB') {
-      sendResponse({ job: lastDetectedJob });
-      return true;
-    }
+      case 'GET_LAST_JOB': {
+        sendResponse({ job: lastDetectedJob }); // synchronous response
+        return false;
+      }
 
-    if (message.type === 'CLEAR_JOB_BADGE') {
-      chrome.action.setBadgeText({ text: '' });
-      lastDetectedJob = null;
-      chrome.storage.session.remove('lastDetectedJob').catch(() => {});
-    }
+      case 'CLEAR_JOB_BADGE': {
+        chrome.action.setBadgeText({ text: '' });
+        lastDetectedJob = null;
+        chrome.storage.session.remove('lastDetectedJob').catch(() => {});
+        return false;
+      }
 
-    if (message.type === 'GET_PENDING_DRAFTS') {
-      chrome.storage.session.get('pendingDrafts').then((r) => {
-        sendResponse({ drafts: r.pendingDrafts ?? [] });
-      });
-      return true;
-    }
+      case 'GET_PENDING_DRAFTS': {
+        chrome.storage.session.get('pendingDrafts').then((r) => {
+          sendResponse({ drafts: r.pendingDrafts ?? [] });
+        });
+        return true; // responding asynchronously - keep the channel open
+      }
 
-    if (message.type === 'CLEAR_PENDING_DRAFTS') {
-      chrome.storage.session.remove('pendingDrafts').catch(() => {});
-      chrome.action.setBadgeText({ text: '' });
-    }
+      case 'CLEAR_PENDING_DRAFTS': {
+        chrome.storage.session.remove('pendingDrafts').catch(() => {});
+        chrome.action.setBadgeText({ text: '' });
+        return false;
+      }
 
-    if (message.type === 'JOB_APPROVED') {
-      const { title, company, url } = message.payload;
-      getStoredToken().then(async (token) => {
-        if (!token) return;
-        try {
-          const drafts = await resolveAndDraft(title, company, url, token);
-          if (drafts.length > 0) {
-            await chrome.storage.session.set({ pendingDrafts: drafts });
-            chrome.action.setBadgeText({ text: `${drafts.length}` });
-            chrome.action.setBadgeBackgroundColor({ color: '#4f46e5' });
-            // Notify popup if open
-            chrome.runtime.sendMessage({ type: 'DRAFTS_READY', payload: { count: drafts.length } }).catch(() => {});
+      case 'JOB_APPROVED': {
+        const { title, company, url } = message.payload;
+        getStoredToken().then(async (token) => {
+          if (!token) return;
+          try {
+            const drafts = await resolveAndDraft(title, company, url, token);
+            if (drafts.length > 0) {
+              await chrome.storage.session.set({ pendingDrafts: drafts });
+              chrome.action.setBadgeText({ text: `${drafts.length}` });
+              chrome.action.setBadgeBackgroundColor({ color: '#4f46e5' });
+              // Notify popup if open
+              chrome.runtime.sendMessage({ type: 'DRAFTS_READY', payload: { count: drafts.length } }).catch(() => {});
+            }
+          } catch {
+            // silently fail - user can still use the popup manually
           }
-        } catch {
-          // silently fail - user can still use the popup manually
-        }
-      });
-    }
+        });
+        return false;
+      }
 
-    return true;
+      default:
+        return false;
+    }
   });
 });

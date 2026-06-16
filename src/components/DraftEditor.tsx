@@ -14,6 +14,7 @@ interface DraftEditorProps {
   profile: Profile;
   onBack: () => void;
   onDraftAnother: () => void;
+  prebuiltDraft?: Draft | null;
 }
 
 export default function DraftEditor({
@@ -23,6 +24,7 @@ export default function DraftEditor({
   profile,
   onBack,
   onDraftAnother,
+  prebuiltDraft,
 }: DraftEditorProps) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [subject, setSubject] = useState('');
@@ -36,6 +38,16 @@ export default function DraftEditor({
   const [celebrate, setCelebrate] = useState(false);
 
   useEffect(() => {
+    // If the background already built this draft (the Apply auto-draft flow), show it
+    // straight away instead of spending another /draft call to regenerate it.
+    if (prebuiltDraft) {
+      setDraft(prebuiltDraft);
+      setSubject(prebuiltDraft.subject);
+      setBody(prebuiltDraft.body);
+      setLoading(false);
+      return;
+    }
+
     generateDraft(token, {
       contact,
       role: job.role,

@@ -1,12 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { getToken, getProfile, clearAll } from '../../lib/storage';
-import type { Contact, JobContext, Profile, Screen } from '../../lib/types';
+import type { Contact, Draft, JobContext, PendingDraft, Profile, Screen, Tier, ContactStatus } from '../../lib/types';
 import OnboardingScreen from '../../components/OnboardingScreen';
 import MainScreen from '../../components/MainScreen';
 import ContactList from '../../components/ContactList';
 import DraftEditor from '../../components/DraftEditor';
 import TrackingDashboard from '../../components/TrackingDashboard';
 import LoadingSpinner from '../../components/LoadingSpinner';
+
+// Background-stored contacts omit the UI-only `status` field; derive it from the email tier
+// so the pre-built-draft contacts render identically to freshly resolved ones.
+function statusFromTier(tier: Tier): ContactStatus {
+  return tier === 'green' ? 'verified' : tier === 'amber' ? 'likely' : 'linkedin_only';
+}
+
+function normalizeContact(c: Contact): Contact {
+  return { ...c, status: c.status ?? statusFromTier(c.tier) };
+}
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('onboarding');
@@ -17,6 +27,10 @@ export default function App() {
   const [job, setJob] = useState<JobContext | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [pendingDraftCount, setPendingDraftCount] = useState(0);
+  const [pendingDrafts, setPendingDrafts] = useState<PendingDraft[]>([]);
+  // Pre-built drafts keyed by contact id, consumed by DraftEditor so it shows the
+  // background-generated draft instead of re-calling /draft.
+  const [prebuiltDrafts, setPrebuiltDrafts] = useState<Record<string, Draft>>({});
 
   // On popup open: check auth state
   useEffect(() => {
@@ -50,15 +64,24 @@ export default function App() {
       }
     });
     chrome.runtime.sendMessage({ type: 'GET_PENDING_DRAFTS' }, (response) => {
-      if (response?.drafts?.length) setPendingDraftCount(response.drafts.length);
+      if (response?.drafts?.length) {
+        setPendingDrafts(response.drafts as PendingDraft[]);
+        setPendingDraftCount(response.drafts.length);
+      }
     });
     chrome.runtime.sendMessage({ type: 'CLEAR_JOB_BADGE' });
   }, [screen]);
 
-  // Listen for drafts ready while popup is open
+  // Listen for drafts ready while popup is open. The DRAFTS_READY ping only carries a count,
+  // so re-fetch the full payload from the background to keep pendingDrafts in sync.
   useEffect(() => {
     const handler = (message: { type: string; payload?: { count: number } }) => {
-      if (message.type === 'DRAFTS_READY') setPendingDraftCount(message.payload?.count ?? 1);
+      if (message.type === 'DRAFTS_READY') {
+        setPendingDraftCount(message.payload?.count ?? 1);
+        chrome.runtime.sendMessage({ type: 'GET_PENDING_DRAFTS' }, (response) => {
+          if (response?.drafts?.length) setPendingDrafts(response.drafts as PendingDraft[]);
+        });
+      }
     };
     chrome.runtime.onMessage.addListener(handler);
     return () => chrome.runtime.onMessage.removeListener(handler);
@@ -85,6 +108,21 @@ export default function App() {
     setContacts(found);
     setJob(jobCtx);
     setScreen('contacts');
+  };
+
+  // Tapping the "drafts ready" banner: open the contacts list populated with the people the
+  // background already drafted for, with each pre-built draft available so opening a contact
+  // shows it instantly. Clear the badge but keep the data in React state for this session.
+  const handleViewDrafts = () => {
+    if (pendingDrafts.length === 0) return;
+    setContacts(pendingDrafts.map((pd) => normalizeContact(pd.contact)));
+    setJob(pendingDrafts[0].job);
+    setPrebuiltDrafts(
+      Object.fromEntries(pendingDrafts.map((pd) => [pd.contact.id, pd.draft])),
+    );
+    setScreen('contacts');
+    setPendingDraftCount(0);
+    chrome.runtime.sendMessage({ type: 'CLEAR_PENDING_DRAFTS' });
   };
 
   const handleDraft = (contact: Contact) => {
@@ -121,10 +159,7 @@ export default function App() {
           token={token}
           detectedJob={job}
           pendingDraftCount={pendingDraftCount}
-          onDraftsCleared={() => {
-            setPendingDraftCount(0);
-            chrome.runtime.sendMessage({ type: 'CLEAR_PENDING_DRAFTS' });
-          }}
+          onViewDrafts={handleViewDrafts}
           onContactsFound={handleContactsFound}
           onViewTracking={() => setScreen('tracking')}
           onLogout={handleLogout}
@@ -148,6 +183,7 @@ export default function App() {
           job={job}
           token={token}
           profile={profile}
+          prebuiltDraft={prebuiltDrafts[selectedContact.id] ?? null}
           onBack={() => setScreen('contacts')}
           onDraftAnother={() => setScreen('contacts')}
         />

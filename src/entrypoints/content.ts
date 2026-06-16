@@ -319,13 +319,20 @@ export default defineContentScript({
         return;
       }
 
+      const job = getJobDetails();
+      if (!job) return;
+
       if (isApplicationPage()) {
-        const job = getJobDetails();
-        if (!job) return;
         // Card 1: on form load
         injectActionCard(job.title, job.company, window.location.href);
         // Card 2: on submit click
         watchSubmitButton(job.title, job.company, window.location.href);
+      } else {
+        // Job listing page: silently notify the popup so it can pre-fill fields
+        chrome.runtime.sendMessage({
+          type: 'JOB_DETECTED',
+          payload: { title: job.title, company: job.company, url: window.location.href },
+        });
       }
     }
 

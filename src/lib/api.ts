@@ -129,11 +129,20 @@ export async function resolveContacts(
   token: string,
   params: ResolveParams,
 ): Promise<Contact[]> {
+  // The backend's /resolve schema requires a non-empty `domain`. When the caller
+  // (e.g. the manual "Find my people" form) only has a company name, derive the
+  // same best-guess domain the background auto-draft path uses, so both flows hit
+  // an identical contract instead of 400-ing on "Invalid request body".
+  const domain =
+    params.domain && params.domain.trim()
+      ? params.domain
+      : params.company.toLowerCase().replace(/\s+/g, '') + '.com';
+
   const { contacts } = await request<{ contacts: ResolveResponseItem[] }>(
     '/resolve',
     {
       method: 'POST',
-      body: JSON.stringify(params),
+      body: JSON.stringify({ ...params, domain }),
     },
     token,
   );

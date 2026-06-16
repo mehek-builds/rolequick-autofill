@@ -67,7 +67,7 @@ function Preview() {
           token={TOKEN}
           detectedJob={job}
           pendingDraftCount={2}
-          onDraftsCleared={noop}
+          onViewDrafts={noop}
           onContactsFound={noop}
           onViewTracking={noop}
           onLogout={noop}

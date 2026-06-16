@@ -61,6 +61,15 @@ export interface JobContext {
   url?: string;
 }
 
+// One background-built draft, as stored in chrome.storage.session by the Apply
+// auto-draft flow (background.ts resolveAndDraft). The popup reads these to show
+// pre-built drafts without re-generating them.
+export interface PendingDraft {
+  contact: Contact;
+  draft: Draft;
+  job: JobContext;
+}
+
 export type Screen =
   | 'onboarding'
   | 'main'
