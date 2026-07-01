@@ -5,6 +5,10 @@ import type {
   Profile,
   Outcome,
   Channel,
+  ExperienceBankEntry,
+  ApplicationProfile,
+  ResumeContact,
+  GeneratedResume,
 } from './types';
 
 // Set VITE_API_BASE at build time (e.g. your Vercel URL) to point the extension at the
@@ -206,4 +210,58 @@ export async function trackEvent(
 
 export async function getEvents(token: string): Promise<OutreachEvent[]> {
   return request<OutreachEvent[]>('/track/events', {}, token);
+}
+
+// ─── v2: experience bank + application profile + resume generation ─────────────
+
+export async function getExperienceBank(token: string): Promise<ExperienceBankEntry[]> {
+  const { entries } = await request<{ entries: ExperienceBankEntry[] }>('/profile/experience-bank', {}, token);
+  return entries;
+}
+
+export async function putExperienceBank(
+  token: string,
+  entries: ExperienceBankEntry[],
+): Promise<ExperienceBankEntry[]> {
+  const res = await request<{ entries: ExperienceBankEntry[] }>(
+    '/profile/experience-bank',
+    { method: 'PUT', body: JSON.stringify({ entries }) },
+    token,
+  );
+  return res.entries;
+}
+
+// Throws "API error 404: ..." when the student hasn't completed the application-profile
+// step of onboarding yet - callers should treat that as "onboarding incomplete", not a bug.
+export async function getApplicationProfile(token: string): Promise<ApplicationProfile> {
+  return request<ApplicationProfile>('/profile/application', {}, token);
+}
+
+export async function putApplicationProfile(
+  token: string,
+  profile: ApplicationProfile,
+): Promise<ApplicationProfile> {
+  return request<ApplicationProfile>(
+    '/profile/application',
+    { method: 'PUT', body: JSON.stringify(profile) },
+    token,
+  );
+}
+
+export interface GenerateResumeParams {
+  company: string;
+  role: string;
+  jd_text: string;
+  contact: ResumeContact;
+}
+
+export async function generateResume(
+  token: string,
+  params: GenerateResumeParams,
+): Promise<GeneratedResume> {
+  return request<GeneratedResume>(
+    '/resume/generate',
+    { method: 'POST', body: JSON.stringify(params) },
+    token,
+  );
 }

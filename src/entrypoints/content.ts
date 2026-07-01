@@ -1,3 +1,6 @@
+import { isLeverApplicationPage, extractLeverJdText, fillLeverApplication } from '../lib/adapters/lever';
+import type { Profile, ApplicationProfile } from '../lib/types';
+
 export default defineContentScript({
   matches: [
     'https://www.linkedin.com/*',
@@ -308,6 +311,119 @@ export default defineContentScript({
       attachCardHandlers(card, title, company, url);
     }
 
+    // ─── v2: resume-gen + Lever autofill (fill-and-stop, never clicks Submit) ──────────
+
+    function resumeFillCardShell(title: string, company: string): string {
+      return `
+        <div style="
+          position: fixed; bottom: 72px; right: 306px; z-index: 2147483647;
+          background: white; border: 1.5px solid #e0e7ff; border-radius: 14px;
+          padding: 16px 16px 14px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          font-size: 13px; line-height: 1.4; box-shadow: 0 8px 32px rgba(79,70,229,0.18);
+          max-width: 272px; animation: wp-slide-in 0.25s ease-out;
+        ">
+          <button id="wp-resume-close" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
+          <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;">
+            <span style="font-size:20px;flex-shrink:0;margin-top:1px;">📄</span>
+            <div>
+              <div style="font-weight:700;font-size:13px;color:#1e1b4b;">Generate tailored resume + fill this application?</div>
+              <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;">${title} at ${company}</div>
+            </div>
+          </div>
+          <div id="wp-resume-status" style="font-size:11px;color:#6b7280;margin-bottom:8px;display:none;"></div>
+          <div style="display:flex;gap:8px;">
+            <button id="wp-resume-yes" style="
+              flex:1;background:#4f46e5;color:white;border:none;border-radius:8px;
+              padding:9px 0;font-size:12px;font-weight:600;cursor:pointer;
+              font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+            ">Yes, fill it</button>
+            <button id="wp-resume-no" style="
+              flex:1;background:#f3f4f6;color:#374151;border:none;border-radius:8px;
+              padding:9px 0;font-size:12px;font-weight:600;cursor:pointer;
+              font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+            ">No thanks</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function injectLeverResumeFillCard(title: string, company: string) {
+      if (document.getElementById('volley-resume-card')) return;
+      const card = document.createElement('div');
+      card.id = 'volley-resume-card';
+      card.innerHTML = resumeFillCardShell(title, company);
+      document.body.appendChild(card);
+
+      const dismiss = () => card.remove();
+      card.querySelector('#wp-resume-close')?.addEventListener('click', dismiss);
+      card.querySelector('#wp-resume-no')?.addEventListener('click', dismiss);
+      card.querySelector('#wp-resume-yes')?.addEventListener('click', async () => {
+        const statusEl = card.querySelector<HTMLElement>('#wp-resume-status');
+        const yesBtn = card.querySelector<HTMLButtonElement>('#wp-resume-yes');
+        if (yesBtn) yesBtn.disabled = true;
+        if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Tailoring your resume...'; }
+
+        const jdText = extractLeverJdText();
+
+        chrome.runtime.sendMessage(
+          { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: jdText } },
+          async (result: {
+            error?: string;
+            profile?: Profile;
+            applicationProfile?: ApplicationProfile;
+            resume?: { resume_url: string; file_name: string };
+          }) => {
+            if (!result || result.error || !result.profile || !result.applicationProfile || !result.resume) {
+              if (statusEl) statusEl.textContent = result?.error || 'Could not generate a resume - fill this one manually.';
+              return;
+            }
+
+            if (statusEl) statusEl.textContent = 'Filling the application...';
+
+            let resumeBlob: Blob | undefined;
+            try {
+              const blobRes = await fetch(result.resume.resume_url);
+              resumeBlob = await blobRes.blob();
+            } catch {
+              // No resume file available client-side; the adapter will skip the file input
+              // and flag it rather than fail the whole fill.
+            }
+
+            const fillResult = await fillLeverApplication({
+              fullName: result.profile.full_name ?? '',
+              profile: result.profile,
+              applicationProfile: result.applicationProfile,
+              resumeBlob,
+              resumeFileName: result.resume.file_name,
+            });
+
+            chrome.runtime.sendMessage({
+              type: 'AUTOFILL_EVENT',
+              payload: {
+                ats_name: fillResult.ats_name,
+                job_context: { company, role: title },
+                fields_filled: fillResult.fields_filled,
+                fields_skipped: fillResult.fields_skipped,
+              },
+            });
+
+            if (statusEl) {
+              statusEl.textContent = `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. Review, then submit yourself.`;
+            }
+
+            // Highlight, never click - Volley stops here (PRD-v2 Section 5 Step 4).
+            const submitBtn = findSubmitButton();
+            if (submitBtn instanceof HTMLElement) {
+              submitBtn.style.outline = '3px solid #4f46e5';
+              submitBtn.style.outlineOffset = '2px';
+            }
+
+            setTimeout(dismiss, 6000);
+          },
+        );
+      });
+    }
+
     // ─── Entry point ────────────────────────────────────────────────────────
 
     function init() {
@@ -327,6 +443,11 @@ export default defineContentScript({
         injectActionCard(job.title, job.company, window.location.href);
         // Card 2: on submit click
         watchSubmitButton(job.title, job.company, window.location.href);
+        // v2: resume-gen + fill-and-stop autofill, Lever only for now (Section 7's
+        // recommended first ATS - simplest, static DOM, no cross-origin iframe case).
+        if (isLeverApplicationPage()) {
+          injectLeverResumeFillCard(job.title, job.company);
+        }
       } else {
         // Job listing page: silently notify the popup so it can pre-fill fields
         chrome.runtime.sendMessage({
@@ -348,6 +469,7 @@ export default defineContentScript({
         approved = false;
         document.getElementById('volley-action-card')?.remove();
         document.getElementById('volley-submit-card')?.remove();
+        document.getElementById('volley-resume-card')?.remove();
         setTimeout(init, 800);
       }
     }).observe(document.body, { childList: true, subtree: true });

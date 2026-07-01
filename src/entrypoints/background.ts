@@ -120,6 +120,65 @@ async function resolveAndDraft(title: string, company: string, url: string, toke
   return drafts.filter(Boolean);
 }
 
+interface ApplicationProfileResponse {
+  phone?: string;
+  address_city?: string;
+  address_state?: string;
+  address_zip?: string;
+  linkedin_url?: string;
+  github_url?: string;
+  portfolio_url?: string;
+  citizenship?: string;
+  work_authorized?: boolean;
+  needs_sponsorship?: boolean;
+  availability_date?: string;
+  desired_salary?: string;
+  eeo_prefs?: Record<string, string> | null;
+  referral_source_default?: string;
+}
+
+// Fetches everything a client-side autofill adapter needs in one round trip: the resume
+// profile (for name/experience), the more-sensitive application profile (Section 4B - phone,
+// address, work-auth), and a JD-tailored resume file. Runs in the background script (not the
+// content script) because it needs the auth token from chrome.storage.local.
+async function generateResumeAndProfile(
+  company: string,
+  role: string,
+  jdText: string,
+  token: string,
+) {
+  const profileRes = await fetch(`${API_BASE}/profile`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const profile: UserProfile & { full_name?: string } = profileRes.ok ? await profileRes.json() : EMPTY_PROFILE;
+
+  const appProfileRes = await fetch(`${API_BASE}/profile/application`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const applicationProfile: ApplicationProfileResponse = appProfileRes.ok ? await appProfileRes.json() : {};
+
+  const resumeRes = await fetch(`${API_BASE}/resume/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      company,
+      role,
+      jd_text: jdText,
+      contact: {
+        full_name: profile.full_name || 'Applicant',
+        linkedin_url: applicationProfile.linkedin_url,
+        github_url: applicationProfile.github_url,
+        portfolio_url: applicationProfile.portfolio_url,
+        phone: applicationProfile.phone,
+      },
+    }),
+  });
+  if (!resumeRes.ok) throw new Error('resume generation failed');
+  const resume: { resume_url: string; file_name: string; spec: unknown } = await resumeRes.json();
+
+  return { profile, applicationProfile, resume };
+}
+
 export default defineBackground(() => {
   let lastDetectedJob: { title: string; company: string; url: string } | null = null;
 
@@ -184,6 +243,35 @@ export default defineBackground(() => {
           } catch {
             // silently fail - user can still use the popup manually
           }
+        });
+        return false;
+      }
+
+      case 'GENERATE_RESUME_AND_FILL_DATA': {
+        const { company, role, jd_text } = message.payload;
+        getStoredToken().then(async (token) => {
+          if (!token) {
+            sendResponse({ error: 'not signed in' });
+            return;
+          }
+          try {
+            const result = await generateResumeAndProfile(company, role, jd_text, token);
+            sendResponse(result);
+          } catch (err) {
+            sendResponse({ error: err instanceof Error ? err.message : 'resume generation failed' });
+          }
+        });
+        return true; // responding asynchronously
+      }
+
+      case 'AUTOFILL_EVENT': {
+        getStoredToken().then((token) => {
+          if (!token) return;
+          fetch(`${API_BASE}/autofill/event`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify(message.payload),
+          }).catch(() => {});
         });
         return false;
       }

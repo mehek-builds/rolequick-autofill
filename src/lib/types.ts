@@ -39,6 +39,7 @@ export interface OutreachEvent {
 // Matches the parsed-resume JSON returned by POST/GET /profile (backend ParsedProfile),
 // which is also the exact shape the /draft route expects as user_profile.
 export interface Profile {
+  full_name?: string;
   experience: Array<{
     company: string;
     title: string;
@@ -76,3 +77,58 @@ export type Screen =
   | 'contacts'
   | 'draft'
   | 'tracking';
+
+// ─── v2: resume-gen + application autofill (PRD-v2-resume-autofill.md) ─────────────
+
+export interface ExperienceBankEntry {
+  id?: string;
+  type: 'job' | 'project';
+  org: string;
+  title?: string;
+  date_range?: string;
+  bullet_variants: string[];
+  tags?: string[];
+}
+
+// Section 4B / Section 8 of PRD-v2. Never included in a drafting-LLM prompt.
+export interface ApplicationProfile {
+  phone?: string;
+  address_city?: string;
+  address_state?: string;
+  address_zip?: string;
+  linkedin_url?: string;
+  github_url?: string;
+  portfolio_url?: string;
+  citizenship?: string;
+  work_authorized?: boolean;
+  needs_sponsorship?: boolean;
+  availability_date?: string;
+  desired_salary?: string;
+  eeo_prefs?: Record<string, string> | null;
+  referral_source_default?: string;
+}
+
+export interface ResumeContact {
+  full_name: string;
+  email?: string;
+  phone?: string;
+  linkedin_url?: string;
+  github_url?: string;
+  portfolio_url?: string;
+}
+
+export interface GeneratedResume {
+  resume_url: string;
+  file_name: string;
+  spec: unknown;
+}
+
+// Per-ATS field-mapping adapter contract (Section 7 of PRD-v2). Each adapter fills what it
+// can from the application profile + generated resume, skips what it's told never to touch,
+// and always stops before Submit - the extension never clicks it.
+export interface AutofillResult {
+  ats_name: string;
+  fields_filled: number;
+  fields_skipped: number;
+  skipped_reasons: string[];
+}
