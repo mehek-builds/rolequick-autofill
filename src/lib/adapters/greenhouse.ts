@@ -1,9 +1,37 @@
 import type { ApplicationProfile, AutofillResult, Profile } from '../types';
 
 // Greenhouse field-mapping adapter (PRD-v2-resume-autofill.md Section 7, build-order step 2).
-// Greenhouse's core identity fields use a stable `job_application[...]` naming convention across
-// every board, but custom questions (links, work-auth, EEO) get dynamic per-posting IDs, so those
-// are matched by label text, same defensive approach as the Lever adapter.
+//
+// Verified 2026-07-01 against a live posting (job-boards.greenhouse.io/gemini/jobs/7875125):
+// Greenhouse's CURRENT default template (job-boards.greenhouse.io) uses id-based fields with
+// EMPTY name attributes (#first_name, #last_name, #email, #phone, #candidate-location, #resume,
+// #cover_letter) and wraps every field - core and custom - in a `.field-wrapper` containing a
+// real <label>. This is a different convention from the older `job_application[first_name]`
+// name-based one (still used by some legacy boards.greenhouse.io embeds), so both are tried,
+// id-based first. Custom questions get per-posting `#question_<id>` ids, so those are still
+// matched by label text like the Lever adapter.
+//
+// The biggest thing live testing caught: yes/no questions (work-authorization, sponsorship),
+// the EEO "decline to answer" options, and the city field are NOT plain inputs or native
+// <select> elements - they're react-select comboboxes (role="combobox", aria-autocomplete="list",
+// aria-controls="react-select-<id>-listbox" once open). Setting .value directly does nothing
+// real: react-select clears it back to empty on blur since no option was actually selected.
+//
+// selectReactSelectOption() below opens the menu and clicks the matching [role="option"] element
+// - but verified live (2026-07-01), that open step ONLY responds to a genuinely trusted click
+// event. Every synthetic variant tried (dispatchEvent(MouseEvent) on the input, on the
+// `.select__control` wrapper, focus(), a synthetic ArrowDown keydown) left aria-expanded="false";
+// a real click via Chrome's input-injection layer opened it instantly. Content scripts can only
+// ever dispatch untrusted events (isTrusted is always false for anything script-originated - this
+// isn't fixable with a different event type or target), so THIS WIDGET CLASS CANNOT BE FILLED by
+// any Manifest V3 content script, Volley's or anyone else's. selectReactSelectOption() is kept
+// because it's harmless when it fails (falls through to skip+flag, never fakes success, never
+// partially fills), and some other Greenhouse deployments may render a plain native <select> or a
+// less defended combobox that DOES respond to synthetic events - but on this template, expect
+// every combobox-shaped custom question to end up in `skipped_reasons` for the student to fill
+// by hand. Core identity fields (name/email/phone/resume) and genuinely-plain-text custom
+// questions (LinkedIn/GitHub/portfolio links, open-ended text) are real inputs, not comboboxes,
+// and fill normally - confirmed working live.
 //
 // Cross-origin iframe (Section 12.3's spike): some companies embed their Greenhouse board inside
 // an iframe on their own domain (e.g. company.com/careers embedding boards.greenhouse.io/company).
@@ -30,8 +58,17 @@ function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: strin
 }
 
 function labelTextFor(el: Element): string {
-  const container = el.closest('.field, #custom_fields > div, li') ?? el.parentElement;
-  return (container?.textContent ?? '').trim().toLowerCase();
+  const container = el.closest('.field-wrapper, .field, #custom_fields > div, li') ?? el.parentElement;
+  const label = container?.querySelector('label');
+  return (label?.textContent ?? container?.textContent ?? '').trim().toLowerCase();
+}
+
+function firstMatch<T extends Element>(selectors: string[]): T | null {
+  for (const sel of selectors) {
+    const el = document.querySelector<T>(sel);
+    if (el) return el;
+  }
+  return null;
 }
 
 function isNeverFillField(el: Element): boolean {
@@ -44,6 +81,64 @@ async function fillField(el: HTMLInputElement | HTMLTextAreaElement, value: stri
   el.focus();
   setNativeValue(el, value);
   el.blur();
+}
+
+// aria-controls only exists once the menu is open (react-select adds it dynamically), so it
+// can't be used to detect a closed combobox - aria-autocomplete is present in both states.
+function isReactSelectCombobox(el: Element): el is HTMLInputElement {
+  return el.getAttribute('role') === 'combobox' && el.getAttribute('aria-autocomplete') === 'list';
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 800, stepMs = 60): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) return true;
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+  return predicate();
+}
+
+// Drives a react-select combobox by opening its menu and clicking a real option element - the
+// only way that actually registers a selection. `matchText` is matched case-insensitively; exact
+// match wins, otherwise the first option whose text contains it. Returns false (never guesses,
+// never fakes success) whenever the menu never opens or no matching option appears - which, per
+// the file header note, is the expected outcome on this Greenhouse template's react-select
+// widgets specifically, since their menu-open handler only responds to a trusted click.
+async function selectReactSelectOption(input: HTMLInputElement, matchText: string): Promise<boolean> {
+  await randomDelay();
+  const listboxId = input.getAttribute('aria-controls')!;
+  input.focus();
+  input.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  await waitFor(() => input.getAttribute('aria-expanded') === 'true');
+
+  const findMatch = () => {
+    const listbox = document.getElementById(listboxId);
+    if (!listbox) return null;
+    const options = [...listbox.querySelectorAll<HTMLElement>(`[id^="${listboxId}-option-"]`)];
+    return (
+      options.find((o) => o.textContent?.trim().toLowerCase() === matchText.toLowerCase()) ??
+      options.find((o) => o.textContent?.toLowerCase().includes(matchText.toLowerCase())) ??
+      null
+    );
+  };
+
+  let match = findMatch();
+  if (!match) {
+    // Large/searchable option sets (e.g. city, university) need typing to filter down first.
+    setNativeValue(input, matchText);
+    await waitFor(() => findMatch() !== null, 1200);
+    match = findMatch();
+  }
+  if (!match) {
+    input.blur();
+    return false;
+  }
+
+  match.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  match.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  match.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await randomDelay();
+  return true;
 }
 
 // `<input type="file">` can't be set directly by script; construct a File/DataTransfer and
@@ -74,7 +169,7 @@ export function isGreenhouseApplicationPage(): boolean {
   if (!h.includes('greenhouse.io')) return false;
   const path = window.location.pathname.toLowerCase();
   if (path.includes('/application') || path.includes('/apply')) return true;
-  const hasNameField = !!document.querySelector('input[name="job_application[first_name]"]');
+  const hasNameField = !!document.querySelector('#first_name, input[name="job_application[first_name]"]');
   const hasResumeUpload = !!document.querySelector('input[type="file"], [data-source="resume"], #resume_dropzone');
   return hasNameField || hasResumeUpload;
 }
@@ -95,13 +190,16 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
   let fields_skipped = 0;
   const skipped_reasons: string[] = [];
 
-  const firstEl = document.querySelector<HTMLInputElement>('input[name="job_application[first_name]"]');
-  const lastEl = document.querySelector<HTMLInputElement>('input[name="job_application[last_name]"]');
-  const emailEl = document.querySelector<HTMLInputElement>('input[name="job_application[email]"]');
-  const phoneEl = document.querySelector<HTMLInputElement>('input[name="job_application[phone]"]');
-  const resumeEl = document.querySelector<HTMLInputElement>(
-    'input[type="file"][name="job_application[resume]"], #resume_dropzone input[type="file"], input[type="file"]#resume',
-  );
+  const firstEl = firstMatch<HTMLInputElement>(['#first_name', 'input[name="job_application[first_name]"]']);
+  const lastEl = firstMatch<HTMLInputElement>(['#last_name', 'input[name="job_application[last_name]"]']);
+  const emailEl = firstMatch<HTMLInputElement>(['#email', 'input[name="job_application[email]"]']);
+  const phoneEl = firstMatch<HTMLInputElement>(['#phone', 'input[name="job_application[phone]"]']);
+  const cityEl = firstMatch<HTMLInputElement>(['#candidate-location']);
+  const resumeEl = firstMatch<HTMLInputElement>([
+    '#resume',
+    'input[type="file"][name="job_application[resume]"]',
+    '#resume_dropzone input[type="file"]',
+  ]);
 
   if (firstEl && !firstEl.value && fullName) {
     await fillField(firstEl, splitName(fullName).first);
@@ -124,6 +222,19 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
     await fillField(phoneEl, applicationProfile.phone);
     fields_filled++;
   }
+  if (cityEl && !cityEl.value && applicationProfile.address_city) {
+    if (isReactSelectCombobox(cityEl)) {
+      if (await selectReactSelectOption(cityEl, applicationProfile.address_city)) {
+        fields_filled++;
+      } else {
+        fields_skipped++;
+        skipped_reasons.push('city: no matching option found in the location picker, left blank');
+      }
+    } else {
+      await fillField(cityEl, applicationProfile.address_city);
+      fields_filled++;
+    }
+  }
 
   if (resumeEl && resumeBlob && resumeFileName) {
     await fillResumeFile(resumeEl, resumeBlob, resumeFileName);
@@ -138,7 +249,9 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
 
   // Custom fields (links, work-auth, sponsorship, EEO) get dynamic per-posting IDs, so match by
   // the surrounding label text instead of a selector - same approach as the Lever adapter.
-  const questionBlocks = document.querySelectorAll('#custom_fields .field, #custom_fields > div, .eeoc-container .field');
+  const questionBlocks = document.querySelectorAll(
+    '.field-wrapper, #custom_fields .field, #custom_fields > div, .eeoc-container .field',
+  );
   for (const block of questionBlocks) {
     if (isNeverFillField(block)) {
       fields_skipped++;
@@ -175,10 +288,18 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
       const declineOption = select
         ? [...select.options].find((o) => /decline/i.test(o.text))
         : undefined;
+      const comboboxInput = block.querySelector<HTMLInputElement>('input[role="combobox"]');
       if (select && declineOption) {
         select.value = declineOption.value;
         select.dispatchEvent(new Event('change', { bubbles: true }));
         fields_filled++;
+      } else if (comboboxInput && isReactSelectCombobox(comboboxInput)) {
+        if (await selectReactSelectOption(comboboxInput, 'Decline')) {
+          fields_filled++;
+        } else {
+          fields_skipped++;
+          skipped_reasons.push('EEO field: no decline-to-answer option found, left blank');
+        }
       } else {
         const declineRadio = block.querySelector<HTMLInputElement>('input[type="radio"][value*="Decline" i]');
         if (declineRadio) {
@@ -213,6 +334,24 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
           fields_filled++;
           continue;
         }
+      }
+      // Verified live (2026-07-01, Gemini's Greenhouse posting): these yes/no questions render
+      // as a react-select combobox far more often than a plain input - a bare setNativeValue
+      // gets silently cleared by react-select on blur since no option was actually selected.
+      const textYesNo = block.querySelector<HTMLInputElement>('input[type="text"]');
+      if (textYesNo && !textYesNo.value) {
+        if (isReactSelectCombobox(textYesNo)) {
+          if (await selectReactSelectOption(textYesNo, wantYes ? 'Yes' : 'No')) {
+            fields_filled++;
+          } else {
+            fields_skipped++;
+            skipped_reasons.push(`${label.slice(0, 40)}: no matching Yes/No option found, left blank`);
+          }
+        } else {
+          await fillField(textYesNo, wantYes ? 'Yes' : 'No');
+          fields_filled++;
+        }
+        continue;
       }
     }
 
