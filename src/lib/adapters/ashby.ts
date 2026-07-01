@@ -77,9 +77,7 @@ async function fillResumeFile(blob: Blob, fileName: string): Promise<boolean> {
   );
   if (!input) return false;
   await randomDelay();
-  const file = new File([blob], fileName, {
-    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  });
+  const file = new File([blob], fileName, { type: 'application/pdf' });
   const dt = new DataTransfer();
   dt.items.add(file);
   input.files = dt.files;

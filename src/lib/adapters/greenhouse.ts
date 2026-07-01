@@ -53,9 +53,7 @@ async function fillField(el: HTMLInputElement | HTMLTextAreaElement, value: stri
 // flagged rather than silently failing - the caller reports it as a skipped field).
 async function fillResumeFile(input: HTMLInputElement, blob: Blob, fileName: string): Promise<void> {
   await randomDelay();
-  const file = new File([blob], fileName, {
-    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  });
+  const file = new File([blob], fileName, { type: 'application/pdf' });
   const dt = new DataTransfer();
   dt.items.add(file);
   input.files = dt.files;
