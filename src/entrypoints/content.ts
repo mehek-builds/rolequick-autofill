@@ -1,5 +1,6 @@
 import { isLeverApplicationPage, extractLeverJdText, fillLeverApplication } from '../lib/adapters/lever';
 import { isGreenhouseApplicationPage, extractGreenhouseJdText, fillGreenhouseApplication } from '../lib/adapters/greenhouse';
+import { isAshbyApplicationPage, extractAshbyJdText, fillAshbyApplication } from '../lib/adapters/ashby';
 import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
 
 export default defineContentScript({
@@ -466,15 +467,17 @@ export default defineContentScript({
         injectActionCard(job.title, job.company, window.location.href);
         // Card 2: on submit click
         watchSubmitButton(job.title, job.company, window.location.href);
-        // v2: resume-gen + fill-and-stop autofill (Section 7's build order: Lever first, then
-        // Greenhouse). isApplicationPage()/isGreenhouseApplicationPage() are evaluated against
-        // THIS frame's own document, so for a cross-origin Greenhouse iframe embed, only the
-        // script instance running inside that iframe ever sees a match here - it injects its own
-        // card and fills its own DOM directly, no cross-frame messaging required.
+        // v2: resume-gen + fill-and-stop autofill (Section 7's build order: Lever, Greenhouse,
+        // Ashby). isApplicationPage()/is<Ats>ApplicationPage() are evaluated against THIS frame's
+        // own document, so for a cross-origin Greenhouse iframe embed, only the script instance
+        // running inside that iframe ever sees a match here - it injects its own card and fills
+        // its own DOM directly, no cross-frame messaging required.
         if (isLeverApplicationPage()) {
           injectResumeFillCard(job.title, job.company, extractLeverJdText, fillLeverApplication);
         } else if (isGreenhouseApplicationPage()) {
           injectResumeFillCard(job.title, job.company, extractGreenhouseJdText, fillGreenhouseApplication);
+        } else if (isAshbyApplicationPage()) {
+          injectResumeFillCard(job.title, job.company, extractAshbyJdText, fillAshbyApplication);
         }
       } else {
         // Job listing page: silently notify the popup so it can pre-fill fields
