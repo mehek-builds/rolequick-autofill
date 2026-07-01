@@ -1,5 +1,6 @@
 import { isLeverApplicationPage, extractLeverJdText, fillLeverApplication } from '../lib/adapters/lever';
-import type { Profile, ApplicationProfile } from '../lib/types';
+import { isGreenhouseApplicationPage, extractGreenhouseJdText, fillGreenhouseApplication } from '../lib/adapters/greenhouse';
+import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
 
 export default defineContentScript({
   matches: [
@@ -14,8 +15,19 @@ export default defineContentScript({
     'https://app.joinhandshake.com/*',
     'https://joinhandshake.com/*',
   ],
+  // Some companies embed their Greenhouse board in an iframe hosted on greenhouse.io while the
+  // parent page is on the company's own domain (Section 9/12.3 of PRD-v2). `matches` is evaluated
+  // per-frame, so all_frames lets this script inject directly into that iframe - it runs with the
+  // iframe's own greenhouse.io origin, not the parent page's, so no cross-frame messaging is needed.
+  allFrames: true,
   runAt: 'document_idle',
   main() {
+    // No top-frame gating: for a cross-origin Greenhouse iframe embed, this script's instance
+    // running INSIDE that iframe is the only one that ever matches `*.greenhouse.io/*` at all
+    // (the parent page is on the company's own domain, which isn't in `matches`). That iframe
+    // instance is also the only one with access to the actual form DOM, so its card must render
+    // in its own document - a `position: fixed` card inside an iframe is scoped to that iframe's
+    // own viewport, which is correct here since Greenhouse embeds are typically full-size.
     let cardInjected = false;
     let approved = false; // true once user taps "Yes" on either card
 
@@ -347,7 +359,18 @@ export default defineContentScript({
       `;
     }
 
-    function injectLeverResumeFillCard(title: string, company: string) {
+    type FillFn = (params: {
+      fullName: string;
+      email?: string;
+      profile: Profile;
+      applicationProfile: ApplicationProfile;
+      resumeBlob?: Blob;
+      resumeFileName?: string;
+    }) => Promise<AutofillResult>;
+
+    // Shared by every ATS adapter: generate the JD-tailored resume, then run that adapter's
+    // client-side fill-and-stop. Only the JD-extraction and fill functions differ per ATS.
+    function injectResumeFillCard(title: string, company: string, extractJdText: () => string, fill: FillFn) {
       if (document.getElementById('volley-resume-card')) return;
       const card = document.createElement('div');
       card.id = 'volley-resume-card';
@@ -363,7 +386,7 @@ export default defineContentScript({
         if (yesBtn) yesBtn.disabled = true;
         if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Tailoring your resume...'; }
 
-        const jdText = extractLeverJdText();
+        const jdText = extractJdText();
 
         chrome.runtime.sendMessage(
           { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: jdText } },
@@ -389,7 +412,7 @@ export default defineContentScript({
               // and flag it rather than fail the whole fill.
             }
 
-            const fillResult = await fillLeverApplication({
+            const fillResult = await fill({
               fullName: result.profile.full_name ?? '',
               profile: result.profile,
               applicationProfile: result.applicationProfile,
@@ -443,10 +466,15 @@ export default defineContentScript({
         injectActionCard(job.title, job.company, window.location.href);
         // Card 2: on submit click
         watchSubmitButton(job.title, job.company, window.location.href);
-        // v2: resume-gen + fill-and-stop autofill, Lever only for now (Section 7's
-        // recommended first ATS - simplest, static DOM, no cross-origin iframe case).
+        // v2: resume-gen + fill-and-stop autofill (Section 7's build order: Lever first, then
+        // Greenhouse). isApplicationPage()/isGreenhouseApplicationPage() are evaluated against
+        // THIS frame's own document, so for a cross-origin Greenhouse iframe embed, only the
+        // script instance running inside that iframe ever sees a match here - it injects its own
+        // card and fills its own DOM directly, no cross-frame messaging required.
         if (isLeverApplicationPage()) {
-          injectLeverResumeFillCard(job.title, job.company);
+          injectResumeFillCard(job.title, job.company, extractLeverJdText, fillLeverApplication);
+        } else if (isGreenhouseApplicationPage()) {
+          injectResumeFillCard(job.title, job.company, extractGreenhouseJdText, fillGreenhouseApplication);
         }
       } else {
         // Job listing page: silently notify the popup so it can pre-fill fields
