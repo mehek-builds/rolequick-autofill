@@ -2,11 +2,29 @@ import type { ApplicationProfile, AutofillResult, Profile } from '../types';
 
 // Ashby field-mapping adapter (PRD-v2-resume-autofill.md Section 7, build-order step 3).
 // Ashby's built-in identity fields use a stable `_systemfield_*` name-attribute convention
-// across every board (name, email, phone, location); everything else - links, work-auth,
-// EEO, custom screening questions - gets a per-posting generated name/id, so those are
-// matched by label text, same defensive pattern as Lever and Greenhouse.
+// across every board (name, email); everything else - links, work-auth, EEO, custom screening
+// questions - gets a per-posting generated name/id, so those are matched by label text, same
+// defensive pattern as Lever and Greenhouse.
 //
-// The one Ashby-specific risk (Section 7's table): the form is React-rendered and can
+// Verified 2026-07-01 against a live posting (jobs.ashbyhq.com/notion, Software Engineer Intern
+// application): two real bugs live testing caught.
+//
+// 1. There are TWO file inputs on the page: Ashby's own "autofill from resume" parser widget
+//    (used to pre-fill the form from an uploaded resume, id/name both empty) comes FIRST in DOM
+//    order, and the actual application resume field (id="_systemfield_resume") comes second. A
+//    generic `input[type="file"]` selector would grab the parser widget, silently leaving the
+//    real resume field empty. Fixed by targeting `#_systemfield_resume` directly.
+//
+// 2. Every radio input's `value` attribute is literally "on" (the browser default for an
+//    unvalued input) - the real answer text lives in an associated `<label for="...">`, not the
+//    value. Matching `input[value="Yes"]` never matches anything on Ashby. Fixed by reading
+//    `label[for=radio.id]` text for every option in a radio group. Also found: not every
+//    yes/no-shaped question IS binary - a sponsorship question rendered as J1/F1/None/Other,
+//    which `applicationProfile.needs_sponsorship` (a boolean) can't confidently answer, so the
+//    matcher only fills when it finds a single option whose label clearly means yes/no/none,
+//    and skips (never guesses a visa type) otherwise.
+//
+// The other Ashby-specific risk (Section 7's table): the form is React-rendered and can
 // re-render on input, which invalidates element references taken before a fill. Every helper
 // here re-queries the DOM immediately before touching it (never holds a stale reference across
 // an await), and waitForStableDom() pauses between fields until mutations stop rather than
@@ -50,14 +68,39 @@ function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: strin
   el.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+// Verified live: `fieldset[class*="_fieldEntry_"]` is the per-question container for BOTH radio
+// groups and text inputs. A generic `[class*="_container_"]` ancestor is too broad - it can wrap
+// several unrelated questions together, mixing their radios in one lookup. Prefer <legend> (used
+// on radio-group fieldsets) over full textContent, which would otherwise include every option's
+// label text glued onto the question text.
 function labelTextFor(el: Element): string {
-  const container = el.closest('[class*="_container_"], [class*="field"], li') ?? el.parentElement;
+  const fieldset = el.closest('fieldset[class*="_fieldEntry_"]');
+  const legend = fieldset?.querySelector('legend');
+  if (legend) return legend.textContent?.trim().toLowerCase() ?? '';
+  const container = fieldset ?? el.closest('[class*="_container_"], li') ?? el.parentElement;
   return (container?.textContent ?? '').trim().toLowerCase();
 }
 
 function isNeverFillField(el: Element): boolean {
   const label = labelTextFor(el);
   return NEVER_FILL_LABEL_PATTERNS.some((re) => re.test(label));
+}
+
+// Ashby radios carry no meaningful `value` (always "on"); the real option text lives in
+// `label[for=radio.id]`. Returns each radio paired with its label text, lowercased.
+function radioOptionsIn(block: Element): Array<{ radio: HTMLInputElement; text: string }> {
+  return [...block.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((radio) => ({
+    radio,
+    text: (document.querySelector(`label[for="${radio.id}"]`)?.textContent ?? '').trim().toLowerCase(),
+  }));
+}
+
+async function checkRadio(radio: HTMLInputElement): Promise<void> {
+  await randomDelay();
+  radio.checked = true;
+  radio.dispatchEvent(new Event('input', { bubbles: true }));
+  radio.dispatchEvent(new Event('change', { bubbles: true }));
+  await waitForStableDom();
 }
 
 async function fillBySelector(selector: string, value: string): Promise<boolean> {
@@ -72,8 +115,10 @@ async function fillBySelector(selector: string, value: string): Promise<boolean>
 }
 
 async function fillResumeFile(blob: Blob, fileName: string): Promise<boolean> {
+  // #_systemfield_resume is the real application field; a generic `input[type="file"]` selector
+  // would match Ashby's own resume-autofill-parser widget instead, which renders first in the DOM.
   const input = document.querySelector<HTMLInputElement>(
-    'input[type="file"][name*="resume" i], input[type="file"]',
+    '#_systemfield_resume, input[type="file"][name*="resume" i]',
   );
   if (!input) return false;
   await randomDelay();
@@ -139,11 +184,13 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
     skipped_reasons.push('resume: no generated resume file available');
   }
 
-  // Custom questions (links, work-auth, sponsorship, EEO) get per-posting generated names,
-  // so match by label text - re-queried fresh each iteration since Ashby's React tree can
+  // Custom questions (links, work-auth, sponsorship, EEO) get per-posting generated names, so
+  // match by label text - verified live that `fieldset[class*="_fieldEntry_"]` is the correct
+  // one-question-per-block container (a generic `[class*="_container_"]` ancestor mixes multiple
+  // questions' radios together). Re-queried fresh each iteration since Ashby's React tree can
   // reorder or replace nodes as earlier fields are filled.
-  const questionBlocks = Array.from(document.querySelectorAll('[class*="_container_"], li')).filter(
-    (el) => el.querySelector('input, select, textarea') && el.textContent,
+  const questionBlocks = Array.from(document.querySelectorAll('fieldset[class*="_fieldEntry_"]')).filter(
+    (el) => el.querySelector('input, select, textarea'),
   );
 
   for (const block of questionBlocks) {
@@ -187,6 +234,13 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
         select.dispatchEvent(new Event('change', { bubbles: true }));
         await waitForStableDom();
         fields_filled++;
+        continue;
+      }
+      // Native radios: value is always "on" on Ashby, so match by the associated <label> text.
+      const declineRadio = radioOptionsIn(block).find((o) => /decline|prefer not/i.test(o.text));
+      if (declineRadio) {
+        await checkRadio(declineRadio.radio);
+        fields_filled++;
       } else {
         fields_skipped++;
         skipped_reasons.push('EEO field: no decline-to-answer option found, left blank');
@@ -199,14 +253,6 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
     if ((isAuthQuestion || isSponsorQuestion) && (applicationProfile.work_authorized !== undefined || applicationProfile.needs_sponsorship !== undefined)) {
       const wantYes = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
       const select = block.querySelector<HTMLSelectElement>('select');
-      const radio = block.querySelector<HTMLInputElement>(`input[type="radio"][value="${wantYes ? 'Yes' : 'No'}" i]`);
-      if (radio) {
-        radio.checked = true;
-        radio.dispatchEvent(new Event('change', { bubbles: true }));
-        await waitForStableDom();
-        fields_filled++;
-        continue;
-      }
       if (select) {
         const opt = [...select.options].find((o) => new RegExp(wantYes ? '^yes' : '^no', 'i').test(o.text.trim()));
         if (opt) {
@@ -216,6 +262,24 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
           fields_filled++;
           continue;
         }
+      }
+      // Not every question here is a clean Yes/No (e.g. a sponsorship-type question rendered as
+      // J1/F1/None/Other) - applicationProfile only has a boolean, so only fill when exactly one
+      // option's label unambiguously means yes/no/none; otherwise skip rather than guess a
+      // specific visa type or similar.
+      const options = radioOptionsIn(block);
+      const yesLike = options.filter((o) => /^yes\b/.test(o.text));
+      const noLike = options.filter((o) => /^(no|none|not required|no sponsorship)\b/.test(o.text));
+      const match = wantYes ? (yesLike.length === 1 ? yesLike[0] : undefined) : (noLike.length === 1 ? noLike[0] : undefined);
+      if (match) {
+        await checkRadio(match.radio);
+        fields_filled++;
+        continue;
+      }
+      if (options.length > 0) {
+        fields_skipped++;
+        skipped_reasons.push(`${label.slice(0, 40)}: no unambiguous Yes/No option among [${options.map((o) => o.text).join(', ')}], left blank`);
+        continue;
       }
     }
 
