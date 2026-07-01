@@ -48,6 +48,7 @@ export interface Profile {
     description: string;
   }>;
   skills: string[];
+  projects?: Array<{ name: string; description: string }>;
   school: string;
   grad_year: number;
   target_roles?: string[];
@@ -76,7 +77,8 @@ export type Screen =
   | 'main'
   | 'contacts'
   | 'draft'
-  | 'tracking';
+  | 'tracking'
+  | 'autofill-setup';
 
 // ─── v2: resume-gen + application autofill (PRD-v2-resume-autofill.md) ─────────────
 

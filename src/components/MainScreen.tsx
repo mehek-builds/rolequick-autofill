@@ -12,6 +12,7 @@ interface MainScreenProps {
   onViewDrafts?: () => void;
   onContactsFound: (contacts: Contact[], job: JobContext) => void;
   onViewTracking: () => void;
+  onViewAutofillSetup: () => void;
   onLogout: () => void;
   userSchool?: string;
 }
@@ -71,6 +72,7 @@ export default function MainScreen({
   onViewDrafts,
   onContactsFound,
   onViewTracking,
+  onViewAutofillSetup,
   onLogout,
   userSchool,
 }: MainScreenProps) {
@@ -152,6 +154,15 @@ export default function MainScreen({
           <span className="text-base font-bold tracking-tight text-gray-900">Volley</span>
         </div>
         <div className="flex items-center gap-1">
+          <button
+            onClick={onViewAutofillSetup}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+            title="Autofill setup"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </button>
           <button
             onClick={onViewTracking}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"

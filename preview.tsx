@@ -8,6 +8,7 @@ import MainScreen from './src/components/MainScreen';
 import ContactList from './src/components/ContactList';
 import DraftEditor from './src/components/DraftEditor';
 import TrackingDashboard from './src/components/TrackingDashboard';
+import AutofillSetupScreen from './src/components/AutofillSetupScreen';
 
 const TOKEN = 'preview-token';
 
@@ -70,6 +71,7 @@ function Preview() {
           onViewDrafts={noop}
           onContactsFound={noop}
           onViewTracking={noop}
+          onViewAutofillSetup={noop}
           onLogout={noop}
           userSchool={profile.school}
         />
@@ -89,6 +91,10 @@ function Preview() {
 
       <Frame label="6 · Contacts (loading skeletons)">
         <ContactList contacts={[]} job={job} loading={true} onDraft={noop} onBack={noop} />
+      </Frame>
+
+      <Frame label="7 · Autofill setup (v2, seeded from resume)">
+        <AutofillSetupScreen token={TOKEN} profile={profile} onBack={noop} />
       </Frame>
     </div>
   );

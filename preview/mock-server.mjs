@@ -43,5 +43,13 @@ createServer((req, res) => {
   if (url.startsWith('/track/events')) return send(res, 200, events);
   if (url.startsWith('/draft')) return send(res, 200, draft);
   if (url.startsWith('/track/event')) return send(res, 200, {});
+  // v2 autofill-setup screen: empty bank (so it seeds from the mock profile) and a
+  // 404 application profile (so the screen falls back to blank fields, same as a
+  // first-time visit) unless the preview wants to demo the pre-filled case.
+  if (url.startsWith('/profile/experience-bank')) return send(res, 200, { entries: [] });
+  if (url.startsWith('/profile/application')) {
+    // GET simulates a first-time visit (no profile saved yet); PUT (the save step) succeeds.
+    return req.method === 'GET' ? send(res, 404, { error: 'not found' }) : send(res, 200, {});
+  }
   return send(res, 200, {});
 }).listen(3001, () => console.log('mock backend on :3001'));

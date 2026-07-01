@@ -6,6 +6,7 @@ import MainScreen from '../../components/MainScreen';
 import ContactList from '../../components/ContactList';
 import DraftEditor from '../../components/DraftEditor';
 import TrackingDashboard from '../../components/TrackingDashboard';
+import AutofillSetupScreen from '../../components/AutofillSetupScreen';
 import LoadingSpinner from '../../components/LoadingSpinner';
 
 // Background-stored contacts omit the UI-only `status` field; derive it from the email tier
@@ -162,9 +163,14 @@ export default function App() {
           onViewDrafts={handleViewDrafts}
           onContactsFound={handleContactsFound}
           onViewTracking={() => setScreen('tracking')}
+          onViewAutofillSetup={() => setScreen('autofill-setup')}
           onLogout={handleLogout}
           userSchool={profile.school}
         />
+      )}
+
+      {screen === 'autofill-setup' && token && profile && (
+        <AutofillSetupScreen token={token} profile={profile} onBack={() => setScreen('main')} />
       )}
 
       {screen === 'contacts' && token && job && (
