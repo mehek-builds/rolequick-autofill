@@ -2,6 +2,7 @@ import type { Profile } from './types';
 
 const TOKEN_KEY = 'volley_token';
 const PROFILE_KEY = 'volley_profile';
+const AUTO_SUBMIT_KEY = 'volley_auto_submit_enabled';
 
 function chromeStorageGet<T>(key: string): Promise<T | null> {
   return new Promise((resolve) => {
@@ -46,4 +47,14 @@ export async function setProfile(profile: Profile): Promise<void> {
 export async function clearAll(): Promise<void> {
   await chromeStorageRemove(TOKEN_KEY);
   await chromeStorageRemove(PROFILE_KEY);
+}
+
+// Off by default: fill-and-stop (highlight Submit, student clicks) unless the student has
+// explicitly opted in to the cancelable auto-submit countdown in the extension popup.
+export async function getAutoSubmitEnabled(): Promise<boolean> {
+  return (await chromeStorageGet<boolean>(AUTO_SUBMIT_KEY)) ?? false;
+}
+
+export async function setAutoSubmitEnabled(enabled: boolean): Promise<void> {
+  return chromeStorageSet(AUTO_SUBMIT_KEY, enabled);
 }

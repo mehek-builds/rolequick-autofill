@@ -5,6 +5,7 @@ import {
   getApplicationProfile,
   putApplicationProfile,
 } from '../lib/api';
+import { getAutoSubmitEnabled, setAutoSubmitEnabled } from '../lib/storage';
 import type { ExperienceBankEntry, ApplicationProfile, Profile } from '../lib/types';
 import WarningBanner from './WarningBanner';
 import LoadingSpinner from './LoadingSpinner';
@@ -112,13 +113,15 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
   const [appProfile, setAppProfile] = useState<ApplicationProfile>({});
   const [eeo, setEeo] = useState<Record<string, string>>({});
   const [eeoExpanded, setEeoExpanded] = useState(false);
+  const [autoSubmit, setAutoSubmit] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const [existingBank, existingProfile] = await Promise.all([
+        const [existingBank, existingProfile, storedAutoSubmit] = await Promise.all([
           getExperienceBank(token),
           getApplicationProfile(token).catch(() => null),
+          getAutoSubmitEnabled(),
         ]);
         if (existingBank.length > 0) {
           setBank(existingBank);
@@ -130,6 +133,7 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
           setAppProfile(existingProfile);
           setEeo((existingProfile.eeo_prefs as Record<string, string>) ?? {});
         }
+        setAutoSubmit(storedAutoSubmit);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not load your setup data.');
       } finally {
@@ -164,6 +168,7 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
         ...appProfile,
         eeo_prefs: Object.keys(eeo).length > 0 ? eeo : null,
       });
+      await setAutoSubmitEnabled(autoSubmit);
       setStep('done');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save your setup.');
@@ -420,6 +425,34 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
               </div>
             ))}
 
+            <div className="rounded-xl border border-gray-100 bg-gray-50/50 p-3">
+              <label className="flex items-start justify-between gap-3">
+                <span>
+                  <span className="block text-xs font-medium text-gray-700">Auto-submit after filling</span>
+                  <span className="mt-0.5 block text-[11px] leading-relaxed text-gray-400">
+                    Off by default: Volley fills the form and stops so you can review before hitting
+                    Submit yourself. Turn this on and Volley will submit automatically after a
+                    countdown you can cancel on each application.
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={autoSubmit}
+                  onClick={() => setAutoSubmit((v) => !v)}
+                  className={`relative mt-0.5 h-5 w-9 flex-shrink-0 rounded-full transition-colors ${
+                    autoSubmit ? 'bg-brand-600' : 'bg-gray-200'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                      autoSubmit ? 'translate-x-4' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </label>
+            </div>
+
             <button
               onClick={handleSave}
               className="mt-1 w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:bg-brand-700 hover:shadow-card-hover active:scale-[0.98]"
@@ -446,7 +479,8 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
             <div>
               <p className="text-sm font-semibold text-gray-900">You're set up</p>
               <p className="mt-0.5 text-xs text-gray-400">
-                Next Lever application, Volley will tailor a resume and fill the form for you.
+                Next application, Volley will tailor a resume and fill the form for you
+                {autoSubmit ? ', then submit it after a countdown you can cancel.' : '.'}
               </p>
             </div>
             <button

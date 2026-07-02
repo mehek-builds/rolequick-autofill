@@ -3,6 +3,7 @@ import { isGreenhouseApplicationPage, extractGreenhouseJdText, fillGreenhouseApp
 import { isAshbyApplicationPage, extractAshbyJdText, fillAshbyApplication } from '../lib/adapters/ashby';
 import { isWorkdayApplicationPage, extractWorkdayJdText, fillWorkdayApplication } from '../lib/adapters/workday';
 import { isLinkedInApplicationPage, extractLinkedInJdText, fillLinkedInApplication } from '../lib/adapters/linkedin';
+import { getAutoSubmitEnabled } from '../lib/storage';
 import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
 
 export default defineContentScript({
@@ -429,22 +430,38 @@ export default defineContentScript({
               resumeFileName: result.resume.file_name,
             });
 
-            chrome.runtime.sendMessage({
-              type: 'AUTOFILL_EVENT',
-              payload: {
-                ats_name: fillResult.ats_name,
-                job_context: { company, role: title },
-                fields_filled: fillResult.fields_filled,
-                fields_skipped: fillResult.fields_skipped,
-              },
-            });
+            const submitBtn = findSubmitButton();
+            const autoSubmitOn = await getAutoSubmitEnabled();
+
+            const reportEvent = (autoSubmitted: boolean) => {
+              chrome.runtime.sendMessage({
+                type: 'AUTOFILL_EVENT',
+                payload: {
+                  ats_name: fillResult.ats_name,
+                  job_context: { company, role: title },
+                  fields_filled: fillResult.fields_filled,
+                  fields_skipped: fillResult.fields_skipped,
+                  auto_submitted: autoSubmitted,
+                },
+              });
+            };
+
+            // Auto-submit is opt-in (AutofillSetupScreen toggle, off by default) and only ever
+            // fires from THIS student's own extension, in their own logged-in session, on data
+            // they generated and could still cancel - never something Volley decides on its own.
+            if (autoSubmitOn && submitBtn instanceof HTMLElement) {
+              runAutoSubmitCountdown(card, statusEl, submitBtn, fillResult, reportEvent);
+              return;
+            }
+
+            reportEvent(false);
 
             if (statusEl) {
               statusEl.textContent = `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. Review, then submit yourself.`;
             }
 
-            // Highlight, never click - Volley stops here (PRD-v2 Section 5 Step 4).
-            const submitBtn = findSubmitButton();
+            // Highlight, never click - Volley stops here (PRD-v2 Section 5 Step 4) unless the
+            // student has opted in to auto-submit above.
             if (submitBtn instanceof HTMLElement) {
               submitBtn.style.outline = '3px solid #4f46e5';
               submitBtn.style.outlineOffset = '2px';
@@ -454,6 +471,60 @@ export default defineContentScript({
           },
         );
       });
+    }
+
+    const AUTO_SUBMIT_COUNTDOWN_SECONDS = 8;
+
+    // Opt-in only (AutofillSetupScreen toggle). Shows a cancelable countdown in the same card
+    // rather than clicking Submit the instant the fill finishes, so a mis-filled field or a
+    // second thought still has a window to stop it before anything real goes out.
+    function runAutoSubmitCountdown(
+      card: HTMLElement,
+      statusEl: HTMLElement | null,
+      submitBtn: HTMLElement,
+      fillResult: AutofillResult,
+      reportEvent: (autoSubmitted: boolean) => void,
+    ) {
+      const yesBtn = card.querySelector<HTMLButtonElement>('#wp-resume-yes');
+      const noBtn = card.querySelector<HTMLButtonElement>('#wp-resume-no');
+      if (yesBtn) yesBtn.style.display = 'none';
+
+      let remaining = AUTO_SUBMIT_COUNTDOWN_SECONDS;
+      let cancelled = false;
+
+      const render = () => {
+        if (statusEl) {
+          statusEl.textContent = `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. Submitting in ${remaining}s - tap Cancel to review first.`;
+        }
+      };
+      render();
+
+      if (noBtn) {
+        noBtn.textContent = 'Cancel';
+        noBtn.onclick = () => {
+          cancelled = true;
+          clearInterval(interval);
+          if (statusEl) statusEl.textContent = 'Cancelled. Review, then submit yourself.';
+          submitBtn.style.outline = '3px solid #4f46e5';
+          submitBtn.style.outlineOffset = '2px';
+          reportEvent(false);
+          setTimeout(() => card.remove(), 4000);
+        };
+      }
+
+      const interval = setInterval(() => {
+        remaining -= 1;
+        if (cancelled) { clearInterval(interval); return; }
+        if (remaining <= 0) {
+          clearInterval(interval);
+          if (statusEl) statusEl.textContent = 'Submitting...';
+          submitBtn.click();
+          reportEvent(true);
+          setTimeout(() => card.remove(), 2000);
+          return;
+        }
+        render();
+      }, 1000);
     }
 
     // ─── Entry point ────────────────────────────────────────────────────────
