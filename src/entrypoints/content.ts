@@ -124,7 +124,9 @@ export default defineContentScript({
       }
 
       if (h.includes('lever.co')) return path.includes('/apply');
-      if (h.includes('ashbyhq.com')) return path.includes('/apply');
+      // Live-tested 2026-07-02 (jobs.ashbyhq.com/notion): the real apply-flow path is
+      // "/application", not "/apply" - see isAshbyApplicationPage()'s matching comment.
+      if (h.includes('ashbyhq.com')) return path.includes('/apply') || path.includes('/application');
       if (h.includes('joinhandshake.com')) return path.includes('/apply') || path.includes('/application');
       if (h.includes('indeed.com')) {
         return path.includes('/apply') || !!document.querySelector('[id*="apply"], [class*="apply-form"]');

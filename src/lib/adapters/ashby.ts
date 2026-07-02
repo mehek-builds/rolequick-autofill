@@ -141,7 +141,11 @@ export interface AshbyFillParams {
 }
 
 export function isAshbyApplicationPage(): boolean {
-  return window.location.hostname.includes('ashbyhq.com') && window.location.pathname.includes('/apply');
+  // Live-tested 2026-07-02 (jobs.ashbyhq.com/notion): the real apply-flow path is
+  // "/application", not "/apply" - "/apply" alone never matched anything on this template and
+  // the fill card never appeared. Both are checked in case older/other boards use "/apply".
+  const path = window.location.pathname;
+  return window.location.hostname.includes('ashbyhq.com') && (path.includes('/apply') || path.includes('/application'));
 }
 
 export function extractAshbyJdText(): string {
