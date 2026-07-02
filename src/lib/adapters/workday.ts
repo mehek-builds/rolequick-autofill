@@ -88,6 +88,26 @@ export function isWorkdayAccountCreationPage(): boolean {
   return hasAccountCreationMarkers();
 }
 
+// The "Start Your Application" triage screen most Workday tenants show before any of the
+// above - three options (Workday's own resume-autofill, "Apply Manually", "Use My Last
+// Application"), none of which are a password field or the real form yet, so neither
+// isWorkdayAccountCreationPage() nor isWorkdayApplicationPage() fires here and the student was
+// previously left with no guidance at all. "Apply Manually" is the option this adapter's
+// selectors are actually built against (the other two skip or alter the flow in ways not
+// verified here), so that's the one to point the student at.
+export function isWorkdayStartScreen(): boolean {
+  const h = window.location.hostname;
+  if (!h.includes('myworkdayjobs.com') && !h.includes('workday.com')) return false;
+  if (!looksLikeApplyUrl()) return false;
+  if (hasAccountCreationMarkers() || hasApplicationFormMarkers()) return false;
+  return /start your application/i.test(document.body.innerText) && !!findApplyManuallyButton();
+}
+
+export function findApplyManuallyButton(): Element | null {
+  const buttons = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
+  return buttons.find((b) => /^apply manually$/i.test(b.textContent?.trim() || '')) ?? null;
+}
+
 export function extractWorkdayJdText(): string {
   // The job-posting page and the application-form page are often different URLs on
   // Workday; some tenants keep a summary of the role visible in a sidebar throughout

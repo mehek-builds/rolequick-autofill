@@ -4,6 +4,7 @@ import { isAshbyApplicationPage, extractAshbyJdText, fillAshbyApplication } from
 import {
   isWorkdayApplicationPage, extractWorkdayJdText, fillWorkdayApplication,
   isWorkdayAccountCreationPage, fillWorkdayAccountCreation,
+  isWorkdayStartScreen, findApplyManuallyButton,
 } from '../lib/adapters/workday';
 import { isLinkedInApplicationPage, extractLinkedInJdText, fillLinkedInApplication } from '../lib/adapters/linkedin';
 import { getAutoSubmitEnabled } from '../lib/storage';
@@ -671,6 +672,52 @@ export default defineContentScript({
       });
     }
 
+    // Guidance for Workday's "Start Your Application" triage screen (Autofill with Resume /
+    // Apply Manually / Use My Last Application) - previously Volley said nothing here, leaving
+    // the student to guess which option leads anywhere useful. This just points them at the
+    // right one and clicks it for them - pure page navigation, not a form submission or account
+    // action, so it isn't gated behind the auto-submit toggle the way real submits are.
+    function injectWorkdayStartScreenCard() {
+      if (document.getElementById('volley-start-card')) return;
+      const card = document.createElement('div');
+      card.id = 'volley-start-card';
+      card.innerHTML = `
+        <div style="
+          position: fixed; bottom: 72px; right: 306px; z-index: 2147483647;
+          background: white; border: 1.5px solid #e0e7ff; border-radius: 14px;
+          padding: 16px 16px 14px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          font-size: 13px; line-height: 1.4; box-shadow: 0 8px 32px rgba(79,70,229,0.18);
+          max-width: 272px; animation: wp-slide-in 0.25s ease-out;
+        ">
+          <button id="wp-start-close" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
+          <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;">
+            <span style="font-size:20px;flex-shrink:0;margin-top:1px;">👋</span>
+            <div>
+              <div style="font-weight:700;font-size:13px;color:#1e1b4b;">This employer uses Workday</div>
+              <div style="font-size:12px;color:#6b7280;margin-top:2px;">
+                You'll need to sign in or create an account first - that part's still on you. Tap below
+                and Volley will take you to the right screen, then speed up account setup and the
+                application from there.
+              </div>
+            </div>
+          </div>
+          <button id="wp-start-go" style="
+            width:100%;background:#4f46e5;color:white;border:none;border-radius:8px;
+            padding:9px 0;font-size:12px;font-weight:600;cursor:pointer;
+            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+          ">Take me there</button>
+        </div>
+      `;
+      document.body.appendChild(card);
+
+      card.querySelector('#wp-start-close')?.addEventListener('click', () => card.remove());
+      card.querySelector('#wp-start-go')?.addEventListener('click', () => {
+        const btn = findApplyManuallyButton();
+        if (btn instanceof HTMLElement) btn.click();
+        card.remove();
+      });
+    }
+
     // ─── Entry point ────────────────────────────────────────────────────────
 
     function init() {
@@ -716,6 +763,12 @@ export default defineContentScript({
           // from scratch. Fires only on the account-creation screen; isWorkdayApplicationPage()
           // above takes over instantly once the real form appears (fast SPA-nav polling below).
           injectWorkdayAccountCreationCard();
+        } else if (isWorkdayStartScreen()) {
+          // The triage screen before either of the above two - previously Volley said
+          // nothing here at all, leaving the student to guess between three unlabeled-in-
+          // effect options. Points them at "Apply Manually" specifically, since that's the
+          // path this adapter's selectors are built against.
+          injectWorkdayStartScreenCard();
         }
       } else {
         // Job listing page: silently notify the popup so it can pre-fill fields
@@ -750,19 +803,24 @@ export default defineContentScript({
         document.getElementById('volley-submit-card')?.remove();
         document.getElementById('volley-resume-card')?.remove();
         document.getElementById('volley-account-card')?.remove();
+        document.getElementById('volley-start-card')?.remove();
         setTimeout(init, NAV_RECHECK_DELAY_MS);
       }
     }).observe(document.body, { childList: true, subtree: true });
 
-    // Workday specifically can swap the account-creation screen for the real application form
-    // without a URL change in some tenants (a same-path client-side re-render rather than a
-    // navigation), which the MutationObserver above wouldn't catch via its URL-diff check. A
-    // cheap poll (just two DOM marker lookups) re-runs init() whenever neither of Volley's own
-    // two Workday cards is currently showing, so a stage change gets picked up within ~500ms
-    // instead of waiting for the next navigation event.
+    // Workday specifically can swap stages (start screen -> account creation -> real
+    // application form) without a URL change in some tenants (a same-path client-side
+    // re-render rather than a navigation), which the MutationObserver above wouldn't catch via
+    // its URL-diff check. A cheap poll (just DOM marker lookups) re-runs init() whenever none of
+    // Volley's three Workday cards is currently showing, so a stage change gets picked up within
+    // ~500ms instead of waiting for the next navigation event.
     if (isWorkdayHost) {
       setInterval(() => {
-        if (!document.getElementById('volley-account-card') && !document.getElementById('volley-resume-card')) {
+        if (
+          !document.getElementById('volley-account-card') &&
+          !document.getElementById('volley-resume-card') &&
+          !document.getElementById('volley-start-card')
+        ) {
           init();
         }
       }, 500);
