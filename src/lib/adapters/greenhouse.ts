@@ -176,7 +176,8 @@ export function isGreenhouseApplicationPage(): boolean {
 
 export function extractGreenhouseJdText(): string {
   const desc = document.querySelector('#content, .job__description, [data-qa="job-description"]');
-  return (desc?.textContent ?? document.body.innerText).trim().slice(0, 12000);
+  const descText = desc?.textContent?.trim();
+  return (descText || document.body.innerText).trim().slice(0, 12000);
 }
 
 function splitName(fullName: string): { first: string; last: string } {

@@ -68,7 +68,8 @@ export function isLeverApplicationPage(): boolean {
 
 export function extractLeverJdText(): string {
   const desc = document.querySelector('.posting-page, [data-qa="posting-description"], .section-wrapper');
-  return (desc?.textContent ?? document.body.innerText).trim().slice(0, 12000);
+  const descText = desc?.textContent?.trim();
+  return (descText || document.body.innerText).trim().slice(0, 12000);
 }
 
 export async function fillLeverApplication(params: LeverFillParams): Promise<AutofillResult> {

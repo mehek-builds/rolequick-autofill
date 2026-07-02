@@ -71,11 +71,13 @@ export function isLinkedInApplicationPage(): boolean {
 export function extractLinkedInJdText(): string {
   // The Easy Apply modal sits on top of the job posting, not inside it - the description
   // is still in the underlying page, not the modal.
-  const desc =
+  const descText = (
     document.querySelector('.jobs-description__content')?.textContent ??
     document.querySelector('#job-details')?.textContent ??
-    document.querySelector('[class*="jobs-description"]')?.textContent;
-  return (desc ?? document.body.innerText).trim().slice(0, 12000);
+    document.querySelector('[class*="jobs-description"]')?.textContent ??
+    ''
+  ).trim();
+  return (descText || document.body.innerText).trim().slice(0, 12000);
 }
 
 // Each question in the Easy Apply modal is wrapped in one of these grouping containers,

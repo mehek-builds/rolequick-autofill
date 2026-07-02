@@ -67,7 +67,7 @@ export default defineContentScript({
           document.querySelector<HTMLElement>('.posting-headline h2')?.textContent?.trim() ??
           document.querySelector<HTMLElement>('h2')?.textContent?.trim();
         const company =
-          document.querySelector<HTMLElement>('.main-header-logo img')?.getAttribute('alt')?.trim() ??
+          document.querySelector<HTMLElement>('.main-header-logo img')?.getAttribute('alt')?.trim().replace(/\s+logo$/i, '') ??
           path.split('/')[1];
         if (title && company) return { title, company };
       }

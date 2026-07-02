@@ -146,7 +146,8 @@ export function isAshbyApplicationPage(): boolean {
 
 export function extractAshbyJdText(): string {
   const desc = document.querySelector('[class*="job-posting"], [class*="description"]');
-  return (desc?.textContent ?? document.body.innerText).trim().slice(0, 12000);
+  const descText = desc?.textContent?.trim();
+  return (descText || document.body.innerText).trim().slice(0, 12000);
 }
 
 export async function fillAshbyApplication(params: AshbyFillParams): Promise<AutofillResult> {

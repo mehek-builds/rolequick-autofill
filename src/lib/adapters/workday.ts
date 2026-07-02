@@ -77,10 +77,12 @@ export function extractWorkdayJdText(): string {
   // Workday; some tenants keep a summary of the role visible in a sidebar throughout
   // the apply flow (`jobPostingHeader`), but this isn't guaranteed across tenants, so
   // this falls back to whatever text is on the current page rather than failing closed.
-  const desc =
+  const descText = (
     document.querySelector('[data-automation-id="jobPostingHeader"]')?.closest('div')?.textContent ??
-    document.querySelector('[data-automation-id="jobPostingDescription"]')?.textContent;
-  return (desc ?? document.body.innerText).trim().slice(0, 12000);
+    document.querySelector('[data-automation-id="jobPostingDescription"]')?.textContent ??
+    ''
+  ).trim();
+  return (descText || document.body.innerText).trim().slice(0, 12000);
 }
 
 // `<input type="file">` can't be set directly by script; construct a File/DataTransfer and
