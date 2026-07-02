@@ -1,8 +1,8 @@
 import { isLeverApplicationPage, extractLeverJdText, fillLeverApplication } from '../lib/adapters/lever';
 import { isGreenhouseApplicationPage, extractGreenhouseJdText, fillGreenhouseApplication } from '../lib/adapters/greenhouse';
 import { isAshbyApplicationPage, extractAshbyJdText, fillAshbyApplication } from '../lib/adapters/ashby';
-import { isWorkdayApplicationPage, extractWorkdayJdText } from '../lib/adapters/workday';
-import { isLinkedInApplicationPage, extractLinkedInJdText } from '../lib/adapters/linkedin';
+import { isWorkdayApplicationPage, extractWorkdayJdText, fillWorkdayApplication } from '../lib/adapters/workday';
+import { isLinkedInApplicationPage, extractLinkedInJdText, fillLinkedInApplication } from '../lib/adapters/linkedin';
 import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
 
 export default defineContentScript({
@@ -201,10 +201,11 @@ export default defineContentScript({
           // Also watch for the submit button inside the modal
           watchSubmitButton(title, company, window.location.href);
         }
-        // Detection-only (PRD-v2 Section 3 non-goal, ban-risk-aware per v0 Section 8):
-        // resume-gen fires alongside the modal, but nothing writes into LinkedIn's own form.
+        // Fill-and-stop, same as Lever/Greenhouse/Ashby (2026-07-02: form-fill now runs
+        // on LinkedIn too, not just resume-gen). Easy Apply already implies a real
+        // LinkedIn account exists (there's no separate account-creation step inside it).
         if (isLinkedInApplicationPage()) {
-          injectResumeGenOnlyCard(title, company, 'LinkedIn', extractLinkedInJdText);
+          injectResumeFillCard(title, company, extractLinkedInJdText, fillLinkedInApplication);
         }
       }
 
@@ -455,73 +456,6 @@ export default defineContentScript({
       });
     }
 
-    // Detection-only ATSes (LinkedIn Easy Apply, Workday - PRD-v2 Section 3 non-goals):
-    // generates the tailored resume and the parallel outreach draft, but never writes into
-    // the form. No fill/skip counts to report, so no AUTOFILL_EVENT is sent here - the
-    // events table's fields_filled/fields_skipped are for actual fill attempts.
-    function injectResumeGenOnlyCard(title: string, company: string, atsLabel: string, extractJdText: () => string) {
-      if (document.getElementById('volley-resume-card')) return;
-      const card = document.createElement('div');
-      card.id = 'volley-resume-card';
-      card.innerHTML = `
-        <div style="
-          position: fixed; bottom: 72px; right: 306px; z-index: 2147483647;
-          background: white; border: 1.5px solid #e0e7ff; border-radius: 14px;
-          padding: 16px 16px 14px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-          font-size: 13px; line-height: 1.4; box-shadow: 0 8px 32px rgba(79,70,229,0.18);
-          max-width: 272px; animation: wp-slide-in 0.25s ease-out;
-        ">
-          <button id="wp-resume-close" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
-          <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;">
-            <span style="font-size:20px;flex-shrink:0;margin-top:1px;">📄</span>
-            <div>
-              <div style="font-weight:700;font-size:13px;color:#1e1b4b;">Generate a tailored resume?</div>
-              <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;">${title} at ${company} · autofill isn't available on ${atsLabel} yet, attach it yourself</div>
-            </div>
-          </div>
-          <div id="wp-resume-status" style="font-size:11px;color:#6b7280;margin-bottom:8px;display:none;"></div>
-          <div style="display:flex;gap:8px;">
-            <button id="wp-resume-yes" style="
-              flex:1;background:#4f46e5;color:white;border:none;border-radius:8px;
-              padding:9px 0;font-size:12px;font-weight:600;cursor:pointer;
-              font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-            ">Yes, generate it</button>
-            <button id="wp-resume-no" style="
-              flex:1;background:#f3f4f6;color:#374151;border:none;border-radius:8px;
-              padding:9px 0;font-size:12px;font-weight:600;cursor:pointer;
-              font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-            ">No thanks</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(card);
-
-      const dismiss = () => card.remove();
-      card.querySelector('#wp-resume-close')?.addEventListener('click', dismiss);
-      card.querySelector('#wp-resume-no')?.addEventListener('click', dismiss);
-      card.querySelector('#wp-resume-yes')?.addEventListener('click', () => {
-        const statusEl = card.querySelector<HTMLElement>('#wp-resume-status');
-        const yesBtn = card.querySelector<HTMLButtonElement>('#wp-resume-yes');
-        if (yesBtn) yesBtn.disabled = true;
-        if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Tailoring your resume...'; }
-
-        const jdText = extractJdText();
-
-        chrome.runtime.sendMessage(
-          { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: jdText } },
-          (result: { error?: string; resume?: { resume_url: string; file_name: string } }) => {
-            if (!result || result.error || !result.resume) {
-              if (statusEl) statusEl.textContent = result?.error || 'Could not generate a resume this time.';
-              return;
-            }
-            if (statusEl) {
-              statusEl.innerHTML = `Ready - <a href="${result.resume.resume_url}" target="_blank" rel="noopener" style="color:#4f46e5;font-weight:600;">open resume</a>, then attach it here yourself.`;
-            }
-          },
-        );
-      });
-    }
-
     // ─── Entry point ────────────────────────────────────────────────────────
 
     function init() {
@@ -553,8 +487,12 @@ export default defineContentScript({
         } else if (isAshbyApplicationPage()) {
           injectResumeFillCard(job.title, job.company, extractAshbyJdText, fillAshbyApplication);
         } else if (isWorkdayApplicationPage()) {
-          // Detection-only (PRD-v2 Section 3 non-goal): resume-gen + outreach fire, no fill.
-          injectResumeGenOnlyCard(job.title, job.company, 'Workday', extractWorkdayJdText);
+          // Fill-and-stop, same as the other three (2026-07-02: form-fill now runs on
+          // Workday too). isWorkdayApplicationPage() itself is the "account already
+          // exists" gate - it returns false during Workday's account-creation step, so
+          // this card (and the fill it triggers) never appears before a real account
+          // exists, only once the student has reached the actual application form.
+          injectResumeFillCard(job.title, job.company, extractWorkdayJdText, fillWorkdayApplication);
         }
       } else {
         // Job listing page: silently notify the popup so it can pre-fill fields

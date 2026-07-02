@@ -1,23 +1,49 @@
-// Workday adapter (PRD-v2-resume-autofill.md Section 7, non-goal in Section 3: "No full
-// Workday multi-page wizard automation in v2.0"). Detection-only - this triggers resume
-// generation + the parallel outreach draft, but never touches the form itself. The student
-// fills the Workday application by hand and attaches the generated resume manually.
+import type { ApplicationProfile, AutofillResult, Profile } from '../types';
+
+// Workday adapter (PRD-v2-resume-autofill.md Section 7). Originally scoped as
+// detection-only per Section 3's "no full Workday multi-page wizard automation in v2.0"
+// non-goal; per product direction 2026-07-02, form-fill now runs here too, gated on the
+// same "account already exists" check Section 12's resolved item 5 introduced for
+// detection - the badge (and now the fill) never fires during Workday's account-creation
+// step, only once the student has an account and has actually landed on the real
+// application-form page.
 //
-// Section 12's resolved item 5 clarifies WHEN detection is allowed to fire: not during
-// Workday's account-creation step, only once the student has an account and has actually
-// landed on the real application-form page. Workday tenants vary widely in DOM structure
-// (this is a hosted platform white-labeled per company, not a single shared template like
-// Greenhouse/Lever/Ashby), so this heuristic is intentionally conservative and has NOT been
-// live-tested against a real Workday tenant the way the other three adapters have - it
-// should be treated as a starting point, not a verified integration, until run against a
-// real posting.
+// Workday tenants vary widely in DOM structure (this is a hosted platform white-labeled
+// per company, not a single shared template like Greenhouse/Lever/Ashby), so both the
+// detection heuristic and the fill selectors below are written from Workday's
+// well-documented, broadly-consistent `data-automation-id` conventions, NOT from a live
+// test against a real tenant the way Lever/Greenhouse/Ashby were. Treat this as a
+// starting point - verify against a real live posting before trusting it in front of a
+// student, the same caveat the detection-only version of this file already carried.
 //
 // Account-creation heuristic: Workday's create-account/sign-in step always renders a
 // password input and account-related copy; the real application form (after account
 // creation) renders resume-upload and "My Experience"/"My Information" step markers instead.
 // A page showing both (rare, but possible mid-transition) is treated as NOT yet a real
-// application page - false negatives here are the safe failure mode (PRD's "detection
-// gated on account already existing" - erring toward not firing beats firing too early).
+// application page - false negatives here are the safe failure mode (erring toward not
+// firing beats firing too early, same as detection).
+
+const NEVER_FILL_LABEL_PATTERNS = [/social security/i, /ssn\b/i, /driver'?s?\s*licen[sc]e/i, /background check consent/i];
+
+function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
+  const ms = minMs + Math.random() * (maxMs - minMs);
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+  setter?.call(el, value);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+async function fillField(el: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
+  await randomDelay();
+  el.focus();
+  setNativeValue(el, value);
+  el.blur();
+}
 
 function hasAccountCreationMarkers(): boolean {
   const hasPasswordField = !!document.querySelector('input[type="password"]');
@@ -42,7 +68,7 @@ export function isWorkdayApplicationPage(): boolean {
   const path = window.location.pathname.toLowerCase();
   const looksLikeApplyUrl = path.includes('/apply') || (path.includes('/job/') && path.endsWith('/apply'));
   if (!looksLikeApplyUrl) return false;
-  if (hasAccountCreationMarkers()) return false; // Section 12 item 5: never fire during account creation
+  if (hasAccountCreationMarkers()) return false; // never fire during account creation
   return hasApplicationFormMarkers();
 }
 
@@ -55,4 +81,194 @@ export function extractWorkdayJdText(): string {
     document.querySelector('[data-automation-id="jobPostingHeader"]')?.closest('div')?.textContent ??
     document.querySelector('[data-automation-id="jobPostingDescription"]')?.textContent;
   return (desc ?? document.body.innerText).trim().slice(0, 12000);
+}
+
+// `<input type="file">` can't be set directly by script; construct a File/DataTransfer and
+// dispatch it. Workday's upload widget renders a dropzone over a real file input in most
+// tenants; this targets that input directly rather than the dropzone UI element.
+async function fillResumeFile(blob: Blob, fileName: string): Promise<boolean> {
+  const input = document.querySelector<HTMLInputElement>(
+    '[data-automation-id="file-upload-drop-zone"] input[type="file"], [data-automation-id*="resumeUpload"] input[type="file"], input[type="file"]',
+  );
+  if (!input) return false;
+  await randomDelay();
+  const file = new File([blob], fileName, { type: 'application/pdf' });
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  input.files = dt.files;
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  return true;
+}
+
+function labelTextFor(el: Element): string {
+  // Workday wraps most fields in a container carrying `data-automation-id` ending in
+  // "...Section" or similar, with the visible question text elsewhere in that container
+  // (not always a real <label for=...>) - fall back to the whole container's text.
+  const container = el.closest('[data-automation-id$="Section"], fieldset, li') ?? el.parentElement;
+  return (container?.textContent ?? '').trim().toLowerCase();
+}
+
+function isNeverFillField(el: Element): boolean {
+  return NEVER_FILL_LABEL_PATTERNS.some((re) => re.test(labelTextFor(el)));
+}
+
+export interface WorkdayFillParams {
+  fullName: string;
+  email?: string;
+  profile: Profile;
+  applicationProfile: ApplicationProfile;
+  resumeBlob?: Blob;
+  resumeFileName?: string;
+}
+
+function splitName(fullName: string): { first: string; last: string } {
+  const parts = fullName.trim().split(/\s+/);
+  return { first: parts[0] ?? '', last: parts.slice(1).join(' ') };
+}
+
+export async function fillWorkdayApplication(params: WorkdayFillParams): Promise<AutofillResult> {
+  const { fullName, email, applicationProfile, resumeBlob, resumeFileName } = params;
+  let fields_filled = 0;
+  let fields_skipped = 0;
+  const skipped_reasons: string[] = [];
+
+  // High-confidence fields: these automation-id conventions are broadly consistent across
+  // Workday tenants per public documentation, unlike everything else on this platform.
+  const firstEl = document.querySelector<HTMLInputElement>('input[data-automation-id="legalNameSection_firstName"]');
+  const lastEl = document.querySelector<HTMLInputElement>('input[data-automation-id="legalNameSection_lastName"]');
+  const emailEl = document.querySelector<HTMLInputElement>('input[data-automation-id="email"]');
+  const phoneEl = document.querySelector<HTMLInputElement>('input[data-automation-id="phone-number"]');
+  const cityEl = document.querySelector<HTMLInputElement>('input[data-automation-id="addressSection_city"]');
+
+  if (firstEl && !firstEl.value && fullName) {
+    await fillField(firstEl, splitName(fullName).first);
+    fields_filled++;
+  }
+  if (lastEl && !lastEl.value && fullName) {
+    await fillField(lastEl, splitName(fullName).last);
+    fields_filled++;
+  }
+  if (emailEl && !emailEl.value) {
+    if (email) {
+      await fillField(emailEl, email);
+      fields_filled++;
+    } else {
+      fields_skipped++;
+      skipped_reasons.push('email: not present in stored profile');
+    }
+  }
+  if (phoneEl && !phoneEl.value && applicationProfile.phone) {
+    await fillField(phoneEl, applicationProfile.phone);
+    fields_filled++;
+  }
+  if (cityEl && !cityEl.value && applicationProfile.address_city) {
+    await fillField(cityEl, applicationProfile.address_city);
+    fields_filled++;
+  }
+
+  if (resumeBlob && resumeFileName) {
+    if (await fillResumeFile(resumeBlob, resumeFileName)) {
+      fields_filled++;
+    } else {
+      fields_skipped++;
+      skipped_reasons.push('resume: no file input found in this frame');
+    }
+  } else {
+    fields_skipped++;
+    skipped_reasons.push('resume: no generated resume file available');
+  }
+
+  // Everything else (links, work-auth, sponsorship, EEO, screening questions) is
+  // tenant-specific with no stable automation-id, so match by label text - same
+  // defensive pattern as the other three adapters - and skip+flag rather than guess.
+  const questionBlocks = Array.from(
+    document.querySelectorAll('[data-automation-id$="Section"], fieldset'),
+  ).filter((el) => el.querySelector('input, select, textarea'));
+
+  for (const block of questionBlocks) {
+    if (isNeverFillField(block)) {
+      fields_skipped++;
+      skipped_reasons.push('never-fill field (SSN/license/background-check consent), left for manual entry');
+      continue;
+    }
+
+    const label = labelTextFor(block);
+
+    const linkTarget =
+      /linkedin/i.test(label) ? applicationProfile.linkedin_url :
+      /github/i.test(label) ? applicationProfile.github_url :
+      /portfolio|website/i.test(label) ? applicationProfile.portfolio_url :
+      undefined;
+    if (linkTarget !== undefined) {
+      const input = block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"]');
+      if (input && !input.value) {
+        if (linkTarget) {
+          await fillField(input, linkTarget);
+          fields_filled++;
+        } else {
+          fields_skipped++;
+          skipped_reasons.push(`${label.slice(0, 40)}: no value in application profile`);
+        }
+        continue;
+      }
+    }
+
+    const isEeo = /gender|race|ethnicity|veteran|disability/i.test(label);
+    if (isEeo) {
+      // Never guess or default EEO fields (PRD-v2 non-goals). Only select a decline-to-answer
+      // option where one exists; otherwise leave the field untouched.
+      const select = block.querySelector<HTMLSelectElement>('select');
+      const declineOption = select ? [...select.options].find((o) => /decline/i.test(o.text)) : undefined;
+      if (select && declineOption) {
+        select.value = declineOption.value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        fields_filled++;
+        continue;
+      }
+      const declineRadio = block.querySelector<HTMLInputElement>('input[type="radio"][value*="Decline" i]');
+      if (declineRadio) {
+        declineRadio.checked = true;
+        declineRadio.dispatchEvent(new Event('change', { bubbles: true }));
+        fields_filled++;
+      } else {
+        fields_skipped++;
+        skipped_reasons.push('EEO field: no decline-to-answer option found, left blank');
+      }
+      continue;
+    }
+
+    const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
+    const isSponsorQuestion = /sponsorship/i.test(label);
+    if ((isAuthQuestion || isSponsorQuestion) && (applicationProfile.work_authorized !== undefined || applicationProfile.needs_sponsorship !== undefined)) {
+      const wantYes = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
+      const radio = block.querySelector<HTMLInputElement>(`input[type="radio"][value="${wantYes ? 'Yes' : 'No'}" i]`);
+      if (radio) {
+        radio.checked = true;
+        radio.dispatchEvent(new Event('change', { bubbles: true }));
+        fields_filled++;
+        continue;
+      }
+      const select = block.querySelector<HTMLSelectElement>('select');
+      if (select) {
+        const opt = [...select.options].find((o) => new RegExp(wantYes ? '^yes' : '^no', 'i').test(o.text.trim()));
+        if (opt) {
+          select.value = opt.value;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+          fields_filled++;
+          continue;
+        }
+      }
+      fields_skipped++;
+      skipped_reasons.push(`${label.slice(0, 40)}: no clean Yes/No control found, left blank`);
+      continue;
+    }
+
+    const textInput = block.querySelector('input[type="text"], textarea');
+    if (textInput && !(textInput as HTMLInputElement).value) {
+      fields_skipped++;
+      skipped_reasons.push(`open-ended question left blank: "${label.slice(0, 60)}"`);
+    }
+  }
+
+  return { ats_name: 'workday', fields_filled, fields_skipped, skipped_reasons };
 }
