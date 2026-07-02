@@ -47,9 +47,16 @@ async function fillField(el: HTMLInputElement | HTMLTextAreaElement, value: stri
 
 function hasAccountCreationMarkers(): boolean {
   const hasPasswordField = !!document.querySelector('input[type="password"]');
+  if (hasPasswordField) return true;
+  // Live-tested 2026-07-03 (a real NVIDIA posting): the body-text fallback below false-
+  // positived on every single step of the 7-step flow, not just account creation, because
+  // Workday's persistent step-progress list literally reads "current step 1 of 7: Create
+  // Account/Sign In" and stays in the DOM throughout - the text regex matched that label,
+  // not actual page content. Requiring at least one real input field on the page (the sign-
+  // in landing screen has zero before the student picks a method) filters that out.
+  if (document.querySelectorAll('input').length === 0) return false;
   const bodyText = document.body.innerText.toLowerCase();
-  const hasAccountCopy = /create account|create an account|sign in to your account|verify your email/.test(bodyText);
-  return hasPasswordField || hasAccountCopy;
+  return /create account|create an account|sign in to your account|verify your email/.test(bodyText);
 }
 
 function hasApplicationFormMarkers(): boolean {
