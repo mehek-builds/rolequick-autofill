@@ -422,13 +422,32 @@ export default defineContentScript({
               // and flag it rather than fail the whole fill.
             }
 
-            const fillResult = await fill({
-              fullName: result.profile.full_name ?? '',
-              profile: result.profile,
-              applicationProfile: result.applicationProfile,
-              resumeBlob,
-              resumeFileName: result.resume.file_name,
-            });
+            // Safety net: a stuck field (an unexpected widget, a listener that never fires) must
+            // never leave the student staring at "Filling the application..." forever with no
+            // way to know what happened. 20s is generous for even a form with many custom
+            // questions; if the adapter is still running past that, something is wrong and the
+            // student needs to be told rather than left waiting silently.
+            const FILL_TIMEOUT_MS = 20000;
+            let fillResult: AutofillResult;
+            try {
+              fillResult = await Promise.race([
+                fill({
+                  fullName: result.profile.full_name ?? '',
+                  profile: result.profile,
+                  applicationProfile: result.applicationProfile,
+                  resumeBlob,
+                  resumeFileName: result.resume.file_name,
+                }),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error('timed out')), FILL_TIMEOUT_MS),
+                ),
+              ]);
+            } catch {
+              if (statusEl) statusEl.textContent = 'This form is taking too long to fill - some fields may be partially filled. Review and finish it yourself.';
+              if (yesBtn) yesBtn.style.display = 'none';
+              setTimeout(dismiss, 8000);
+              return;
+            }
 
             const submitBtn = findSubmitButton();
             const autoSubmitOn = await getAutoSubmitEnabled();
