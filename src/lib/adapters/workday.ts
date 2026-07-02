@@ -62,14 +62,30 @@ function hasApplicationFormMarkers(): boolean {
   return hasResumeUpload || hasStepMarkers;
 }
 
+function looksLikeApplyUrl(): boolean {
+  const path = window.location.pathname.toLowerCase();
+  return path.includes('/apply') || (path.includes('/job/') && path.endsWith('/apply'));
+}
+
 export function isWorkdayApplicationPage(): boolean {
   const h = window.location.hostname;
   if (!h.includes('myworkdayjobs.com') && !h.includes('workday.com')) return false;
-  const path = window.location.pathname.toLowerCase();
-  const looksLikeApplyUrl = path.includes('/apply') || (path.includes('/job/') && path.endsWith('/apply'));
-  if (!looksLikeApplyUrl) return false;
+  if (!looksLikeApplyUrl()) return false;
   if (hasAccountCreationMarkers()) return false; // never fire during account creation
   return hasApplicationFormMarkers();
+}
+
+// 2026-07-03: Volley never creates the Workday account itself (backend-driven third-party
+// account creation was scoped, researched, and explicitly decided against - see project memory
+// for the CFAA/agency-law reasoning). This only pre-fills the signup form's own fields so the
+// student reviews and clicks "Create Account" themselves, same fill-and-stop trust model as
+// every other adapter - it's the speed-up that's actually in scope, not a way around the
+// account-creation boundary.
+export function isWorkdayAccountCreationPage(): boolean {
+  const h = window.location.hostname;
+  if (!h.includes('myworkdayjobs.com') && !h.includes('workday.com')) return false;
+  if (!looksLikeApplyUrl()) return false;
+  return hasAccountCreationMarkers();
 }
 
 export function extractWorkdayJdText(): string {
@@ -269,6 +285,49 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
     if (textInput && !(textInput as HTMLInputElement).value) {
       fields_skipped++;
       skipped_reasons.push(`open-ended question left blank: "${label.slice(0, 60)}"`);
+    }
+  }
+
+  return { ats_name: 'workday', fields_filled, fields_skipped, skipped_reasons };
+}
+
+export interface WorkdayAccountCreationParams {
+  email?: string;
+  password?: string;
+}
+
+// Fills the signup form's own email/password/confirm-password fields and stops - the student
+// still clicks "Create Account" themselves (or the existing opt-in auto-submit countdown does,
+// same toggle as everywhere else). Workday's create-account screen typically renders exactly
+// two password inputs (password + confirm); this fills whichever ones it finds rather than
+// assuming a fixed count, since tenants vary.
+export async function fillWorkdayAccountCreation(params: WorkdayAccountCreationParams): Promise<AutofillResult> {
+  const { email, password } = params;
+  let fields_filled = 0;
+  let fields_skipped = 0;
+  const skipped_reasons: string[] = [];
+
+  const emailEl = document.querySelector<HTMLInputElement>('input[data-automation-id="email"], input[type="email"]');
+  if (emailEl && !emailEl.value) {
+    if (email) {
+      await fillField(emailEl, email);
+      fields_filled++;
+    } else {
+      fields_skipped++;
+      skipped_reasons.push('email: not present in stored profile');
+    }
+  }
+
+  const passwordEls = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="password"]')).filter((el) => !el.value);
+  if (passwordEls.length > 0) {
+    if (password) {
+      for (const el of passwordEls) {
+        await fillField(el, password);
+        fields_filled++;
+      }
+    } else {
+      fields_skipped++;
+      skipped_reasons.push('password: no standard password set - add one in Autofill setup to speed this up next time');
     }
   }
 

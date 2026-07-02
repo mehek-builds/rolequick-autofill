@@ -1,7 +1,10 @@
 import { isLeverApplicationPage, extractLeverJdText, fillLeverApplication } from '../lib/adapters/lever';
 import { isGreenhouseApplicationPage, extractGreenhouseJdText, fillGreenhouseApplication } from '../lib/adapters/greenhouse';
 import { isAshbyApplicationPage, extractAshbyJdText, fillAshbyApplication } from '../lib/adapters/ashby';
-import { isWorkdayApplicationPage, extractWorkdayJdText, fillWorkdayApplication } from '../lib/adapters/workday';
+import {
+  isWorkdayApplicationPage, extractWorkdayJdText, fillWorkdayApplication,
+  isWorkdayAccountCreationPage, fillWorkdayAccountCreation,
+} from '../lib/adapters/workday';
 import { isLinkedInApplicationPage, extractLinkedInJdText, fillLinkedInApplication } from '../lib/adapters/linkedin';
 import { getAutoSubmitEnabled } from '../lib/storage';
 import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
@@ -472,7 +475,12 @@ export default defineContentScript({
             // fires from THIS student's own extension, in their own logged-in session, on data
             // they generated and could still cancel - never something Volley decides on its own.
             if (autoSubmitOn && submitBtn instanceof HTMLElement) {
-              runAutoSubmitCountdown(card, statusEl, submitBtn, fillResult, reportEvent);
+              runAutoSubmitCountdown(
+                card, statusEl,
+                card.querySelector<HTMLButtonElement>('#wp-resume-yes'),
+                card.querySelector<HTMLButtonElement>('#wp-resume-no'),
+                submitBtn, fillResult, reportEvent, 'Submitting',
+              );
               return;
             }
 
@@ -503,12 +511,13 @@ export default defineContentScript({
     function runAutoSubmitCountdown(
       card: HTMLElement,
       statusEl: HTMLElement | null,
+      yesBtn: HTMLButtonElement | null,
+      noBtn: HTMLButtonElement | null,
       submitBtn: HTMLElement,
       fillResult: AutofillResult,
       reportEvent: (autoSubmitted: boolean) => void,
+      actionLabel: string,
     ) {
-      const yesBtn = card.querySelector<HTMLButtonElement>('#wp-resume-yes');
-      const noBtn = card.querySelector<HTMLButtonElement>('#wp-resume-no');
       if (yesBtn) yesBtn.style.display = 'none';
 
       let remaining = AUTO_SUBMIT_COUNTDOWN_SECONDS;
@@ -516,7 +525,7 @@ export default defineContentScript({
 
       const render = () => {
         if (statusEl) {
-          statusEl.textContent = `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. Submitting in ${remaining}s - tap Cancel to review first.`;
+          statusEl.textContent = `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. ${actionLabel} in ${remaining}s - tap Cancel to review first.`;
         }
       };
       render();
@@ -526,7 +535,7 @@ export default defineContentScript({
         noBtn.onclick = () => {
           cancelled = true;
           clearInterval(interval);
-          if (statusEl) statusEl.textContent = 'Cancelled. Review, then submit yourself.';
+          if (statusEl) statusEl.textContent = 'Cancelled. Review, then continue yourself.';
           submitBtn.style.outline = '3px solid #4f46e5';
           submitBtn.style.outlineOffset = '2px';
           reportEvent(false);
@@ -539,7 +548,7 @@ export default defineContentScript({
         if (cancelled) { clearInterval(interval); return; }
         if (remaining <= 0) {
           clearInterval(interval);
-          if (statusEl) statusEl.textContent = 'Submitting...';
+          if (statusEl) statusEl.textContent = `${actionLabel}...`;
           submitBtn.click();
           reportEvent(true);
           setTimeout(() => card.remove(), 2000);
@@ -547,6 +556,119 @@ export default defineContentScript({
         }
         render();
       }, 1000);
+    }
+
+    // ─── Workday account-creation speed-up (2026-07-03) ────────────────────────
+    // Volley doesn't create the account itself - it pre-fills the signup form's own email/
+    // password fields so the student reviews and clicks "Create Account" (or the same opt-in
+    // auto-submit countdown clicks it for them). This is the "make it fast" version of a step
+    // that otherwise requires the student to type both fields by hand.
+
+    function findWorkdayCreateAccountButton(): Element | null {
+      const specific = document.querySelector('[data-automation-id="createAccountSubmitButton"]');
+      if (specific) return specific;
+      const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'));
+      return buttons.find((b) => /create\s*account/i.test(b.textContent || (b as HTMLInputElement).value || '')) ?? null;
+    }
+
+    function accountCreationCardShell(): string {
+      return `
+        <div style="
+          position: fixed; bottom: 72px; right: 306px; z-index: 2147483647;
+          background: white; border: 1.5px solid #e0e7ff; border-radius: 14px;
+          padding: 16px 16px 14px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          font-size: 13px; line-height: 1.4; box-shadow: 0 8px 32px rgba(79,70,229,0.18);
+          max-width: 272px; animation: wp-slide-in 0.25s ease-out;
+        ">
+          <button id="wp-account-close" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
+          <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;">
+            <span style="font-size:20px;flex-shrink:0;margin-top:1px;">⚡</span>
+            <div>
+              <div style="font-weight:700;font-size:13px;color:#1e1b4b;">Speed up account setup?</div>
+              <div style="font-size:12px;color:#6366f1;margin-top:2px;">Fills your email + standard password here.</div>
+            </div>
+          </div>
+          <div id="wp-account-status" style="font-size:11px;color:#6b7280;margin-bottom:8px;display:none;"></div>
+          <div style="display:flex;gap:8px;">
+            <button id="wp-account-yes" style="
+              flex:1;background:#4f46e5;color:white;border:none;border-radius:8px;
+              padding:9px 0;font-size:12px;font-weight:600;cursor:pointer;
+              font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+            ">Yes, fill it</button>
+            <button id="wp-account-no" style="
+              flex:1;background:#f3f4f6;color:#374151;border:none;border-radius:8px;
+              padding:9px 0;font-size:12px;font-weight:600;cursor:pointer;
+              font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+            ">No thanks</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function injectWorkdayAccountCreationCard() {
+      if (document.getElementById('volley-account-card')) return;
+      const card = document.createElement('div');
+      card.id = 'volley-account-card';
+      card.innerHTML = accountCreationCardShell();
+      document.body.appendChild(card);
+
+      const dismiss = () => card.remove();
+      card.querySelector('#wp-account-close')?.addEventListener('click', dismiss);
+      card.querySelector('#wp-account-no')?.addEventListener('click', dismiss);
+      card.querySelector('#wp-account-yes')?.addEventListener('click', () => {
+        const statusEl = card.querySelector<HTMLElement>('#wp-account-status');
+        const yesBtn = card.querySelector<HTMLButtonElement>('#wp-account-yes');
+        if (yesBtn) yesBtn.disabled = true;
+        if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Filling...'; }
+
+        chrome.runtime.sendMessage(
+          { type: 'GET_ACCOUNT_CREATION_DATA' },
+          async (result: { error?: string; email?: string; password?: string }) => {
+            if (!result || result.error) {
+              if (statusEl) statusEl.textContent = result?.error || 'Could not load your account data.';
+              return;
+            }
+            const fillResult = await fillWorkdayAccountCreation({ email: result.email, password: result.password });
+            const createBtn = findWorkdayCreateAccountButton();
+            const autoSubmitOn = await getAutoSubmitEnabled();
+
+            const reportEvent = (autoSubmitted: boolean) => {
+              chrome.runtime.sendMessage({
+                type: 'AUTOFILL_EVENT',
+                payload: {
+                  ats_name: 'workday',
+                  job_context: { company: 'account-creation', role: 'account-creation' },
+                  fields_filled: fillResult.fields_filled,
+                  fields_skipped: fillResult.fields_skipped,
+                  auto_submitted: autoSubmitted,
+                },
+              });
+            };
+
+            if (autoSubmitOn && createBtn instanceof HTMLElement) {
+              runAutoSubmitCountdown(
+                card, statusEl,
+                card.querySelector<HTMLButtonElement>('#wp-account-yes'),
+                card.querySelector<HTMLButtonElement>('#wp-account-no'),
+                createBtn, fillResult, reportEvent, 'Creating account',
+              );
+              return;
+            }
+
+            reportEvent(false);
+            if (statusEl) {
+              statusEl.textContent = fillResult.fields_filled > 0
+                ? `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. Review, then create your account.`
+                : 'No standard password set - add one in Autofill setup to speed this up next time.';
+            }
+            if (createBtn instanceof HTMLElement) {
+              createBtn.style.outline = '3px solid #4f46e5';
+              createBtn.style.outlineOffset = '2px';
+            }
+            setTimeout(dismiss, 6000);
+          },
+        );
+      });
     }
 
     // ─── Entry point ────────────────────────────────────────────────────────
@@ -586,6 +708,14 @@ export default defineContentScript({
           // this card (and the fill it triggers) never appears before a real account
           // exists, only once the student has reached the actual application form.
           injectResumeFillCard(job.title, job.company, extractWorkdayJdText, fillWorkdayApplication);
+        } else if (isWorkdayAccountCreationPage()) {
+          // 2026-07-03: speeds up the one step Volley still can't skip (the student must
+          // create their own Workday account - see project memory for why auto-creating it
+          // was scoped and decided against) by pre-filling the signup form itself, so the
+          // student reviews and clicks Create Account rather than typing an email+password
+          // from scratch. Fires only on the account-creation screen; isWorkdayApplicationPage()
+          // above takes over instantly once the real form appears (fast SPA-nav polling below).
+          injectWorkdayAccountCreationCard();
         }
       } else {
         // Job listing page: silently notify the popup so it can pre-fill fields
@@ -596,7 +726,17 @@ export default defineContentScript({
       }
     }
 
-    setTimeout(init, 1000);
+    // Workday's stage-to-stage transitions (account creation -> real application form) are
+    // where speed matters most for a "under a minute, end to end" goal - every other adapter
+    // only needs to detect one stage per page load, but Workday needs to notice a stage change
+    // that can happen without warning as soon as the student comes back from verifying their
+    // email. Shorter delays here; the other ATSes keep the original, more conservative timing
+    // since their pages don't multi-stage this way.
+    const isWorkdayHost = window.location.hostname.includes('myworkdayjobs.com') || window.location.hostname.includes('workday.com');
+    const INIT_DELAY_MS = isWorkdayHost ? 300 : 1000;
+    const NAV_RECHECK_DELAY_MS = isWorkdayHost ? 250 : 800;
+
+    setTimeout(init, INIT_DELAY_MS);
 
     // Re-run on SPA navigation
     let lastUrl = location.href;
@@ -609,8 +749,23 @@ export default defineContentScript({
         document.getElementById('volley-action-card')?.remove();
         document.getElementById('volley-submit-card')?.remove();
         document.getElementById('volley-resume-card')?.remove();
-        setTimeout(init, 800);
+        document.getElementById('volley-account-card')?.remove();
+        setTimeout(init, NAV_RECHECK_DELAY_MS);
       }
     }).observe(document.body, { childList: true, subtree: true });
+
+    // Workday specifically can swap the account-creation screen for the real application form
+    // without a URL change in some tenants (a same-path client-side re-render rather than a
+    // navigation), which the MutationObserver above wouldn't catch via its URL-diff check. A
+    // cheap poll (just two DOM marker lookups) re-runs init() whenever neither of Volley's own
+    // two Workday cards is currently showing, so a stage change gets picked up within ~500ms
+    // instead of waiting for the next navigation event.
+    if (isWorkdayHost) {
+      setInterval(() => {
+        if (!document.getElementById('volley-account-card') && !document.getElementById('volley-resume-card')) {
+          init();
+        }
+      }, 500);
+    }
   },
 });
