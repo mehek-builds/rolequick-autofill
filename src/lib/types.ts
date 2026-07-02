@@ -40,6 +40,7 @@ export interface OutreachEvent {
 // which is also the exact shape the /draft route expects as user_profile.
 export interface Profile {
   full_name?: string;
+  email?: string; // account login email, added server-side by GET /profile - not resume-parsed
   experience: Array<{
     company: string;
     title: string;

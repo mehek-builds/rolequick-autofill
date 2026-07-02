@@ -433,6 +433,7 @@ export default defineContentScript({
               fillResult = await Promise.race([
                 fill({
                   fullName: result.profile.full_name ?? '',
+                  email: result.profile.email,
                   profile: result.profile,
                   applicationProfile: result.applicationProfile,
                   resumeBlob,

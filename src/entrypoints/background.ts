@@ -150,7 +150,7 @@ async function generateResumeAndProfile(
   const profileRes = await fetch(`${API_BASE}/profile`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  const profile: UserProfile & { full_name?: string } = profileRes.ok ? await profileRes.json() : EMPTY_PROFILE;
+  const profile: UserProfile & { full_name?: string; email?: string } = profileRes.ok ? await profileRes.json() : EMPTY_PROFILE;
 
   const appProfileRes = await fetch(`${API_BASE}/profile/application`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -166,6 +166,7 @@ async function generateResumeAndProfile(
       jd_text: jdText,
       contact: {
         full_name: profile.full_name || 'Applicant',
+        email: profile.email,
         linkedin_url: applicationProfile.linkedin_url,
         github_url: applicationProfile.github_url,
         portfolio_url: applicationProfile.portfolio_url,
