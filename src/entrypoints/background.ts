@@ -173,7 +173,10 @@ async function generateResumeAndProfile(
       },
     }),
   });
-  if (!resumeRes.ok) throw new Error('resume generation failed');
+  if (!resumeRes.ok) {
+    const body = await resumeRes.json().catch(() => null);
+    throw new Error(body?.error || 'resume generation failed');
+  }
   const resume: { resume_url: string; file_name: string; spec: unknown } = await resumeRes.json();
 
   return { profile, applicationProfile, resume };
