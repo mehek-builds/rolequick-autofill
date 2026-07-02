@@ -560,17 +560,11 @@ export default defineContentScript({
     }
 
     // ─── Workday account-creation speed-up (2026-07-03) ────────────────────────
-    // Volley doesn't create the account itself - it pre-fills the signup form's own email/
-    // password fields so the student reviews and clicks "Create Account" (or the same opt-in
-    // auto-submit countdown clicks it for them). This is the "make it fast" version of a step
-    // that otherwise requires the student to type both fields by hand.
-
-    function findWorkdayCreateAccountButton(): Element | null {
-      const specific = document.querySelector('[data-automation-id="createAccountSubmitButton"]');
-      if (specific) return specific;
-      const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'));
-      return buttons.find((b) => /create\s*account/i.test(b.textContent || (b as HTMLInputElement).value || '')) ?? null;
-    }
+    // Volley doesn't create the account itself, and only ever fills the email field - password,
+    // clicking Create Account, and completing email verification are entirely the student's own
+    // steps by explicit product decision. Not a fill-and-stop-with-countdown card like the
+    // others: there's no button to auto-submit toward, since the form is never actually
+    // complete without the password the student is meant to type themselves.
 
     function accountCreationCardShell(): string {
       return `
@@ -585,8 +579,8 @@ export default defineContentScript({
           <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;">
             <span style="font-size:20px;flex-shrink:0;margin-top:1px;">⚡</span>
             <div>
-              <div style="font-weight:700;font-size:13px;color:#1e1b4b;">Speed up account setup?</div>
-              <div style="font-size:12px;color:#6366f1;margin-top:2px;">Fills your email + standard password here.</div>
+              <div style="font-weight:700;font-size:13px;color:#1e1b4b;">Fill in your email here?</div>
+              <div style="font-size:12px;color:#6366f1;margin-top:2px;">You'll still set your own password and click Create Account.</div>
             </div>
           </div>
           <div id="wp-account-status" style="font-size:11px;color:#6b7280;margin-bottom:8px;display:none;"></div>
@@ -624,47 +618,28 @@ export default defineContentScript({
 
         chrome.runtime.sendMessage(
           { type: 'GET_ACCOUNT_CREATION_DATA' },
-          async (result: { error?: string; email?: string; password?: string }) => {
+          async (result: { error?: string; email?: string }) => {
             if (!result || result.error) {
               if (statusEl) statusEl.textContent = result?.error || 'Could not load your account data.';
               return;
             }
-            const fillResult = await fillWorkdayAccountCreation({ email: result.email, password: result.password });
-            const createBtn = findWorkdayCreateAccountButton();
-            const autoSubmitOn = await getAutoSubmitEnabled();
+            const fillResult = await fillWorkdayAccountCreation({ email: result.email });
 
-            const reportEvent = (autoSubmitted: boolean) => {
-              chrome.runtime.sendMessage({
-                type: 'AUTOFILL_EVENT',
-                payload: {
-                  ats_name: 'workday',
-                  job_context: { company: 'account-creation', role: 'account-creation' },
-                  fields_filled: fillResult.fields_filled,
-                  fields_skipped: fillResult.fields_skipped,
-                  auto_submitted: autoSubmitted,
-                },
-              });
-            };
+            chrome.runtime.sendMessage({
+              type: 'AUTOFILL_EVENT',
+              payload: {
+                ats_name: 'workday',
+                job_context: { company: 'account-creation', role: 'account-creation' },
+                fields_filled: fillResult.fields_filled,
+                fields_skipped: fillResult.fields_skipped,
+                auto_submitted: false,
+              },
+            });
 
-            if (autoSubmitOn && createBtn instanceof HTMLElement) {
-              runAutoSubmitCountdown(
-                card, statusEl,
-                card.querySelector<HTMLButtonElement>('#wp-account-yes'),
-                card.querySelector<HTMLButtonElement>('#wp-account-no'),
-                createBtn, fillResult, reportEvent, 'Creating account',
-              );
-              return;
-            }
-
-            reportEvent(false);
             if (statusEl) {
               statusEl.textContent = fillResult.fields_filled > 0
-                ? `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. Review, then create your account.`
-                : 'No standard password set - add one in Autofill setup to speed this up next time.';
-            }
-            if (createBtn instanceof HTMLElement) {
-              createBtn.style.outline = '3px solid #4f46e5';
-              createBtn.style.outlineOffset = '2px';
+                ? 'Email filled. Set your own password and click Create Account when ready.'
+                : 'No email on file yet - fill it in yourself, then set your password and click Create Account.';
             }
             setTimeout(dismiss, 6000);
           },

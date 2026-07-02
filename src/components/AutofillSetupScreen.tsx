@@ -425,26 +425,6 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
               </div>
             ))}
 
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-gray-600">
-                Standard password <span className="text-gray-400">(optional, for sites like Workday)</span>
-              </label>
-              <input
-                type="password"
-                value={appProfile.ats_signup_password ?? ''}
-                onChange={(e) => setAppProfile((p) => ({ ...p, ats_signup_password: e.target.value }))}
-                placeholder="Leave blank to type it yourself each time"
-                autoComplete="new-password"
-                className={inputClass}
-              />
-              <p className="text-[11px] leading-relaxed text-gray-400">
-                Some sites (Workday) require you to create your own account before applying - Volley
-                can't do that step for you, but if you set a password here it'll pre-fill the signup
-                form with this password and your email, so you just review and click Create Account.
-                Stored encrypted, reused everywhere you need it.
-              </p>
-            </div>
-
             <div className="rounded-xl border border-gray-100 bg-gray-50/50 p-3">
               <label className="flex items-start justify-between gap-3">
                 <span>

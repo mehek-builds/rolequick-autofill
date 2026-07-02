@@ -320,16 +320,15 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
 
 export interface WorkdayAccountCreationParams {
   email?: string;
-  password?: string;
 }
 
-// Fills the signup form's own email/password/confirm-password fields and stops - the student
-// still clicks "Create Account" themselves (or the existing opt-in auto-submit countdown does,
-// same toggle as everywhere else). Workday's create-account screen typically renders exactly
-// two password inputs (password + confirm); this fills whichever ones it finds rather than
-// assuming a fixed count, since tenants vary.
+// Fills only the email field and stops - password is deliberately never touched here (2026-07-03
+// product decision: the student sets and enters their own password, clicks Create Account, and
+// completes email verification entirely on their own). This is the one Volley-fillable field on
+// the signup form, not a fill-and-stop pattern with a countdown to auto-submit - there's nothing
+// to auto-submit toward since the password field is always left for the student to fill by hand.
 export async function fillWorkdayAccountCreation(params: WorkdayAccountCreationParams): Promise<AutofillResult> {
-  const { email, password } = params;
+  const { email } = params;
   let fields_filled = 0;
   let fields_skipped = 0;
   const skipped_reasons: string[] = [];
@@ -342,19 +341,6 @@ export async function fillWorkdayAccountCreation(params: WorkdayAccountCreationP
     } else {
       fields_skipped++;
       skipped_reasons.push('email: not present in stored profile');
-    }
-  }
-
-  const passwordEls = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="password"]')).filter((el) => !el.value);
-  if (passwordEls.length > 0) {
-    if (password) {
-      for (const el of passwordEls) {
-        await fillField(el, password);
-        fields_filled++;
-      }
-    } else {
-      fields_skipped++;
-      skipped_reasons.push('password: no standard password set - add one in Autofill setup to speed this up next time');
     }
   }
 

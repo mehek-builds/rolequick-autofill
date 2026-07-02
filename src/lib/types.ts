@@ -109,7 +109,6 @@ export interface ApplicationProfile {
   desired_salary?: string;
   eeo_prefs?: Record<string, string> | null;
   referral_source_default?: string;
-  ats_signup_password?: string;
 }
 
 export interface ResumeContact {

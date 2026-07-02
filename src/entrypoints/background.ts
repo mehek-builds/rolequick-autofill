@@ -270,10 +270,11 @@ export default defineBackground(() => {
       }
 
       case 'GET_ACCOUNT_CREATION_DATA': {
-        // Lighter than GENERATE_RESUME_AND_FILL_DATA - the Workday signup screen only needs
-        // the account email and the student's chosen standard password, not a resume, so this
-        // skips the /resume/generate call entirely (no point spending a resume-gen quota unit
-        // on a step that happens before there's even a job application to tailor one for).
+        // Lighter than GENERATE_RESUME_AND_FILL_DATA - the Workday signup screen only needs the
+        // account email, not a resume, so this skips the /resume/generate call entirely (no
+        // point spending a resume-gen quota unit on a step before there's even an application to
+        // tailor one for). Password is deliberately not fetched here - the student types their
+        // own (2026-07-03 product decision), Volley never touches that field.
         getStoredToken().then(async (token) => {
           if (!token) {
             sendResponse({ error: 'not signed in' });
@@ -282,9 +283,7 @@ export default defineBackground(() => {
           try {
             const profileRes = await fetch(`${API_BASE}/profile`, { headers: { Authorization: `Bearer ${token}` } });
             const profile: { email?: string } = profileRes.ok ? await profileRes.json() : {};
-            const appProfileRes = await fetch(`${API_BASE}/profile/application`, { headers: { Authorization: `Bearer ${token}` } });
-            const applicationProfile: { ats_signup_password?: string } = appProfileRes.ok ? await appProfileRes.json() : {};
-            sendResponse({ email: profile.email, password: applicationProfile.ats_signup_password });
+            sendResponse({ email: profile.email });
           } catch (err) {
             sendResponse({ error: err instanceof Error ? err.message : 'could not load account data' });
           }
