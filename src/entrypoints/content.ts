@@ -422,6 +422,7 @@ export default defineContentScript({
       // demographic prefs for EEO questions; draftAnswer AI-drafts an open-ended textarea.
       eeo?: Record<string, string>;
       draftAnswer?: (question: string) => Promise<string | null>;
+      onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
     }) => Promise<AutofillResult>;
 
     // Shared by every ATS adapter: generate the JD-tailored resume, then run that adapter's
@@ -433,6 +434,22 @@ export default defineContentScript({
       card.innerHTML = resumeFillCardShell(title, company);
       getCardStack().appendChild(card);
 
+      // Pre-warm: fire the resume-gen request the instant the card renders, not on "Yes" -
+      // it's the slowest step (an LLM round trip), so by the time the student reads the card
+      // and clicks, it's often already done instead of only starting then.
+      const jdText = extractJdText();
+      const resumeGenPromise = new Promise<{
+        error?: string;
+        profile?: Profile;
+        applicationProfile?: ApplicationProfile;
+        resume?: { resume_url: string; file_name: string };
+      }>((resolve) => {
+        chrome.runtime.sendMessage(
+          { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: jdText } },
+          (result) => resolve(result),
+        );
+      });
+
       const dismiss = () => card.remove();
       card.querySelector('#wp-resume-close')?.addEventListener('click', dismiss);
       card.querySelector('#wp-resume-no')?.addEventListener('click', dismiss);
@@ -442,116 +459,115 @@ export default defineContentScript({
         if (yesBtn) yesBtn.disabled = true;
         if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Tailoring your resume...'; }
 
-        const jdText = extractJdText();
+        const result = await resumeGenPromise;
+        if (!result || result.error || !result.profile || !result.applicationProfile || !result.resume) {
+          if (statusEl) statusEl.textContent = result?.error || 'Could not generate a resume - fill this one manually.';
+          return;
+        }
 
-        chrome.runtime.sendMessage(
-          { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: jdText } },
-          async (result: {
-            error?: string;
-            profile?: Profile;
-            applicationProfile?: ApplicationProfile;
-            resume?: { resume_url: string; file_name: string };
-          }) => {
-            if (!result || result.error || !result.profile || !result.applicationProfile || !result.resume) {
-              if (statusEl) statusEl.textContent = result?.error || 'Could not generate a resume - fill this one manually.';
-              return;
-            }
+        if (statusEl) statusEl.textContent = 'Filling the application...';
 
-            if (statusEl) statusEl.textContent = 'Filling the application...';
+        let resumeBlob: Blob | undefined;
+        try {
+          const blobRes = await fetch(result.resume.resume_url);
+          resumeBlob = await blobRes.blob();
+        } catch {
+          // No resume file available client-side; the adapter will skip the file input
+          // and flag it rather than fail the whole fill.
+        }
 
-            let resumeBlob: Blob | undefined;
-            try {
-              const blobRes = await fetch(result.resume.resume_url);
-              resumeBlob = await blobRes.blob();
-            } catch {
-              // No resume file available client-side; the adapter will skip the file input
-              // and flag it rather than fail the whole fill.
-            }
-
-            // Safety net: a stuck field (an unexpected widget, a listener that never fires) must
-            // never leave the student staring at "Filling the application..." forever with no
-            // way to know what happened. 20s is generous for even a form with many custom
-            // questions; if the adapter is still running past that, something is wrong and the
-            // student needs to be told rather than left waiting silently.
-            const FILL_TIMEOUT_MS = 20000;
-            let fillResult: AutofillResult;
-            try {
-              fillResult = await Promise.race([
-                fill({
-                  fullName: result.profile.full_name ?? '',
-                  email: result.profile.email,
-                  profile: result.profile,
-                  applicationProfile: result.applicationProfile,
-                  resumeBlob,
-                  resumeFileName: result.resume.file_name,
-                  // Generic-adapter extras (ATS adapters ignore them): EEO prefs for demographic
-                  // questions, and an AI-draft hook for open-ended textareas routed through the
-                  // background to the backend. jdText/company/title are already in scope here.
-                  eeo: (result.applicationProfile?.eeo_prefs as Record<string, string> | undefined) ?? {},
-                  draftAnswer: (question: string) =>
-                    new Promise<string | null>((resolve) => {
-                      chrome.runtime.sendMessage(
-                        { type: 'ANSWER_QUESTION', payload: { company, role: title, jd_text: jdText, question } },
-                        (r: { answer?: string | null } | undefined) => resolve(r?.answer ?? null),
-                      );
-                    }),
+        // Safety net: a stuck field (an unexpected widget, a listener that never fires) must
+        // never leave the student staring at "Filling the application..." forever with no
+        // way to know what happened. 20s is generous for even a form with many custom
+        // questions; if the adapter is still running past that, something is wrong and the
+        // student needs to be told rather than left waiting silently.
+        const FILL_TIMEOUT_MS = 20000;
+        let fillResult: AutofillResult;
+        try {
+          fillResult = await Promise.race([
+            fill({
+              fullName: result.profile.full_name ?? '',
+              email: result.profile.email,
+              profile: result.profile,
+              applicationProfile: result.applicationProfile,
+              resumeBlob,
+              resumeFileName: result.resume.file_name,
+              // Generic-adapter extras (ATS adapters ignore them): EEO prefs for demographic
+              // questions, and an AI-draft hook for open-ended textareas routed through the
+              // background to the backend. jdText/company/title are already in scope here.
+              eeo: (result.applicationProfile?.eeo_prefs as Record<string, string> | undefined) ?? {},
+              draftAnswer: (question: string) =>
+                new Promise<string | null>((resolve) => {
+                  chrome.runtime.sendMessage(
+                    { type: 'ANSWER_QUESTION', payload: { company, role: title, jd_text: jdText, question } },
+                    (r: { answer?: string | null } | undefined) => resolve(r?.answer ?? null),
+                  );
                 }),
-                new Promise<never>((_, reject) =>
-                  setTimeout(() => reject(new Error('timed out')), FILL_TIMEOUT_MS),
-                ),
-              ]);
-            } catch {
-              if (statusEl) statusEl.textContent = 'This form is taking too long to fill - some fields may be partially filled. Review and finish it yourself.';
-              if (yesBtn) yesBtn.style.display = 'none';
-              setTimeout(dismiss, 8000);
-              return;
-            }
+              // Streamed progress: instant fields report immediately, then each essay updates
+              // the count as its own draft call resolves, instead of the status text sitting on
+              // "Filling the application..." until every essay in the form is done.
+              onProgress: (partial) => {
+                if (!statusEl) return;
+                const essayNote = partial.pendingEssays > 0
+                  ? ` Drafting ${partial.pendingEssays} more essay${partial.pendingEssays === 1 ? '' : 's'}...`
+                  : '';
+                statusEl.textContent = `Filled ${partial.fields_filled} field${partial.fields_filled === 1 ? '' : 's'}.${essayNote}`;
+              },
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('timed out')), FILL_TIMEOUT_MS),
+            ),
+          ]);
+        } catch {
+          if (statusEl) statusEl.textContent = 'This form is taking too long to fill - some fields may be partially filled. Review and finish it yourself.';
+          if (yesBtn) yesBtn.style.display = 'none';
+          setTimeout(dismiss, 8000);
+          return;
+        }
 
-            const submitBtn = findSubmitButton();
-            const autoSubmitOn = await getAutoSubmitEnabled();
+        const submitBtn = findSubmitButton();
+        const autoSubmitOn = await getAutoSubmitEnabled();
 
-            const reportEvent = (autoSubmitted: boolean) => {
-              chrome.runtime.sendMessage({
-                type: 'AUTOFILL_EVENT',
-                payload: {
-                  ats_name: fillResult.ats_name,
-                  job_context: { company, role: title },
-                  fields_filled: fillResult.fields_filled,
-                  fields_skipped: fillResult.fields_skipped,
-                  auto_submitted: autoSubmitted,
-                },
-              });
-            };
+        const reportEvent = (autoSubmitted: boolean) => {
+          chrome.runtime.sendMessage({
+            type: 'AUTOFILL_EVENT',
+            payload: {
+              ats_name: fillResult.ats_name,
+              job_context: { company, role: title },
+              fields_filled: fillResult.fields_filled,
+              fields_skipped: fillResult.fields_skipped,
+              auto_submitted: autoSubmitted,
+            },
+          });
+        };
 
-            // Auto-submit is opt-in (AutofillSetupScreen toggle, off by default) and only ever
-            // fires from THIS student's own extension, in their own logged-in session, on data
-            // they generated and could still cancel - never something Volley decides on its own.
-            if (autoSubmitOn && submitBtn instanceof HTMLElement) {
-              runAutoSubmitCountdown(
-                card, statusEl,
-                card.querySelector<HTMLButtonElement>('#wp-resume-yes'),
-                card.querySelector<HTMLButtonElement>('#wp-resume-no'),
-                submitBtn, fillResult, reportEvent, 'Submitting',
-              );
-              return;
-            }
+        // Auto-submit is opt-in (AutofillSetupScreen toggle, off by default) and only ever
+        // fires from THIS student's own extension, in their own logged-in session, on data
+        // they generated and could still cancel - never something Volley decides on its own.
+        if (autoSubmitOn && submitBtn instanceof HTMLElement) {
+          runAutoSubmitCountdown(
+            card, statusEl,
+            card.querySelector<HTMLButtonElement>('#wp-resume-yes'),
+            card.querySelector<HTMLButtonElement>('#wp-resume-no'),
+            submitBtn, fillResult, reportEvent, 'Submitting',
+          );
+          return;
+        }
 
-            reportEvent(false);
+        reportEvent(false);
 
-            if (statusEl) {
-              statusEl.textContent = `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. Review, then submit yourself.`;
-            }
+        if (statusEl) {
+          statusEl.textContent = `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. Review, then submit yourself.`;
+        }
 
-            // Highlight, never click - Volley stops here (PRD-v2 Section 5 Step 4) unless the
-            // student has opted in to auto-submit above.
-            if (submitBtn instanceof HTMLElement) {
-              submitBtn.style.outline = '3px solid #4f46e5';
-              submitBtn.style.outlineOffset = '2px';
-            }
+        // Highlight, never click - Volley stops here (PRD-v2 Section 5 Step 4) unless the
+        // student has opted in to auto-submit above.
+        if (submitBtn instanceof HTMLElement) {
+          submitBtn.style.outline = '3px solid #4f46e5';
+          submitBtn.style.outlineOffset = '2px';
+        }
 
-            setTimeout(dismiss, 6000);
-          },
-        );
+        setTimeout(dismiss, 6000);
       });
     }
 

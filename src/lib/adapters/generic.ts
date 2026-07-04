@@ -88,24 +88,26 @@ function questionLabel(el: Element): string {
   return (block?.querySelector('label, legend, .question, h3, h4')?.textContent ?? '').toLowerCase().trim();
 }
 
-// The question a RADIO GROUP is asking. Live-tested 2026-07-04 on vercel.com (Greenhouse
-// behind a native form): the question sits in an ancestor ABOVE the options, not in a
-// <legend>, so reading any single radio's own label returns one option's text, never the
-// question. Instead: find the topmost ancestor that still contains exactly this group's
-// radios (never merging a neighbouring question), then subtract every option's label from
-// its text - what remains is the question stem.
+// The question a RADIO GROUP (or checkbox "mark all that apply" group) is asking. Live-tested
+// 2026-07-04 on vercel.com (Greenhouse behind a native form): the question sits in an ancestor
+// ABOVE the options, not in a <legend>, so reading any single option's own label returns one
+// option's text, never the question. Instead: find the topmost ancestor that still contains
+// exactly this group's options (never merging a neighbouring question), then subtract every
+// option's label from its text - what remains is the question stem. Works for both input
+// types since the climb selector is derived from the group's own `type`.
 function groupQuestionText(group: HTMLInputElement[], optionTexts: string[]): string {
   const legend = group[0].closest('fieldset')?.querySelector('legend')?.textContent?.trim();
   if (legend) return legend.toLowerCase();
   const ariaGroup = group[0].closest('[role="group"], [role="radiogroup"]')?.getAttribute('aria-label');
   if (ariaGroup) return ariaGroup.toLowerCase();
 
+  const selector = `input[type="${group[0].type}"]`;
   let anc: HTMLElement | null = group[0].parentElement;
   while (anc && group.some((r) => !anc!.contains(r))) anc = anc.parentElement; // smallest ancestor of all
   let top = anc;
   while (
     top?.parentElement &&
-    top.parentElement.querySelectorAll('input[type="radio"]').length === group.length
+    top.parentElement.querySelectorAll(selector).length === group.length
   ) {
     top = top.parentElement; // climb while still exactly this group
   }
@@ -276,6 +278,7 @@ export interface GenericFillParams {
   resumeBlob?: Blob;
   resumeFileName?: string;
   draftAnswer?: (question: string) => Promise<string | null>;
+  onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
 }
 
 export async function fillGenericApplication(params: GenericFillParams): Promise<AutofillResult> {
@@ -413,10 +416,42 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     }
   }
 
-  // ── Checkboxes: only tick a factual yes-eligibility the profile confirms. Legal agreements,
-  //    privacy consent, and "I certify this is accurate" stay the student's own sign-off. ──
+  // ── Checkboxes: grouped by shared `name`, exactly like radios above - Greenhouse-style
+  //    "mark all that apply" EEO questions (gender/race/orientation) render as N checkboxes
+  //    that all share one `name`, so a group of >1 is a multi-select question needing the
+  //    GROUP's text (groupQuestionText), not any one option's own label. A group of exactly 1
+  //    is a standalone factual yes-eligibility or legal-agreement checkbox, handled the same
+  //    way as before. ──
+  const checkboxGroups = new Map<string | HTMLInputElement, HTMLInputElement[]>();
   for (const cb of [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]) {
     if (cb.closest('[id*="volley"]') || cb.disabled || cb.checked || !isVisible(cb)) continue;
+    const key = cb.name || cb; // unnamed checkboxes each form their own group of one
+    (checkboxGroups.get(key) ?? checkboxGroups.set(key, []).get(key)!).push(cb);
+  }
+  for (const group of checkboxGroups.values()) {
+    if (group.length > 1) {
+      const options = group.map((cb) => ({
+        text: (document.querySelector(`label[for="${CSS.escape(cb.id)}"]`)?.textContent ??
+          cb.closest('label')?.textContent ?? cb.getAttribute('aria-label') ?? cb.value ?? '').trim(),
+        el: cb,
+      }));
+      const label = groupQuestionText(group, options.map((o) => o.text));
+      const desired = desiredAnswer(label, ap, eeo);
+      const match = matchOption(options, desired);
+      if (match) {
+        await randomDelay();
+        match.el.checked = true;
+        match.el.dispatchEvent(new Event('input', { bubbles: true }));
+        match.el.dispatchEvent(new Event('change', { bubbles: true }));
+        fields_filled++;
+      } else if (label) {
+        fields_skipped++;
+        skipped_reasons.push(`checkbox question left for you: "${short(label)}"`);
+      }
+      continue;
+    }
+
+    const cb = group[0];
     const id = controlIdentity(cb) || questionLabel(cb);
     const isAgreement = /agree|consent|terms|privacy|certif|accurate|acknowledg|authorize .*contact|i confirm/.test(id);
     const desired = isAgreement ? null : desiredAnswer(id, ap, eeo);
@@ -454,29 +489,36 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
 
   // ── Open-ended answers: all instant fields are filled by now, so draft every textarea
   //    CONCURRENTLY (each is an independent LLM round trip). Wall-clock is the slowest single
-  //    draft, not the sum - a form with 4 essay boxes takes ~1 draft's time, not 4. ──
+  //    draft, not the sum - a form with 4 essay boxes takes ~1 draft's time, not 4. Each result
+  //    is written into the DOM and reported via onProgress as soon as IT resolves, rather than
+  //    batching behind Promise.all so the student watches essays fill in one at a time. ──
   if (pendingDrafts.length > 0) {
-    const results = await Promise.all(
+    let pendingEssays = pendingDrafts.length;
+    params.onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
+
+    await Promise.all(
       pendingDrafts.map(async ({ el, question }) => {
+        let drafted: string | null = null;
         try {
-          const drafted = await params.draftAnswer!(question);
-          return { el, question, drafted: drafted?.trim() || null };
+          drafted = (await params.draftAnswer!(question))?.trim() || null;
         } catch {
-          return { el, question, drafted: null };
+          drafted = null;
         }
+
+        if (drafted) {
+          await fillTextField(el, drafted);
+          markForReview(el);
+          ai_drafted++;
+          fields_filled++;
+        } else {
+          fields_skipped++;
+          skipped_reasons.push(`open-ended question left blank: "${short(question)}"`);
+        }
+
+        pendingEssays--;
+        params.onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
       }),
     );
-    for (const { el, question, drafted } of results) {
-      if (drafted) {
-        await fillTextField(el, drafted);
-        markForReview(el);
-        ai_drafted++;
-        fields_filled++;
-      } else {
-        fields_skipped++;
-        skipped_reasons.push(`open-ended question left blank: "${short(question)}"`);
-      }
-    }
   }
 
   if (ai_drafted > 0) {
