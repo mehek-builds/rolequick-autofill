@@ -238,13 +238,27 @@ export default defineContentScript({
 
     // ─── Card helpers ────────────────────────────────────────────────────────
 
+    // Every card goes into one fixed bottom-right stack and flows vertically (2026-07-04,
+    // Mehek's direction) - previously each card type carried its own hardcoded `right` offset
+    // (20px / 306px), which put two simultaneous cards side by side and would overlap them
+    // outright if a third ever fired. Cards keep their own ids; removing one collapses the
+    // stack naturally, and an empty container is invisible.
+    function getCardStack(): HTMLElement {
+      let stack = document.getElementById('volley-card-stack');
+      if (!stack) {
+        stack = document.createElement('div');
+        stack.id = 'volley-card-stack';
+        stack.style.cssText =
+          'position:fixed;bottom:72px;right:20px;z-index:2147483647;display:flex;flex-direction:column;align-items:flex-end;gap:12px;';
+        document.body.appendChild(stack);
+      }
+      return stack;
+    }
+
     function cardShell(headline: string, subline: string): string {
       return `
         <div style="
-          position: fixed;
-          bottom: 72px;
-          right: 20px;
-          z-index: 2147483647;
+          position: relative;
           background: white;
           border: 1.5px solid #e0e7ff;
           border-radius: 14px;
@@ -253,7 +267,8 @@ export default defineContentScript({
           font-size: 13px;
           line-height: 1.4;
           box-shadow: 0 8px 32px rgba(79,70,229,0.18);
-          max-width: 272px;
+          width: 272px;
+          box-sizing: border-box;
           animation: wp-slide-in 0.25s ease-out;
         ">
           <button id="wp-close" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
@@ -320,7 +335,7 @@ export default defineContentScript({
         'Draft recruiter emails?',
         `${title} at ${company}`
       );
-      document.body.appendChild(card);
+      getCardStack().appendChild(card);
       attachCardHandlers(card, title, company, url);
     }
 
@@ -335,7 +350,7 @@ export default defineContentScript({
         "You're applying - draft outreach emails while you wait?",
         `${title} at ${company}`
       );
-      document.body.appendChild(card);
+      getCardStack().appendChild(card);
       attachCardHandlers(card, title, company, url);
     }
 
@@ -344,11 +359,11 @@ export default defineContentScript({
     function resumeFillCardShell(title: string, company: string): string {
       return `
         <div style="
-          position: fixed; bottom: 72px; right: 306px; z-index: 2147483647;
+          position: relative;
           background: white; border: 1.5px solid #e0e7ff; border-radius: 14px;
           padding: 16px 16px 14px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
           font-size: 13px; line-height: 1.4; box-shadow: 0 8px 32px rgba(79,70,229,0.18);
-          max-width: 272px; animation: wp-slide-in 0.25s ease-out;
+          width: 272px; box-sizing: border-box; animation: wp-slide-in 0.25s ease-out;
         ">
           <button id="wp-resume-close" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
           <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;line-height:1.4;">
@@ -391,7 +406,7 @@ export default defineContentScript({
       const card = document.createElement('div');
       card.id = 'volley-resume-card';
       card.innerHTML = resumeFillCardShell(title, company);
-      document.body.appendChild(card);
+      getCardStack().appendChild(card);
 
       const dismiss = () => card.remove();
       card.querySelector('#wp-resume-close')?.addEventListener('click', dismiss);
@@ -569,11 +584,11 @@ export default defineContentScript({
     function accountCreationCardShell(): string {
       return `
         <div style="
-          position: fixed; bottom: 72px; right: 306px; z-index: 2147483647;
+          position: relative;
           background: white; border: 1.5px solid #e0e7ff; border-radius: 14px;
           padding: 16px 16px 14px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
           font-size: 13px; line-height: 1.4; box-shadow: 0 8px 32px rgba(79,70,229,0.18);
-          max-width: 272px; animation: wp-slide-in 0.25s ease-out;
+          width: 272px; box-sizing: border-box; animation: wp-slide-in 0.25s ease-out;
         ">
           <button id="wp-account-close" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
           <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;line-height:1.4;">
@@ -605,7 +620,7 @@ export default defineContentScript({
       const card = document.createElement('div');
       card.id = 'volley-account-card';
       card.innerHTML = accountCreationCardShell();
-      document.body.appendChild(card);
+      getCardStack().appendChild(card);
 
       const dismiss = () => card.remove();
       card.querySelector('#wp-account-close')?.addEventListener('click', dismiss);
@@ -658,11 +673,11 @@ export default defineContentScript({
       card.id = 'volley-start-card';
       card.innerHTML = `
         <div style="
-          position: fixed; bottom: 72px; right: 306px; z-index: 2147483647;
+          position: relative;
           background: white; border: 1.5px solid #e0e7ff; border-radius: 14px;
           padding: 16px 16px 14px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
           font-size: 13px; line-height: 1.4; box-shadow: 0 8px 32px rgba(79,70,229,0.18);
-          max-width: 272px; animation: wp-slide-in 0.25s ease-out;
+          width: 272px; box-sizing: border-box; animation: wp-slide-in 0.25s ease-out;
         ">
           <button id="wp-start-close" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
           <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;line-height:1.4;">
@@ -683,7 +698,7 @@ export default defineContentScript({
           ">Take me there</button>
         </div>
       `;
-      document.body.appendChild(card);
+      getCardStack().appendChild(card);
 
       card.querySelector('#wp-start-close')?.addEventListener('click', () => card.remove());
       card.querySelector('#wp-start-go')?.addEventListener('click', () => {
