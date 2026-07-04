@@ -74,10 +74,14 @@ function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: strin
 // on radio-group fieldsets) over full textContent, which would otherwise include every option's
 // label text glued onto the question text.
 function labelTextFor(el: Element): string {
-  const fieldset = el.closest('fieldset[class*="_fieldEntry_"]');
-  const legend = fieldset?.querySelector('legend');
+  const entry = el.closest('fieldset[class*="_fieldEntry_"], div[class*="_fieldEntry_"]');
+  const legend = entry?.querySelector('legend');
   if (legend) return legend.textContent?.trim().toLowerCase() ?? '';
-  const container = fieldset ?? el.closest('[class*="_container_"], li') ?? el.parentElement;
+  // div-based entries (text questions) carry a real <label>; fall back to full text only when
+  // neither a legend nor a label exists.
+  const label = entry?.querySelector('label');
+  if (label) return label.textContent?.trim().toLowerCase() ?? '';
+  const container = entry ?? el.closest('[class*="_container_"], li') ?? el.parentElement;
   return (container?.textContent ?? '').trim().toLowerCase();
 }
 
@@ -190,12 +194,19 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
   }
 
   // Custom questions (links, work-auth, sponsorship, EEO) get per-posting generated names, so
-  // match by label text - verified live that `fieldset[class*="_fieldEntry_"]` is the correct
-  // one-question-per-block container (a generic `[class*="_container_"]` ancestor mixes multiple
-  // questions' radios together). Re-queried fresh each iteration since Ashby's React tree can
-  // reorder or replace nodes as earlier fields are filled.
-  const questionBlocks = Array.from(document.querySelectorAll('fieldset[class*="_fieldEntry_"]')).filter(
-    (el) => el.querySelector('input, select, textarea'),
+  // match by label text. Two container shapes exist (live-tested 2026-07-04 on the Notion
+  // board): the EEO survey section renders each radio group as `fieldset[class*="_fieldEntry_"]`,
+  // but the main form's questions - including Phone, Location, LinkedIn, and sponsorship
+  // radios - are `div[class*="_fieldEntry_"]` blocks the fieldset-only selector never saw, which
+  // silently skipped every one of them. A div entry can wrap a fieldset entry on some boards, so
+  // keep only the innermost match to avoid double-processing a question. Re-queried fresh each
+  // iteration since Ashby's React tree can reorder or replace nodes as earlier fields are filled.
+  const questionBlocks = Array.from(
+    document.querySelectorAll('fieldset[class*="_fieldEntry_"], div[class*="_fieldEntry_"]'),
+  ).filter(
+    (el) =>
+      el.querySelector('input, select, textarea') &&
+      !el.querySelector('fieldset[class*="_fieldEntry_"], div[class*="_fieldEntry_"]'),
   );
 
   for (const block of questionBlocks) {
@@ -226,6 +237,39 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
           fields_skipped++;
           skipped_reasons.push(`${label.slice(0, 40)}: no value in application profile`);
         }
+        continue;
+      }
+    }
+
+    // Phone/location are `_systemfield_*` inputs on some boards (filled above) but per-posting
+    // UUID-named custom fields on others (live-tested 2026-07-04: Notion's board), where only
+    // the label identifies them.
+    const textTarget =
+      /\bphone\b/.test(label) ? applicationProfile.phone :
+      /^(location|city)\b/.test(label) ? applicationProfile.address_city :
+      undefined;
+    if (textTarget !== undefined) {
+      const input = block.querySelector<HTMLInputElement>('input[type="text"], input[type="tel"]');
+      // Skip autocomplete comboboxes (Location on most boards): a typed value that never
+      // selects a suggestion doesn't register as an answer, it just blocks the field.
+      const isCombobox = input?.getAttribute('role') === 'combobox' || !!input?.getAttribute('aria-autocomplete');
+      if (input && !input.value && !isCombobox) {
+        if (textTarget) {
+          await randomDelay();
+          input.focus();
+          setNativeValue(input, textTarget);
+          input.blur();
+          await waitForStableDom();
+          fields_filled++;
+        } else {
+          fields_skipped++;
+          skipped_reasons.push(`${label.slice(0, 40)}: no value in application profile`);
+        }
+        continue;
+      }
+      if (input && !input.value && isCombobox) {
+        fields_skipped++;
+        skipped_reasons.push(`${label.slice(0, 40)}: autocomplete field, left for manual selection`);
         continue;
       }
     }

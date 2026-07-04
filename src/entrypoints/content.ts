@@ -257,11 +257,11 @@ export default defineContentScript({
           animation: wp-slide-in 0.25s ease-out;
         ">
           <button id="wp-close" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
-          <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;">
-            <span style="font-size:20px;flex-shrink:0;margin-top:1px;">🔥</span>
+          <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;line-height:1.4;">
+            <span style="font-size:20px;flex-shrink:0;margin-top:1px;line-height:1;">🔥</span>
             <div>
-              <div style="font-weight:700;font-size:13px;color:#1e1b4b;">${headline}</div>
-              <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;">${subline}</div>
+              <div style="font-weight:700;font-size:13px;color:#1e1b4b;line-height:1.4;">${headline}</div>
+              <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;line-height:1.4;">${subline}</div>
             </div>
           </div>
           <div style="display:flex;gap:8px;">
@@ -351,14 +351,14 @@ export default defineContentScript({
           max-width: 272px; animation: wp-slide-in 0.25s ease-out;
         ">
           <button id="wp-resume-close" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
-          <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;">
-            <span style="font-size:20px;flex-shrink:0;margin-top:1px;">📄</span>
+          <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;line-height:1.4;">
+            <span style="font-size:20px;flex-shrink:0;margin-top:1px;line-height:1;">📄</span>
             <div>
-              <div style="font-weight:700;font-size:13px;color:#1e1b4b;">Generate tailored resume + fill this application?</div>
-              <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;">${title} at ${company}</div>
+              <div style="font-weight:700;font-size:13px;color:#1e1b4b;line-height:1.4;">Generate tailored resume + fill this application?</div>
+              <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;line-height:1.4;">${title} at ${company}</div>
             </div>
           </div>
-          <div id="wp-resume-status" style="font-size:11px;color:#6b7280;margin-bottom:8px;display:none;"></div>
+          <div id="wp-resume-status" style="font-size:11px;color:#6b7280;margin-bottom:8px;display:none;line-height:1.4;"></div>
           <div style="display:flex;gap:8px;">
             <button id="wp-resume-yes" style="
               flex:1;background:#4f46e5;color:white;border:none;border-radius:8px;
@@ -576,14 +576,14 @@ export default defineContentScript({
           max-width: 272px; animation: wp-slide-in 0.25s ease-out;
         ">
           <button id="wp-account-close" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
-          <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;">
-            <span style="font-size:20px;flex-shrink:0;margin-top:1px;">⚡</span>
+          <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;line-height:1.4;">
+            <span style="font-size:20px;flex-shrink:0;margin-top:1px;line-height:1;">⚡</span>
             <div>
-              <div style="font-weight:700;font-size:13px;color:#1e1b4b;">Fill in your email here?</div>
-              <div style="font-size:12px;color:#6366f1;margin-top:2px;">You'll still set your own password and click Create Account.</div>
+              <div style="font-weight:700;font-size:13px;color:#1e1b4b;line-height:1.4;">Fill in your email here?</div>
+              <div style="font-size:12px;color:#6366f1;margin-top:2px;line-height:1.4;">You'll still set your own password and click Create Account.</div>
             </div>
           </div>
-          <div id="wp-account-status" style="font-size:11px;color:#6b7280;margin-bottom:8px;display:none;"></div>
+          <div id="wp-account-status" style="font-size:11px;color:#6b7280;margin-bottom:8px;display:none;line-height:1.4;"></div>
           <div style="display:flex;gap:8px;">
             <button id="wp-account-yes" style="
               flex:1;background:#4f46e5;color:white;border:none;border-radius:8px;
@@ -665,11 +665,11 @@ export default defineContentScript({
           max-width: 272px; animation: wp-slide-in 0.25s ease-out;
         ">
           <button id="wp-start-close" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
-          <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;">
-            <span style="font-size:20px;flex-shrink:0;margin-top:1px;">👋</span>
+          <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;line-height:1.4;">
+            <span style="font-size:20px;flex-shrink:0;margin-top:1px;line-height:1;">👋</span>
             <div>
-              <div style="font-weight:700;font-size:13px;color:#1e1b4b;">This employer uses Workday</div>
-              <div style="font-size:12px;color:#6b7280;margin-top:2px;">
+              <div style="font-weight:700;font-size:13px;color:#1e1b4b;line-height:1.4;">This employer uses Workday</div>
+              <div style="font-size:12px;color:#6b7280;margin-top:2px;line-height:1.4;">
                 You'll need to sign in or create an account first - that part's still on you. Tap below
                 and Volley will take you to the right screen, then speed up account setup and the
                 application from there.
@@ -707,6 +707,31 @@ export default defineContentScript({
       const job = getJobDetails();
       if (!job) return;
 
+      // Workday multi-stages within one "application" (triage modal -> sign-in/account
+      // creation -> real form), and two of those stages need handling the generic
+      // isApplicationPage() URL gate can't express: the triage screen appears as a modal over
+      // the /details/... URL (no /apply anywhere yet - live-tested on NVIDIA 2026-07-04), and
+      // the outreach action card should NOT fire on sign-in/account screens, where no job
+      // title exists in the DOM and getJobDetails() falls back to site chrome
+      // ("CAREERS AT NVIDIA"). So Workday routes stage-by-stage here and returns early.
+      if (h.includes('myworkdayjobs.com') || h.includes('workday.com')) {
+        if (isWorkdayApplicationPage()) {
+          injectActionCard(job.title, job.company, window.location.href);
+          watchSubmitButton(job.title, job.company, window.location.href);
+          injectResumeFillCard(job.title, job.company, extractWorkdayJdText, fillWorkdayApplication);
+        } else if (isWorkdayAccountCreationPage()) {
+          injectWorkdayAccountCreationCard();
+        } else if (isWorkdayStartScreen()) {
+          injectWorkdayStartScreenCard();
+        } else {
+          chrome.runtime.sendMessage({
+            type: 'JOB_DETECTED',
+            payload: { title: job.title, company: job.company, url: window.location.href },
+          });
+        }
+        return;
+      }
+
       if (isApplicationPage()) {
         // Card 1: on form load
         injectActionCard(job.title, job.company, window.location.href);
@@ -723,27 +748,6 @@ export default defineContentScript({
           injectResumeFillCard(job.title, job.company, extractGreenhouseJdText, fillGreenhouseApplication);
         } else if (isAshbyApplicationPage()) {
           injectResumeFillCard(job.title, job.company, extractAshbyJdText, fillAshbyApplication);
-        } else if (isWorkdayApplicationPage()) {
-          // Fill-and-stop, same as the other three (2026-07-02: form-fill now runs on
-          // Workday too). isWorkdayApplicationPage() itself is the "account already
-          // exists" gate - it returns false during Workday's account-creation step, so
-          // this card (and the fill it triggers) never appears before a real account
-          // exists, only once the student has reached the actual application form.
-          injectResumeFillCard(job.title, job.company, extractWorkdayJdText, fillWorkdayApplication);
-        } else if (isWorkdayAccountCreationPage()) {
-          // 2026-07-03: speeds up the one step Volley still can't skip (the student must
-          // create their own Workday account - see project memory for why auto-creating it
-          // was scoped and decided against) by pre-filling the signup form itself, so the
-          // student reviews and clicks Create Account rather than typing an email+password
-          // from scratch. Fires only on the account-creation screen; isWorkdayApplicationPage()
-          // above takes over instantly once the real form appears (fast SPA-nav polling below).
-          injectWorkdayAccountCreationCard();
-        } else if (isWorkdayStartScreen()) {
-          // The triage screen before either of the above two - previously Volley said
-          // nothing here at all, leaving the student to guess between three unlabeled-in-
-          // effect options. Points them at "Apply Manually" specifically, since that's the
-          // path this adapter's selectors are built against.
-          injectWorkdayStartScreenCard();
         }
       } else {
         // Job listing page: silently notify the popup so it can pre-fill fields

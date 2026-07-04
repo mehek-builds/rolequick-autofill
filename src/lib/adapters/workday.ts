@@ -105,7 +105,11 @@ export function isWorkdayAccountCreationPage(): boolean {
 export function isWorkdayStartScreen(): boolean {
   const h = window.location.hostname;
   if (!h.includes('myworkdayjobs.com') && !h.includes('workday.com')) return false;
-  if (!looksLikeApplyUrl()) return false;
+  // No looksLikeApplyUrl() gate here, unlike the other two stage checks: NVIDIA (live-tested
+  // 2026-07-04) opens this triage screen as a modal OVER the /details/... URL, before any
+  // /apply navigation exists. The DOM check is specific enough on its own - the literal
+  // "Start Your Application" heading plus an exact-text "Apply Manually" button only ever
+  // co-occur on this one Workday screen.
   if (hasAccountCreationMarkers() || hasApplicationFormMarkers()) return false;
   return /start your application/i.test(document.body.innerText) && !!findApplyManuallyButton();
 }
