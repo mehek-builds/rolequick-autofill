@@ -7,6 +7,7 @@ import {
   isWorkdayStartScreen, findApplyManuallyButton,
 } from '../lib/adapters/workday';
 import { isLinkedInApplicationPage, extractLinkedInJdText, fillLinkedInApplication } from '../lib/adapters/linkedin';
+import { isLikelyApplicationForm, extractGenericJdText, getGenericJobDetails, fillGenericApplication } from '../lib/adapters/generic';
 import { getAutoSubmitEnabled } from '../lib/storage';
 import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
 
@@ -36,6 +37,19 @@ export default defineContentScript({
     // instance is also the only one with access to the actual form DOM, so its card must render
     // in its own document - a `position: fixed` card inside an iframe is scoped to that iframe's
     // own viewport, which is correct here since Greenhouse embeds are typically full-size.
+
+    // Besides the manifest matches, this same file is injected ON DEMAND (popup's "Fill the
+    // form on this page" button -> activeTab + chrome.scripting) into company career sites
+    // that host their own application form. A second click re-executes the whole bundle in
+    // the same isolated world, so guard against double-running: the repeat call just re-shows
+    // the generic card instead of standing up a second set of observers.
+    const w = window as unknown as { __volleyLoaded?: boolean; __volleyGenericInit?: () => void };
+    if (w.__volleyLoaded) {
+      w.__volleyGenericInit?.();
+      return;
+    }
+    w.__volleyLoaded = true;
+
     let cardInjected = false;
     let approved = false; // true once user taps "Yes" on either card
 
@@ -320,7 +334,7 @@ export default defineContentScript({
             <span style="font-size:20px;">⏳</span>
             <div>
               <div style="font-weight:700;font-size:13px;color:#1e1b4b;">Finding contacts &amp; drafting...</div>
-              <div style="font-size:12px;color:#6366f1;margin-top:2px;">Open Volley when ready</div>
+              <div style="font-size:12px;color:#6366f1;margin-top:2px;">Open RoleQuick when ready</div>
             </div>
           </div>
         `;
@@ -693,7 +707,7 @@ export default defineContentScript({
               <div style="font-weight:700;font-size:13px;color:#1e1b4b;line-height:1.4;">This employer uses Workday</div>
               <div style="font-size:12px;color:#6b7280;margin-top:2px;line-height:1.4;">
                 You'll need to sign in or create an account first - that part's still on you. Tap below
-                and Volley will take you to the right screen, then speed up account setup and the
+                and RoleQuick will take you to the right screen, then speed up account setup and the
                 application from there.
               </div>
             </div>
@@ -717,8 +731,43 @@ export default defineContentScript({
 
     // ─── Entry point ────────────────────────────────────────────────────────
 
+    const KNOWN_ATS_HOSTS = [
+      'linkedin.com', 'greenhouse.io', 'lever.co', 'myworkdayjobs.com',
+      'workday.com', 'ashbyhq.com', 'indeed.com', 'joinhandshake.com',
+    ];
+
+    // Company-hosted application forms (vercel.com/careers, lifeatspotify.com, ...): this
+    // only ever runs when the student explicitly injected the script from the popup, since
+    // no manifest match covers these domains. Re-clicking the popup button re-enters here
+    // via the __volleyGenericInit guard at the top of main().
+    function genericInit() {
+      if (KNOWN_ATS_HOSTS.some((k) => window.location.hostname.includes(k))) return;
+      document.getElementById('volley-resume-card')?.remove();
+      if (!isLikelyApplicationForm()) {
+        const note = document.createElement('div');
+        note.id = 'volley-generic-note';
+        note.style.cssText =
+          'position:fixed;bottom:72px;right:20px;z-index:2147483647;background:white;border:1.5px solid #e0e7ff;' +
+          'border-radius:14px;padding:12px 16px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;' +
+          'font-size:12px;line-height:1.4;color:#374151;box-shadow:0 8px 32px rgba(79,70,229,0.18);max-width:272px;';
+        note.textContent = "RoleQuick couldn't find an application form on this page. Open the page with the actual form fields, then try again.";
+        document.getElementById('volley-generic-note')?.remove();
+        document.body.appendChild(note);
+        setTimeout(() => note.remove(), 6000);
+        return;
+      }
+      const job = getGenericJobDetails();
+      injectResumeFillCard(job.title, job.company, extractGenericJdText, fillGenericApplication);
+    }
+    w.__volleyGenericInit = genericInit;
+
     function init() {
       const h = window.location.hostname;
+
+      if (!KNOWN_ATS_HOSTS.some((k) => h.includes(k))) {
+        genericInit();
+        return;
+      }
 
       if (h.includes('linkedin.com')) {
         const job = getJobDetails();

@@ -120,7 +120,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
               V
             </div>
           </div>
-          <h1 className="text-xl font-bold tracking-tight text-white">Volley</h1>
+          <h1 className="text-xl font-bold tracking-tight text-white">RoleQuick</h1>
           <p className="mx-auto mt-1 max-w-[260px] text-xs leading-relaxed text-brand-100">
             Skip the volume game. Reach the right person.
           </p>
@@ -189,7 +189,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
             <div className="animate-fade-in-up" style={{ animationDelay: '40ms' }}>
               <h2 className="text-base font-semibold text-gray-900">Let's set you up</h2>
               <p className="mt-0.5 text-xs leading-relaxed text-gray-500">
-                Two quick things, then Volley personalizes every message from your real
+                Two quick things, then RoleQuick personalizes every message from your real
                 background.
               </p>
             </div>

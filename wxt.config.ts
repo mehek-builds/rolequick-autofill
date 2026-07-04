@@ -4,13 +4,18 @@ export default defineConfig({
   srcDir: 'src',
   modules: ['@wxt-dev/module-react'],
   manifest: ({ command }) => ({
-    name: 'Volley - Student Outreach',
-    description: 'Find the right humans at any company and send personalized outreach in seconds.',
-    version: '0.2.0',
+    name: 'RoleQuick: Tailored Resumes & Application Autofill',
+    description:
+      'Open a job posting and RoleQuick tailors your resume, fills the application, and drafts real outreach. You get the final say.',
+    version: '0.3.0',
     // Keep this list minimal: every extra permission widens the install warning
     // and slows Chrome Web Store review. API calls go through the background
     // worker and rely on the backend's CORS, so no host_permissions in prod.
-    permissions: ['activeTab', 'storage', 'clipboardWrite'],
+    // 'scripting' (no install-warning of its own) + the existing 'activeTab' power the
+    // popup's "Fill the form on this page" button: the content script is injected on demand
+    // into company-hosted career pages the manifest matches can't cover, only ever on the
+    // tab the student invoked it from.
+    permissions: ['activeTab', 'scripting', 'storage', 'clipboardWrite'],
     host_permissions: command === 'serve' ? ['http://localhost:3001/*'] : [],
   }),
 });

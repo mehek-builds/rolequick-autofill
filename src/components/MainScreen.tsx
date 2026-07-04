@@ -84,6 +84,29 @@ export default function MainScreen({
   const [error, setError] = useState<string | null>(null);
   const [recentEvents, setRecentEvents] = useState<OutreachEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
+  const [fillError, setFillError] = useState<string | null>(null);
+
+  // Company career sites that host their own application form aren't in the manifest's
+  // matches, so RoleQuick can't see them until the student asks. Clicking here is the ask:
+  // the toolbar interaction grants activeTab for this one tab, and the content script is
+  // injected on demand. Its generic adapter takes over from there.
+  const handleFillThisPage = async () => {
+    setFillError(null);
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) {
+        setFillError('Could not find the current tab.');
+        return;
+      }
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content-scripts/content.js'],
+      });
+      window.close(); // hand off to the on-page card
+    } catch {
+      setFillError("Chrome doesn't allow extensions on this page (new tab, chrome://, or the Web Store).");
+    }
+  };
 
   useEffect(() => {
     getEvents(token)
@@ -151,7 +174,7 @@ export default function MainScreen({
           <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-brand-600 text-xs font-bold text-white">
             V
           </div>
-          <span className="text-base font-bold tracking-tight text-gray-900">Volley</span>
+          <span className="text-base font-bold tracking-tight text-gray-900">RoleQuick</span>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -203,7 +226,7 @@ export default function MainScreen({
                     {pendingDraftCount} draft{pendingDraftCount > 1 ? 's' : ''} ready for you
                   </p>
                   <p className="text-[11px] text-green-600">
-                    Volley wrote these in the background, tap to review
+                    RoleQuick wrote these in the background, tap to review
                   </p>
                 </div>
                 <span className="text-sm text-green-400">›</span>
@@ -297,6 +320,21 @@ export default function MainScreen({
                 Find my people
               </button>
             </form>
+
+            {/* On-demand fill for company-hosted application forms */}
+            <div className="flex flex-col gap-1.5 rounded-xl border border-gray-100 bg-gray-50 p-3">
+              <p className="text-[11px] font-medium text-gray-500">
+                On a company's own application page? RoleQuick can fill it here too.
+              </p>
+              <button
+                type="button"
+                onClick={handleFillThisPage}
+                className="w-full rounded-lg border border-brand-200 bg-white px-4 py-2 text-sm font-semibold text-brand-700 transition-all duration-150 hover:bg-brand-50 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
+              >
+                Fill the form on this page
+              </button>
+              {fillError && <p className="text-[11px] text-red-500">{fillError}</p>}
+            </div>
 
             {/* Recent outreach */}
             <div>

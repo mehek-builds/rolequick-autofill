@@ -210,7 +210,7 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
               subtitle={
                 bankIsSeeded
                   ? 'Pulled from your resume. Review each entry, edit the bullet if it needs work.'
-                  : 'Add the jobs and projects Volley should draw from when tailoring a resume.'
+                  : 'Add the jobs and projects RoleQuick should draw from when tailoring a resume.'
               }
             />
 
@@ -388,7 +388,7 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
                     </div>
                   ))}
                   <p className="text-[11px] text-gray-400">
-                    Left blank = Volley selects "Decline to Self-Identify" on every application.
+                    Left blank = RoleQuick selects "Decline to Self-Identify" on every application.
                   </p>
                 </div>
               )}
@@ -430,8 +430,8 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
                 <span>
                   <span className="block text-xs font-medium text-gray-700">Auto-submit after filling</span>
                   <span className="mt-0.5 block text-[11px] leading-relaxed text-gray-400">
-                    Off by default: Volley fills the form and stops so you can review before hitting
-                    Submit yourself. Turn this on and Volley will submit automatically after a
+                    Off by default: RoleQuick fills the form and stops so you can review before hitting
+                    Submit yourself. Turn this on and RoleQuick will submit automatically after a
                     countdown you can cancel on each application.
                   </span>
                 </span>
@@ -479,7 +479,7 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
             <div>
               <p className="text-sm font-semibold text-gray-900">You're set up</p>
               <p className="mt-0.5 text-xs text-gray-400">
-                Next application, Volley will tailor a resume and fill the form for you
+                Next application, RoleQuick will tailor a resume and fill the form for you
                 {autoSubmit ? ', then submit it after a countdown you can cancel.' : '.'}
               </p>
             </div>
@@ -487,7 +487,7 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
               onClick={onBack}
               className="mt-2 rounded-lg bg-brand-600 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-700"
             >
-              Back to Volley
+              Back to RoleQuick
             </button>
           </div>
         )}
