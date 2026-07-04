@@ -44,6 +44,14 @@ function isVisible(el: HTMLElement): boolean {
   return style.display !== 'none' && style.visibility !== 'hidden';
 }
 
+// Strip zero-width and non-breaking characters, then collapse whitespace. Live-tested
+// 2026-07-04 on vercel.com: every radio option is prefixed with U+200B, which `\s` does NOT
+// match, so `/^\s*yes/` failed on "​Yes" and clean Yes/No answers were skipped. Every label
+// and option string is run through this before any matching.
+function clean(s: string): string {
+  return (s ?? '').replace(/[\u200B\u200C\u200D\uFEFF\u00A0]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 // Everything a human could read as a control's identity, lowercased. Label text is the
 // strongest signal, so it leads; name/id are framework-generated noise, so they trail.
 function controlIdentity(el: Element): string {
@@ -62,12 +70,11 @@ function controlIdentity(el: Element): string {
   parts.push(el.getAttribute('placeholder') ?? '');
   parts.push(el.getAttribute('name') ?? '');
   parts.push(el.id ?? '');
-  return parts.join(' ').toLowerCase().replace(/\s+/g, ' ').trim();
+  return clean(parts.join(' ')).toLowerCase();
 }
 
-// The question a radio group / select is asking. Prefer a real container label (fieldset
-// legend, role=group aria-label) over the control's own attributes, which for a radio are
-// usually just one option's text.
+// The question a single control (usually a <select>) is asking. Prefer a real container
+// label over the control's own attributes.
 function questionLabel(el: Element): string {
   const fieldset = el.closest('fieldset');
   const legend = fieldset?.querySelector('legend')?.textContent?.trim();
@@ -77,9 +84,38 @@ function questionLabel(el: Element): string {
   if (groupLabel) return groupLabel.toLowerCase();
   const own = controlIdentity(el);
   if (own) return own;
-  // Last resort: nearest preceding label-ish text in the same block.
   const block = el.closest('div, section, li');
   return (block?.querySelector('label, legend, .question, h3, h4')?.textContent ?? '').toLowerCase().trim();
+}
+
+// The question a RADIO GROUP is asking. Live-tested 2026-07-04 on vercel.com (Greenhouse
+// behind a native form): the question sits in an ancestor ABOVE the options, not in a
+// <legend>, so reading any single radio's own label returns one option's text, never the
+// question. Instead: find the topmost ancestor that still contains exactly this group's
+// radios (never merging a neighbouring question), then subtract every option's label from
+// its text - what remains is the question stem.
+function groupQuestionText(group: HTMLInputElement[], optionTexts: string[]): string {
+  const legend = group[0].closest('fieldset')?.querySelector('legend')?.textContent?.trim();
+  if (legend) return legend.toLowerCase();
+  const ariaGroup = group[0].closest('[role="group"], [role="radiogroup"]')?.getAttribute('aria-label');
+  if (ariaGroup) return ariaGroup.toLowerCase();
+
+  let anc: HTMLElement | null = group[0].parentElement;
+  while (anc && group.some((r) => !anc!.contains(r))) anc = anc.parentElement; // smallest ancestor of all
+  let top = anc;
+  while (
+    top?.parentElement &&
+    top.parentElement.querySelectorAll('input[type="radio"]').length === group.length
+  ) {
+    top = top.parentElement; // climb while still exactly this group
+  }
+  let text = clean(top?.textContent ?? '');
+  for (const ot of optionTexts) {
+    const co = clean(ot);
+    if (co && co.length > 1) text = text.split(co).join(' ');
+  }
+  text = clean(text).toLowerCase();
+  return text || controlIdentity(group[0]);
 }
 
 function isAutocompleteWidget(el: HTMLElement): boolean {
@@ -178,9 +214,9 @@ const DECLINE_RE = /decline|prefer not|don'?t wish|do not wish|not to (say|answe
 // (better to leave blank and report than to select the wrong answer).
 function matchOption<T extends { text: string }>(options: T[], desired: Desired): T | null {
   if (!desired) return null;
-  const norm = (s: string) => s.toLowerCase().trim();
+  const norm = (s: string) => clean(s).toLowerCase();
   if (desired.mode === 'decline') {
-    return options.find((o) => DECLINE_RE.test(o.text)) ?? null;
+    return options.find((o) => DECLINE_RE.test(clean(o.text))) ?? null;
   }
   if (desired.mode === 'yes' || desired.mode === 'no') {
     const wantYes = desired.mode === 'yes';
@@ -362,13 +398,14 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
   }
   for (const group of radioGroups.values()) {
     if (group.some((r) => r.checked)) continue; // already answered
-    const label = questionLabel(group[0]);
-    const desired = desiredAnswer(label, ap, eeo);
     const options = group.map((r) => ({
       text: (document.querySelector(`label[for="${CSS.escape(r.id)}"]`)?.textContent ??
         r.closest('label')?.textContent ?? r.getAttribute('aria-label') ?? r.value ?? '').trim(),
       el: r,
     }));
+    // Derive the question stem AFTER the options, so it can subtract them from the container.
+    const label = groupQuestionText(group, options.map((o) => o.text));
+    const desired = desiredAnswer(label, ap, eeo);
     const match = matchOption(options, desired);
     if (match) {
       await randomDelay();
