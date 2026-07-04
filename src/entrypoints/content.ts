@@ -60,9 +60,16 @@ export default defineContentScript({
         const company = atIdx !== -1
           ? docTitle.slice(atIdx + 4).replace(/\s*\|.*$/, '').trim()
           : document.querySelector<HTMLElement>('.company-name')?.textContent?.trim() ?? h.split('.')[0];
+        // The /embed/job_app template (companies embedding their board in an iframe on their
+        // own careers site, e.g. databricks.com - live-tested 2026-07-04) renders NO h1 at
+        // all, so without the document.title fallback getJobDetails() returned null there and
+        // no card ever fired on any embedded Greenhouse application.
+        const titleFromDocTitle =
+          atIdx !== -1 ? docTitle.slice(0, atIdx).replace(/^job application for\s*/i, '').trim() : undefined;
         const title =
           document.querySelector<HTMLElement>('h1.app-title')?.textContent?.trim() ??
-          document.querySelector<HTMLElement>('h1')?.textContent?.trim();
+          document.querySelector<HTMLElement>('h1')?.textContent?.trim() ??
+          titleFromDocTitle;
         if (title && company) return { title, company };
       }
 
