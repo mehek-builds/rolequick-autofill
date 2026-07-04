@@ -418,6 +418,10 @@ export default defineContentScript({
       applicationProfile: ApplicationProfile;
       resumeBlob?: Blob;
       resumeFileName?: string;
+      // Generic-adapter-only extras (ATS adapters ignore them). eeo carries the student's
+      // demographic prefs for EEO questions; draftAnswer AI-drafts an open-ended textarea.
+      eeo?: Record<string, string>;
+      draftAnswer?: (question: string) => Promise<string | null>;
     }) => Promise<AutofillResult>;
 
     // Shared by every ATS adapter: generate the JD-tailored resume, then run that adapter's
@@ -480,6 +484,17 @@ export default defineContentScript({
                   applicationProfile: result.applicationProfile,
                   resumeBlob,
                   resumeFileName: result.resume.file_name,
+                  // Generic-adapter extras (ATS adapters ignore them): EEO prefs for demographic
+                  // questions, and an AI-draft hook for open-ended textareas routed through the
+                  // background to the backend. jdText/company/title are already in scope here.
+                  eeo: (result.applicationProfile?.eeo_prefs as Record<string, string> | undefined) ?? {},
+                  draftAnswer: (question: string) =>
+                    new Promise<string | null>((resolve) => {
+                      chrome.runtime.sendMessage(
+                        { type: 'ANSWER_QUESTION', payload: { company, role: title, jd_text: jdText, question } },
+                        (r: { answer?: string | null } | undefined) => resolve(r?.answer ?? null),
+                      );
+                    }),
                 }),
                 new Promise<never>((_, reject) =>
                   setTimeout(() => reject(new Error('timed out')), FILL_TIMEOUT_MS),

@@ -107,6 +107,7 @@ export interface ApplicationProfile {
   needs_sponsorship?: boolean;
   availability_date?: string;
   desired_salary?: string;
+  date_of_birth?: string;
   eeo_prefs?: Record<string, string> | null;
   referral_source_default?: string;
 }

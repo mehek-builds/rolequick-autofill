@@ -363,6 +363,16 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
               />
             </div>
 
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-gray-600">Date of birth (optional)</label>
+              <input
+                value={appProfile.date_of_birth ?? ''}
+                onChange={(e) => setAppProfile((p) => ({ ...p, date_of_birth: e.target.value }))}
+                placeholder="MM/DD/YYYY — only used when a form asks, never for SSN"
+                className={inputClass}
+              />
+            </div>
+
             <div className="rounded-xl border border-gray-100 bg-gray-50/50 p-3">
               <button
                 type="button"

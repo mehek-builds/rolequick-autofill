@@ -269,6 +269,35 @@ export default defineBackground(() => {
         return true; // responding asynchronously
       }
 
+      case 'ANSWER_QUESTION': {
+        // Drafts one open-ended application answer from the backend. The generic adapter calls
+        // this per textarea; the field it fills is flagged for review, so this is a first draft
+        // in the student's voice, never a silent final answer.
+        const { company, role, jd_text, question } = message.payload;
+        getStoredToken().then(async (token) => {
+          if (!token) {
+            sendResponse({ error: 'not signed in' });
+            return;
+          }
+          try {
+            const res = await fetch(`${API_BASE}/application/answer`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ company, role, jd_text, question }),
+            });
+            if (!res.ok) {
+              sendResponse({ error: `draft failed (${res.status})` });
+              return;
+            }
+            const data: { answer?: string } = await res.json();
+            sendResponse({ answer: data.answer ?? null });
+          } catch (err) {
+            sendResponse({ error: err instanceof Error ? err.message : 'draft failed' });
+          }
+        });
+        return true; // responding asynchronously
+      }
+
       case 'GET_ACCOUNT_CREATION_DATA': {
         // Lighter than GENERATE_RESUME_AND_FILL_DATA - the Workday signup screen only needs the
         // account email, not a resume, so this skips the /resume/generate call entirely (no
