@@ -187,7 +187,9 @@ function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string
     return { mode: 'yes' };
 
   // EEO / demographics: real answer if the student provided one, else decline.
-  if (/gender|what is your sex\b/.test(l)) return eeoAnswer(eeo.gender);
+  // \bgender\b (not /gender/) so "do you identify as transgender?" - a distinct yes/no
+  // self-ID question we have no data for - doesn't get pulled into the gender-value rule.
+  if (/\bgender\b|what is your sex\b/.test(l)) return eeoAnswer(eeo.gender);
   if (/race|ethnic/.test(l)) return eeoAnswer(eeo.race);
   if (/hispanic|latino/.test(l)) return { mode: 'decline' };
   if (/veteran|military|protected\s+veteran/.test(l)) return eeoAnswer(eeo.veteran);
@@ -283,6 +285,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
   let fields_skipped = 0;
   let ai_drafted = 0;
   const skipped_reasons: string[] = [];
+  const pendingDrafts: Array<{ el: HTMLTextAreaElement; question: string }> = [];
   const short = (s: string) => s.slice(0, 50).trim();
 
   const nameParts = fullName.trim().split(/\s+/);
@@ -338,26 +341,17 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
       continue;
     }
 
-    // Open-ended written question: AI-draft it if the hook is available, then flag for review.
+    // Open-ended written question: defer it. Drafting is an LLM round trip per box, so we
+    // collect them here and fire them all in PARALLEL after the instant fields are done -
+    // the structured part of the form populates immediately instead of blocking behind N
+    // sequential draft calls.
     if (isTextarea) {
       if (draftAnswer) {
-        const q = questionLabel(el) || id;
-        let drafted: string | null = null;
-        try {
-          drafted = await draftAnswer(q);
-        } catch {
-          drafted = null;
-        }
-        if (drafted && drafted.trim()) {
-          await fillTextField(el, drafted.trim());
-          markForReview(el);
-          ai_drafted++;
-          fields_filled++;
-          continue;
-        }
+        pendingDrafts.push({ el, question: questionLabel(el) || id });
+      } else {
+        fields_skipped++;
+        skipped_reasons.push(`open-ended question left blank: "${short(id)}"`);
       }
-      fields_skipped++;
-      skipped_reasons.push(`open-ended question left blank: "${short(id)}"`);
       continue;
     }
 
@@ -456,6 +450,33 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
   } else {
     fields_skipped++;
     skipped_reasons.push('resume: no generated resume file available');
+  }
+
+  // ── Open-ended answers: all instant fields are filled by now, so draft every textarea
+  //    CONCURRENTLY (each is an independent LLM round trip). Wall-clock is the slowest single
+  //    draft, not the sum - a form with 4 essay boxes takes ~1 draft's time, not 4. ──
+  if (pendingDrafts.length > 0) {
+    const results = await Promise.all(
+      pendingDrafts.map(async ({ el, question }) => {
+        try {
+          const drafted = await params.draftAnswer!(question);
+          return { el, question, drafted: drafted?.trim() || null };
+        } catch {
+          return { el, question, drafted: null };
+        }
+      }),
+    );
+    for (const { el, question, drafted } of results) {
+      if (drafted) {
+        await fillTextField(el, drafted);
+        markForReview(el);
+        ai_drafted++;
+        fields_filled++;
+      } else {
+        fields_skipped++;
+        skipped_reasons.push(`open-ended question left blank: "${short(question)}"`);
+      }
+    }
   }
 
   if (ai_drafted > 0) {

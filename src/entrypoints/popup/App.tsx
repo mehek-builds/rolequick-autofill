@@ -102,7 +102,10 @@ export default function App() {
   const handleOnboardingComplete = (newProfile: Profile, newToken: string) => {
     setToken(newToken);
     setProfile(newProfile);
-    setScreen('main');
+    // Route straight into autofill setup at JOIN time so work-auth, EEO, DOB, salary, and links
+    // are collected once, up front - never asked mid-application. That keeps the first (and
+    // every) fill instant: the adapter only ever reads stored data or skips, it never prompts.
+    setScreen('autofill-setup');
   };
 
   const handleContactsFound = (found: Contact[], jobCtx: JobContext) => {
