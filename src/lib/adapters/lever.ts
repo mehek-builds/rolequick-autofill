@@ -6,25 +6,7 @@ import type { ApplicationProfile, AutofillResult, Profile } from '../types';
 // anything it's told never to touch, and NEVER clicks Submit - Section 5 Step 4's one rule with
 // zero tolerance for drift.
 
-import { commitChoice } from './shared/dom';
-
-const NEVER_FILL_LABEL_PATTERNS = [/social security/i, /ssn\b/i, /driver'?s?\s*licen[sc]e/i, /background check consent/i];
-
-// Staggered delays between field fills (PRD-v2 Section 12.6: built in from the first adapter,
-// not retrofitted later) so the fill pattern reads less like a bot filling every field in
-// under a second. Exact values are a tuning question once real fill behavior is observable.
-function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
-  const ms = minMs + Math.random() * (maxMs - minMs);
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
-  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-  setter?.call(el, value);
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-}
+import { commitChoice, NEVER_FILL_LABEL_PATTERNS, randomDelay, setNativeValue, fillField } from './shared/dom';
 
 function labelTextFor(el: Element): string {
   const container = el.closest('.application-question, .card, li') ?? el.parentElement;
@@ -34,13 +16,6 @@ function labelTextFor(el: Element): string {
 function isNeverFillField(el: Element): boolean {
   const label = labelTextFor(el);
   return NEVER_FILL_LABEL_PATTERNS.some((re) => re.test(label));
-}
-
-async function fillField(el: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
-  await randomDelay();
-  el.focus();
-  setNativeValue(el, value);
-  el.blur();
 }
 
 // `<input type="file">` can't be set directly by script; construct a File/DataTransfer and

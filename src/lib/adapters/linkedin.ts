@@ -33,29 +33,7 @@ const EASY_APPLY_MODAL_SELECTORS = [
   '[class*="easy-apply-modal"]',
 ];
 
-import { commitChoice } from './shared/dom';
-
-const NEVER_FILL_LABEL_PATTERNS = [/social security/i, /ssn\b/i, /driver'?s?\s*licen[sc]e/i, /background check consent/i];
-
-function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
-  const ms = minMs + Math.random() * (maxMs - minMs);
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
-  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-  setter?.call(el, value);
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-}
-
-async function fillField(el: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
-  await randomDelay();
-  el.focus();
-  setNativeValue(el, value);
-  el.blur();
-}
+import { commitChoice, NEVER_FILL_LABEL_PATTERNS, randomDelay, setNativeValue, fillField, radioOptionsIn } from './shared/dom';
 
 function getModal(): Element | null {
   for (const sel of EASY_APPLY_MODAL_SELECTORS) {
@@ -99,15 +77,6 @@ function labelTextFor(el: Element): string {
 
 function isNeverFillField(el: Element): boolean {
   return NEVER_FILL_LABEL_PATTERNS.some((re) => re.test(labelTextFor(el)));
-}
-
-// LinkedIn radios (like Ashby's) carry no meaningful `value` attribute - the real option
-// text lives in the associated `<label for=radio.id>`.
-function radioOptionsIn(block: Element): Array<{ radio: HTMLInputElement; text: string }> {
-  return [...block.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((radio) => ({
-    radio,
-    text: (document.querySelector(`label[for="${radio.id}"]`)?.textContent ?? '').trim().toLowerCase(),
-  }));
 }
 
 async function checkRadio(radio: HTMLInputElement): Promise<void> {

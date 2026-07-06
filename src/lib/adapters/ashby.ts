@@ -30,14 +30,7 @@ import type { ApplicationProfile, AutofillResult, Profile } from '../types';
 // an await), and waitForStableDom() pauses between fields until mutations stop rather than
 // firing every field in one tight loop.
 
-import { commitChoice } from './shared/dom';
-
-const NEVER_FILL_LABEL_PATTERNS = [/social security/i, /ssn\b/i, /driver'?s?\s*licen[sc]e/i, /background check consent/i];
-
-function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
-  const ms = minMs + Math.random() * (maxMs - minMs);
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+import { commitChoice, NEVER_FILL_LABEL_PATTERNS, randomDelay, setNativeValue, radioOptionsIn } from './shared/dom';
 
 // Resolves once the DOM has gone quiet for `quietMs`, or after `maxMs` regardless - Ashby's
 // React tree re-renders after most field changes, and firing the next fill mid-re-render risks
@@ -62,14 +55,6 @@ function waitForStableDom(quietMs = 200, maxMs = 1500): Promise<void> {
   });
 }
 
-function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
-  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-  setter?.call(el, value);
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-}
-
 // Verified live: `fieldset[class*="_fieldEntry_"]` is the per-question container for BOTH radio
 // groups and text inputs. A generic `[class*="_container_"]` ancestor is too broad - it can wrap
 // several unrelated questions together, mixing their radios in one lookup. Prefer <legend> (used
@@ -90,15 +75,6 @@ function labelTextFor(el: Element): string {
 function isNeverFillField(el: Element): boolean {
   const label = labelTextFor(el);
   return NEVER_FILL_LABEL_PATTERNS.some((re) => re.test(label));
-}
-
-// Ashby radios carry no meaningful `value` (always "on"); the real option text lives in
-// `label[for=radio.id]`. Returns each radio paired with its label text, lowercased.
-function radioOptionsIn(block: Element): Array<{ radio: HTMLInputElement; text: string }> {
-  return [...block.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((radio) => ({
-    radio,
-    text: (document.querySelector(`label[for="${radio.id}"]`)?.textContent ?? '').trim().toLowerCase(),
-  }));
 }
 
 async function checkRadio(radio: HTMLInputElement): Promise<void> {

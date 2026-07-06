@@ -42,22 +42,7 @@ import type { ApplicationProfile, AutofillResult, Profile } from '../types';
 // embed that proxies the form through the parent's own origin instead of an iframe pointing at a
 // greenhouse.io URL; that case still isn't covered and is flagged below.
 
-import { commitChoice } from './shared/dom';
-
-const NEVER_FILL_LABEL_PATTERNS = [/social security/i, /ssn\b/i, /driver'?s?\s*licen[sc]e/i, /background check consent/i];
-
-function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
-  const ms = minMs + Math.random() * (maxMs - minMs);
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
-  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-  setter?.call(el, value);
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-}
+import { commitChoice, NEVER_FILL_LABEL_PATTERNS, randomDelay, setNativeValue, fillField, splitName } from './shared/dom';
 
 function labelTextFor(el: Element): string {
   const container = el.closest('.field-wrapper, .field, #custom_fields > div, li') ?? el.parentElement;
@@ -76,13 +61,6 @@ function firstMatch<T extends Element>(selectors: string[]): T | null {
 function isNeverFillField(el: Element): boolean {
   const label = labelTextFor(el);
   return NEVER_FILL_LABEL_PATTERNS.some((re) => re.test(label));
-}
-
-async function fillField(el: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
-  await randomDelay();
-  el.focus();
-  setNativeValue(el, value);
-  el.blur();
 }
 
 // aria-controls only exists once the menu is open (react-select adds it dynamically), so it
@@ -180,11 +158,6 @@ export function extractGreenhouseJdText(): string {
   const desc = document.querySelector('#content, .job__description, [data-qa="job-description"]');
   const descText = desc?.textContent?.trim();
   return (descText || document.body.innerText).trim().slice(0, 12000);
-}
-
-function splitName(fullName: string): { first: string; last: string } {
-  const parts = fullName.trim().split(/\s+/);
-  return { first: parts[0] ?? '', last: parts.slice(1).join(' ') };
 }
 
 export async function fillGreenhouseApplication(params: GreenhouseFillParams): Promise<AutofillResult> {

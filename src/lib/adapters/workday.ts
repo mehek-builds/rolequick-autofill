@@ -23,29 +23,7 @@ import type { ApplicationProfile, AutofillResult, Profile } from '../types';
 // application page - false negatives here are the safe failure mode (erring toward not
 // firing beats firing too early, same as detection).
 
-import { commitChoice } from './shared/dom';
-
-const NEVER_FILL_LABEL_PATTERNS = [/social security/i, /ssn\b/i, /driver'?s?\s*licen[sc]e/i, /background check consent/i];
-
-function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
-  const ms = minMs + Math.random() * (maxMs - minMs);
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
-  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-  setter?.call(el, value);
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-}
-
-async function fillField(el: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
-  await randomDelay();
-  el.focus();
-  setNativeValue(el, value);
-  el.blur();
-}
+import { commitChoice, NEVER_FILL_LABEL_PATTERNS, randomDelay, setNativeValue, fillField, splitName } from './shared/dom';
 
 function hasAccountCreationMarkers(): boolean {
   const hasPasswordField = !!document.querySelector('input[type="password"]');
@@ -170,11 +148,6 @@ export interface WorkdayFillParams {
   applicationProfile: ApplicationProfile;
   resumeBlob?: Blob;
   resumeFileName?: string;
-}
-
-function splitName(fullName: string): { first: string; last: string } {
-  const parts = fullName.trim().split(/\s+/);
-  return { first: parts[0] ?? '', last: parts.slice(1).join(' ') };
 }
 
 export async function fillWorkdayApplication(params: WorkdayFillParams): Promise<AutofillResult> {
