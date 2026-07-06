@@ -30,6 +30,8 @@ import type { ApplicationProfile, AutofillResult, Profile } from '../types';
 // an await), and waitForStableDom() pauses between fields until mutations stop rather than
 // firing every field in one tight loop.
 
+import { commitChoice } from './shared/dom';
+
 const NEVER_FILL_LABEL_PATTERNS = [/social security/i, /ssn\b/i, /driver'?s?\s*licen[sc]e/i, /background check consent/i];
 
 function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
@@ -101,9 +103,9 @@ function radioOptionsIn(block: Element): Array<{ radio: HTMLInputElement; text: 
 
 async function checkRadio(radio: HTMLInputElement): Promise<void> {
   await randomDelay();
-  radio.checked = true;
-  radio.dispatchEvent(new Event('input', { bubbles: true }));
-  radio.dispatchEvent(new Event('change', { bubbles: true }));
+  // Ashby is React-controlled (hence waitForStableDom below); commitChoice clicks rather than
+  // only poking .checked so the selection actually registers in component state.
+  commitChoice(radio);
   await waitForStableDom();
 }
 

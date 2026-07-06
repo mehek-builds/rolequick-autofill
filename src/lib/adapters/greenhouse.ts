@@ -42,6 +42,8 @@ import type { ApplicationProfile, AutofillResult, Profile } from '../types';
 // embed that proxies the form through the parent's own origin instead of an iframe pointing at a
 // greenhouse.io URL; that case still isn't covered and is flagged below.
 
+import { commitChoice } from './shared/dom';
+
 const NEVER_FILL_LABEL_PATTERNS = [/social security/i, /ssn\b/i, /driver'?s?\s*licen[sc]e/i, /background check consent/i];
 
 function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
@@ -304,8 +306,7 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
       } else {
         const declineRadio = block.querySelector<HTMLInputElement>('input[type="radio"][value*="Decline" i]');
         if (declineRadio) {
-          declineRadio.checked = true;
-          declineRadio.dispatchEvent(new Event('change', { bubbles: true }));
+          commitChoice(declineRadio);
           fields_filled++;
         } else {
           fields_skipped++;
@@ -322,8 +323,7 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
       const select = block.querySelector<HTMLSelectElement>('select');
       const radio = block.querySelector<HTMLInputElement>(`input[type="radio"][value="${wantYes ? 'Yes' : 'No'}" i]`);
       if (radio) {
-        radio.checked = true;
-        radio.dispatchEvent(new Event('change', { bubbles: true }));
+        commitChoice(radio);
         fields_filled++;
         continue;
       }

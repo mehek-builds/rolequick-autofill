@@ -23,6 +23,8 @@ import type { ApplicationProfile, AutofillResult, Profile } from '../types';
 // application page - false negatives here are the safe failure mode (erring toward not
 // firing beats firing too early, same as detection).
 
+import { commitChoice } from './shared/dom';
+
 const NEVER_FILL_LABEL_PATTERNS = [/social security/i, /ssn\b/i, /driver'?s?\s*licen[sc]e/i, /background check consent/i];
 
 function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
@@ -276,8 +278,7 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
       }
       const declineRadio = block.querySelector<HTMLInputElement>('input[type="radio"][value*="Decline" i]');
       if (declineRadio) {
-        declineRadio.checked = true;
-        declineRadio.dispatchEvent(new Event('change', { bubbles: true }));
+        commitChoice(declineRadio);
         fields_filled++;
       } else {
         fields_skipped++;
@@ -292,8 +293,7 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
       const wantYes = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
       const radio = block.querySelector<HTMLInputElement>(`input[type="radio"][value="${wantYes ? 'Yes' : 'No'}" i]`);
       if (radio) {
-        radio.checked = true;
-        radio.dispatchEvent(new Event('change', { bubbles: true }));
+        commitChoice(radio);
         fields_filled++;
         continue;
       }

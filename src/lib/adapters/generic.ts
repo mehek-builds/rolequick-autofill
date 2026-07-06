@@ -1,4 +1,5 @@
 import type { ApplicationProfile, AutofillResult, Profile } from '../types';
+import { commitChoice as checkChoice } from './shared/dom';
 
 // Generic adapter for companies that build their OWN application form on their own domain
 // against an ATS's API (live-tested targets 2026-07-04: vercel.com/careers - Greenhouse API
@@ -43,6 +44,28 @@ function isVisible(el: HTMLElement): boolean {
   const style = getComputedStyle(el);
   return style.display !== 'none' && style.visibility !== 'hidden';
 }
+
+function visibleLabelFor(el: HTMLInputElement): HTMLElement | null {
+  return (
+    (el.labels && el.labels[0]) ??
+    (el.id ? document.querySelector<HTMLElement>(`label[for="${CSS.escape(el.id)}"]`) : null) ??
+    el.closest('label')
+  );
+}
+
+// Native radios/checkboxes are routinely hidden (display:none / sr-only / 1px absolute)
+// behind a styled <label> that is the control the student actually sees, so the input's own
+// box says nothing about whether the question is on screen. Filtering groups by isVisible(el)
+// dropped those groups before matching even ran, with no skipped_reasons entry - the exact
+// silent non-fill reported for profile-driven radios / EEO-decline.
+function isInteractableChoice(el: HTMLInputElement): boolean {
+  if (isVisible(el)) return true;
+  const label = visibleLabelFor(el);
+  return !!label && isVisible(label);
+}
+
+// checkChoice is the shared commitChoice (imported above) - the click-first radio/checkbox
+// setter, kept in one place so this fix stays in sync across every adapter.
 
 // Strip zero-width and non-breaking characters, then collapse whitespace. Live-tested
 // 2026-07-04 on vercel.com: every radio option is prefixed with U+200B, which `\s` does NOT
@@ -165,18 +188,18 @@ export function getGenericJobDetails(): { title: string; company: string } {
 // from the DOM so it stays pure and testable. 'yes'/'no' are matched against option text by
 // the option matcher; 'decline' matches an opt-out option; 'value' substring-matches.
 
-type Desired =
+export type Desired =
   | { mode: 'value'; value: string }
   | { mode: 'yes' }
   | { mode: 'no' }
   | { mode: 'decline' }
   | null;
 
-function eeoAnswer(pref: string | undefined): Desired {
+export function eeoAnswer(pref: string | undefined): Desired {
   return pref && pref.trim() ? { mode: 'value', value: pref.trim() } : { mode: 'decline' };
 }
 
-function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string, string>): Desired {
+export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string, string>): Desired {
   const l = label;
   if (NEVER_FILL_PATTERNS.some((re) => re.test(l))) return null;
 
@@ -216,7 +239,7 @@ const DECLINE_RE = /decline|prefer not|don'?t wish|do not wish|not to (say|answe
 
 // Pick the option whose text best satisfies `desired`, or null if none is a confident match
 // (better to leave blank and report than to select the wrong answer).
-function matchOption<T extends { text: string }>(options: T[], desired: Desired): T | null {
+export function matchOption<T extends { text: string }>(options: T[], desired: Desired): T | null {
   if (!desired) return null;
   const norm = (s: string) => clean(s).toLowerCase();
   if (desired.mode === 'decline') {
@@ -386,7 +409,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
 
   // ── Radio groups (grouped by name) ──
   const radios = [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')].filter(
-    (el) => !el.closest('[id*="volley"]') && !el.disabled && isVisible(el),
+    (el) => !el.closest('[id*="volley"]') && !el.disabled && isInteractableChoice(el),
   );
   const radioGroups = new Map<string, HTMLInputElement[]>();
   for (const r of radios) {
@@ -406,9 +429,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     const match = matchOption(options, desired);
     if (match) {
       await randomDelay();
-      match.el.checked = true;
-      match.el.dispatchEvent(new Event('input', { bubbles: true }));
-      match.el.dispatchEvent(new Event('change', { bubbles: true }));
+      checkChoice(match.el);
       fields_filled++;
     } else if (label) {
       fields_skipped++;
@@ -424,7 +445,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
   //    way as before. ──
   const checkboxGroups = new Map<string | HTMLInputElement, HTMLInputElement[]>();
   for (const cb of [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]) {
-    if (cb.closest('[id*="volley"]') || cb.disabled || cb.checked || !isVisible(cb)) continue;
+    if (cb.closest('[id*="volley"]') || cb.disabled || cb.checked || !isInteractableChoice(cb)) continue;
     const key = cb.name || cb; // unnamed checkboxes each form their own group of one
     (checkboxGroups.get(key) ?? checkboxGroups.set(key, []).get(key)!).push(cb);
   }
@@ -440,9 +461,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
       const match = matchOption(options, desired);
       if (match) {
         await randomDelay();
-        match.el.checked = true;
-        match.el.dispatchEvent(new Event('input', { bubbles: true }));
-        match.el.dispatchEvent(new Event('change', { bubbles: true }));
+        checkChoice(match.el);
         fields_filled++;
       } else if (label) {
         fields_skipped++;
@@ -457,9 +476,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     const desired = isAgreement ? null : desiredAnswer(id, ap, eeo);
     if (desired?.mode === 'yes') {
       await randomDelay();
-      cb.checked = true;
-      cb.dispatchEvent(new Event('input', { bubbles: true }));
-      cb.dispatchEvent(new Event('change', { bubbles: true }));
+      checkChoice(cb);
       fields_filled++;
     } else if (isAgreement) {
       fields_skipped++;

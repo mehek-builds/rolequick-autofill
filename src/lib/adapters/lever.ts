@@ -6,6 +6,8 @@ import type { ApplicationProfile, AutofillResult, Profile } from '../types';
 // anything it's told never to touch, and NEVER clicks Submit - Section 5 Step 4's one rule with
 // zero tolerance for drift.
 
+import { commitChoice } from './shared/dom';
+
 const NEVER_FILL_LABEL_PATTERNS = [/social security/i, /ssn\b/i, /driver'?s?\s*licen[sc]e/i, /background check consent/i];
 
 // Staggered delays between field fills (PRD-v2 Section 12.6: built in from the first adapter,
@@ -151,8 +153,7 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
         'input[value*="Decline" i], option[value*="Decline" i]',
       );
       if (declineOption instanceof HTMLInputElement) {
-        declineOption.checked = true;
-        declineOption.dispatchEvent(new Event('change', { bubbles: true }));
+        commitChoice(declineOption);
         fields_filled++;
       } else {
         fields_skipped++;
@@ -169,8 +170,7 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
         `input[type="radio"][value="${wantYes ? 'Yes' : 'No'}" i]`,
       );
       if (target) {
-        target.checked = true;
-        target.dispatchEvent(new Event('change', { bubbles: true }));
+        commitChoice(target);
         fields_filled++;
         continue;
       }

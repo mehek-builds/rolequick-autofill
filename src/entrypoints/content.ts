@@ -187,12 +187,17 @@ export default defineContentScript({
 
     function watchSubmitButton(title: string, company: string, url: string) {
       let watched = false;
+      let observer: MutationObserver | null = null;
 
       function attachListener() {
         if (watched) return;
         const btn = findSubmitButton();
         if (!btn) return;
         watched = true;
+        // The button exists; stop re-scanning the whole body subtree on every mutation.
+        // Without this the observer runs findSubmitButton() (several querySelectorAll + a text
+        // scan of every button) on each DOM change for the life of the tab.
+        observer?.disconnect();
 
         btn.addEventListener('click', () => {
           if (approved) return; // Already drafting from card 1
@@ -203,10 +208,13 @@ export default defineContentScript({
         });
       }
 
-      // Try immediately, then watch for the button to appear (multi-step forms)
+      // Try immediately; only fall back to watching for the button (multi-step forms) if it
+      // isn't there yet, and disconnect as soon as it is (in attachListener).
       attachListener();
-      const observer = new MutationObserver(() => attachListener());
-      observer.observe(document.body, { childList: true, subtree: true });
+      if (!watched) {
+        observer = new MutationObserver(() => attachListener());
+        observer.observe(document.body, { childList: true, subtree: true });
+      }
     }
 
     // ─── LinkedIn Easy Apply modal detection ────────────────────────────────
@@ -434,21 +442,50 @@ export default defineContentScript({
       card.innerHTML = resumeFillCardShell(title, company);
       getCardStack().appendChild(card);
 
-      // Pre-warm: fire the resume-gen request the instant the card renders, not on "Yes" -
-      // it's the slowest step (an LLM round trip), so by the time the student reads the card
-      // and clicks, it's often already done instead of only starting then.
+      // Pre-warm on first HOVER of the card, not on render. Resume generation is the slowest
+      // step (an LLM round trip), so starting it before "Yes" hides most of the wait - but a
+      // render-time pre-warm charged one backend generation (real Anthropic spend AND one of
+      // the monthly resume credits, plus an hourly rate-limit slot) for every card the student
+      // dismissed. Hover is the earliest reliable signal of intent: it still fires seconds
+      // before a click, keeping nearly all of the head start at none of the dismissal cost.
       const jdText = extractJdText();
-      const resumeGenPromise = new Promise<{
+      type ResumeGenResult = {
         error?: string;
         profile?: Profile;
         applicationProfile?: ApplicationProfile;
         resume?: { resume_url: string; file_name: string };
-      }>((resolve) => {
-        chrome.runtime.sendMessage(
-          { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: jdText } },
-          (result) => resolve(result),
-        );
-      });
+      };
+      // Slightly longer than the background's own resume-fetch budget (60s) so its descriptive
+      // error surfaces first; this is the backstop for the worse case where the service worker
+      // is torn down and the callback never fires at all.
+      const RESUME_GEN_TIMEOUT_MS = 65000;
+      let resumeGenPromise: Promise<ResumeGenResult> | null = null;
+      const startResumeGen = (): Promise<ResumeGenResult> => {
+        resumeGenPromise ??= new Promise<ResumeGenResult>((resolve) => {
+          let settled = false;
+          const done = (r: ResumeGenResult) => { if (!settled) { settled = true; resolve(r); } };
+          const timer = setTimeout(
+            () => done({ error: 'Resume generation timed out - fill this form manually.' }),
+            RESUME_GEN_TIMEOUT_MS,
+          );
+          chrome.runtime.sendMessage(
+            { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: jdText } },
+            (result: ResumeGenResult | undefined) => {
+              clearTimeout(timer);
+              // A dead service worker resolves the callback with lastError set (or with no
+              // result), rather than the response object - treat both as a recoverable error
+              // instead of letting `undefined` fall through as a fake success.
+              if (chrome.runtime.lastError || !result) {
+                done({ error: chrome.runtime.lastError?.message || 'Could not reach the extension - fill this form manually.' });
+              } else {
+                done(result);
+              }
+            },
+          );
+        });
+        return resumeGenPromise;
+      };
+      card.addEventListener('mouseenter', () => void startResumeGen(), { once: true });
 
       const dismiss = () => card.remove();
       card.querySelector('#wp-resume-close')?.addEventListener('click', dismiss);
@@ -459,7 +496,7 @@ export default defineContentScript({
         if (yesBtn) yesBtn.disabled = true;
         if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Tailoring your resume...'; }
 
-        const result = await resumeGenPromise;
+        const result = await startResumeGen();
         if (!result || result.error || !result.profile || !result.applicationProfile || !result.resume) {
           if (statusEl) statusEl.textContent = result?.error || 'Could not generate a resume - fill this one manually.';
           return;
@@ -470,6 +507,9 @@ export default defineContentScript({
         let resumeBlob: Blob | undefined;
         try {
           const blobRes = await fetch(result.resume.resume_url);
+          // Without the ok check, a 403/404 error page would be handed to the file input as if
+          // it were the PDF; better to skip the file (the adapter flags it) than upload garbage.
+          if (!blobRes.ok) throw new Error(`resume fetch ${blobRes.status}`);
           resumeBlob = await blobRes.blob();
         } catch {
           // No resume file available client-side; the adapter will skip the file input
@@ -896,7 +936,18 @@ export default defineContentScript({
     // Volley's three Workday cards is currently showing, so a stage change gets picked up within
     // ~500ms instead of waiting for the next navigation event.
     if (isWorkdayHost) {
-      setInterval(() => {
+      // Poll for Workday's URL-less stage swaps, but not aggressively or forever: at 500ms this
+      // re-ran init() (and its JOB_DETECTED message + storage write + badge update) twice a
+      // second for the entire life of the tab. 1.5s is still well under human stage-change speed,
+      // and we stop after a bounded window so an idle Workday tab left open doesn't poll all day.
+      const WORKDAY_POLL_MS = 1500;
+      const WORKDAY_POLL_MAX_MS = 5 * 60 * 1000;
+      const startedAt = Date.now();
+      const workdayPoll = setInterval(() => {
+        if (Date.now() - startedAt > WORKDAY_POLL_MAX_MS) {
+          clearInterval(workdayPoll);
+          return;
+        }
         if (
           !document.getElementById('volley-account-card') &&
           !document.getElementById('volley-resume-card') &&
@@ -904,7 +955,7 @@ export default defineContentScript({
         ) {
           init();
         }
-      }, 500);
+      }, WORKDAY_POLL_MS);
     }
   },
 });

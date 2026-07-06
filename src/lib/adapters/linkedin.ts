@@ -33,6 +33,8 @@ const EASY_APPLY_MODAL_SELECTORS = [
   '[class*="easy-apply-modal"]',
 ];
 
+import { commitChoice } from './shared/dom';
+
 const NEVER_FILL_LABEL_PATTERNS = [/social security/i, /ssn\b/i, /driver'?s?\s*licen[sc]e/i, /background check consent/i];
 
 function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
@@ -110,9 +112,7 @@ function radioOptionsIn(block: Element): Array<{ radio: HTMLInputElement; text: 
 
 async function checkRadio(radio: HTMLInputElement): Promise<void> {
   await randomDelay();
-  radio.checked = true;
-  radio.dispatchEvent(new Event('click', { bubbles: true }));
-  radio.dispatchEvent(new Event('change', { bubbles: true }));
+  commitChoice(radio);
 }
 
 // `<input type="file">` can't be set directly by script; construct a File/DataTransfer and
