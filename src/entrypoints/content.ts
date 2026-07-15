@@ -722,6 +722,11 @@ export default defineContentScript({
         // Resume is "missing" if the blob never reached us (fetch failed upstream) or the adapter
         // reported it could not attach it. Never auto-submit an application with no resume.
         const resumeMissing = !resumeBlob || fillResult.skipped_reasons.some((r) => /^resume:/i.test(r));
+        // Items the adapter flagged as still needing the student: an AI-drafted open-ended answer
+        // ("review before submitting"), an agreement checkbox, or any question left for them. Never
+        // auto-submit while one is outstanding - above all an AI-drafted essay, which would otherwise
+        // go out in the student's name unreviewed.
+        const needsReview = fillResult.skipped_reasons.some((r) => /review before submitting|left for/i.test(r));
 
         const reportEvent = (autoSubmitted: boolean) => {
           chrome.runtime.sendMessage({
@@ -746,7 +751,8 @@ export default defineContentScript({
         // document.hidden: never START a countdown while the student isn't looking at the tab (they
         // can't see the window to back out); going hidden mid-countdown is handled separately.
         const autoSubmitHeld =
-          autoSubmitOn && (!finalSubmitBtn || resumeMissing || hasEmptyRequiredFields() || document.hidden);
+          autoSubmitOn &&
+          (!finalSubmitBtn || resumeMissing || needsReview || hasEmptyRequiredFields() || document.hidden);
         if (autoSubmitOn && !autoSubmitHeld && finalSubmitBtn) {
           runAutoSubmitCountdown(
             card, statusEl,
