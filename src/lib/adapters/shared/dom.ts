@@ -114,11 +114,29 @@ function comboControl(trigger: HTMLElement): HTMLElement {
   );
 }
 
-// Read the option nodes currently rendered anywhere in the document (react-select portals its
-// menu onto <body>), keeping only visible, non-empty ones.
-function readRenderedOptions(): ComboOption[] {
+// Read the option nodes rendered for THIS combobox, keeping only visible, non-empty ones.
+// react-select portals its menu onto <body>, so options usually aren't descendants of the
+// control - but the control's input carries aria-controls/aria-owns pointing at its listbox,
+// which lets us scope the read to this widget's own menu and never pick up a stale or foreign
+// listbox that happens to be open elsewhere on the page. Falls back to a document-wide read when
+// no such link exists (unchanged behavior for widgets without the ARIA wiring).
+function readRenderedOptions(scope?: Element | null): ComboOption[] {
+  let root: ParentNode = document;
+  if (scope) {
+    const input =
+      (scope instanceof HTMLInputElement ? scope : null) ??
+      scope.querySelector<HTMLElement>('input[role="combobox"], input') ??
+      scope;
+    const owns =
+      input.getAttribute?.('aria-controls') ||
+      input.getAttribute?.('aria-owns') ||
+      scope.getAttribute?.('aria-controls') ||
+      scope.getAttribute?.('aria-owns');
+    const listbox = owns ? document.getElementById(owns) : null;
+    if (listbox) root = listbox;
+  }
   const nodes = [
-    ...document.querySelectorAll<HTMLElement>(
+    ...root.querySelectorAll<HTMLElement>(
       '[role="option"], [class*="select__option"], [class*="Select-option"]',
     ),
   ];
@@ -156,10 +174,10 @@ export async function openCombobox(
 
   const waitForOptions = async (budgetMs: number): Promise<ComboOption[]> => {
     const start = Date.now();
-    let found = readRenderedOptions();
+    let found = readRenderedOptions(input ?? control);
     while (found.length === 0 && Date.now() - start < budgetMs) {
       await pause(60);
-      found = readRenderedOptions();
+      found = readRenderedOptions(input ?? control);
     }
     return found;
   };

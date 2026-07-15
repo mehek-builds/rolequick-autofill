@@ -272,14 +272,18 @@ export function matchOption<T extends { text: string }>(options: T[], desired: D
     const pick = wantYes ? pos : neg;
     return pick.length === 1 ? pick[0] : null; // ambiguous -> leave for the student
   }
-  // value: exact-ish then substring, both directions.
+  // value: exact match first, then substring in either direction - but only when the substring
+  // match is UNAMBIGUOUS. "Korea" against a country list holding "Korea, Republic of" and
+  // "Korea, Democratic People's Republic of" must not silently commit whichever comes first in
+  // DOM order; two candidates means we can't be sure, so leave it for the student.
   const v = norm(desired.value);
-  return (
-    options.find((o) => norm(o.text) === v) ??
-    options.find((o) => norm(o.text).includes(v)) ??
-    options.find((o) => v.includes(norm(o.text)) && norm(o.text).length > 2) ??
-    null
-  );
+  const exact = options.find((o) => norm(o.text) === v);
+  if (exact) return exact;
+  const contains = options.filter((o) => norm(o.text).includes(v));
+  if (contains.length === 1) return contains[0];
+  if (contains.length > 1) return null; // ambiguous -> leave for the student
+  const reverse = options.filter((o) => v.includes(norm(o.text)) && norm(o.text).length > 2);
+  return reverse.length === 1 ? reverse[0] : null;
 }
 
 // ─── DOM fillers ────────────────────────────────────────────────────────────

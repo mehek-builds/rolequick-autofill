@@ -517,11 +517,15 @@ export default defineContentScript({
         }
 
         // Safety net: a stuck field (an unexpected widget, a listener that never fires) must
-        // never leave the student staring at "Filling the application..." forever with no
-        // way to know what happened. 20s is generous for even a form with many custom
-        // questions; if the adapter is still running past that, something is wrong and the
-        // student needs to be told rather than left waiting silently.
-        const FILL_TIMEOUT_MS = 20000;
+        // never leave the student staring at "Filling the application..." forever with no way
+        // to know what happened. This is a true-hang backstop, NOT a routine budget: every
+        // adapter now AI-drafts open-ended essays inside fill() (parallel LLM round trips, each
+        // able to fire a grounding-retry), so a form with a few essays can legitimately run well
+        // past 20s. At the old 20s this race routinely tripped on essay-heavy forms, dismissed
+        // the card, and let the essays fill in AFTER the student was told to finish manually.
+        // 90s only fires on a genuine hang; onProgress streams field counts meanwhile so the
+        // student is never staring at a frozen status.
+        const FILL_TIMEOUT_MS = 90000;
         let fillResult: AutofillResult;
         try {
           fillResult = await Promise.race([
@@ -740,9 +744,19 @@ export default defineContentScript({
           cleanupChrome();
           submitBtn.style.outline = '';
           submitBtn.style.outlineOffset = '';
-          if (statusEl) statusEl.textContent = `${actionLabel}...`;
-          submitBtn.click();
-          reportEvent(true);
+          // Re-resolve the submit control at fire time: on a multi-step React form the button we
+          // anchored to can be replaced during the countdown, and clicking a detached node is a
+          // silent no-op that would falsely report a submit. If the live button is gone, stop and
+          // hand back to the student rather than pretending we submitted.
+          const target = submitBtn.isConnected ? submitBtn : findSubmitButton();
+          if (target instanceof HTMLElement && target.isConnected) {
+            if (statusEl) statusEl.textContent = `${actionLabel}...`;
+            target.click();
+            reportEvent(true);
+          } else {
+            if (statusEl) statusEl.textContent = 'The form changed before submitting. Review and submit it yourself.';
+            reportEvent(false);
+          }
           setTimeout(() => card.remove(), 2000);
           return;
         }
