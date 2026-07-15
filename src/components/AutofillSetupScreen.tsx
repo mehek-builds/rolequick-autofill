@@ -293,6 +293,17 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
             </div>
 
             <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-gray-600">Country you&apos;re based in</label>
+              <input
+                value={appProfile.address_country ?? ''}
+                onChange={(e) => setAppProfile((p) => ({ ...p, address_country: e.target.value }))}
+                placeholder="e.g. United States"
+                className={inputClass}
+              />
+              <p className="text-[11px] text-gray-400">Where you live / would work from. Separate from citizenship below.</p>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-gray-600">Veteran / military status</label>
               <YesNoDecline value={eeo.veteran} onChange={(v) => setEeo((p) => ({ ...p, veteran: v }))} />
             </div>

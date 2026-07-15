@@ -99,6 +99,7 @@ export interface ApplicationProfile {
   address_city?: string;
   address_state?: string;
   address_zip?: string;
+  address_country?: string; // country the student is BASED IN (residence), distinct from citizenship
   linkedin_url?: string;
   github_url?: string;
   portfolio_url?: string;
