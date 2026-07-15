@@ -1,38 +1,8 @@
 # RoleQuick: Tailored Resumes and Application Autofill
 
-A published Chrome extension that watches the job-application pages a student is already on, generates a resume tailored to that specific posting, fills the application form field by field, drafts outreach emails to the right people at the company, and then stops before Submit so the student always has the final say.
+Every job application makes you re-enter the same information and rewrite your resume for the role. RoleQuick is a Chrome extension that autofills applications with AI-tailored resumes and essays generated from your profile.
 
-This is not a form-filler that pastes the same saved answers everywhere. It is a browser-native application copilot built on the **WXT** extension framework in **TypeScript** and **React**, with per-ATS field-mapping adapters for **Lever, Greenhouse, Ashby, Workday, LinkedIn Easy Apply**, plus a label-driven generic adapter for company-hosted forms. The extension detects the posting, drives react-select comboboxes and hidden radio groups the way a real user would, resolves work-authorization and EEO questions from a stored profile (never guessing), and calls a hosted **RoleQuick backend** for the actual AI work (resume generation, email drafts, open-ended essay answers). It ships as a Manifest V3 service-worker extension with a deliberately minimal permission set, a Tailwind-styled popup, and a pure, unit-tested answer-resolution engine shared across every adapter.
-
-**Install it on the Chrome Web Store:** https://chromewebstore.google.com/detail/rolequick-tailored-resume/bdbedbmkjpfioknfpmhookefabipjaad
-
-> Note on naming: the product is RoleQuick. It first shipped to the Chrome Web Store under the earlier name Volley, so the source keeps that history in one deliberate place: the persisted `chrome.storage.local` keys have new `rolequick_*` names but read with a backward-compatible fallback to their old `volley_*` names (see `src/lib/storage.ts` and `migrateLegacyStorage`), so an existing user's saved token and profile survive the update. The package name, injected DOM ids, window globals, and everything else use the `rolequick` name.
-
----
-
-## The problem this solves
-
-Applying for jobs as a student is a volume game that punishes you for playing it. Every posting asks for the same twelve facts (name, email, phone, city, LinkedIn, work authorization, sponsorship, graduation year) and then asks you to re-enter them into a form that looks different on every applicant-tracking system. On top of that, the advice that actually moves the needle - tailor your resume to the posting, reach a real human at the company rather than dropping into the void - is exactly the advice that does not scale by hand. Doing it right for one application takes half an hour. Doing it right for fifty is a full-time job.
-
-The naive fix is a generic autofill extension, and generic autofill breaks on contact with reality for reasons that are entirely about engineering, not about the idea:
-
-1. **Modern ATS forms are not HTML forms.** A city field, a yes/no work-authorization question, or an EEO dropdown on Greenhouse or Workday is usually a **react-select combobox**: a styled `<div>` over a hidden `role="combobox"` input whose options do not exist in the DOM until the menu opens, often in a portal appended to `<body>`. Setting `input.value = "..."` does literally nothing; react-select clears it on blur. You have to open the widget with a real pointer sequence, read the rendered options, and click the match.
-
-2. **The visible control is rarely the input.** Radios and checkboxes are routinely hidden (`display:none`, `sr-only`, a 1px absolute box) behind a styled `<label>`. Filtering by "is the input visible?" drops the entire question before matching even runs. And a controlled React radio group ignores `.checked = true` plus a synthetic `change`; it only commits from a trusted `click`.
-
-3. **Getting an answer wrong is worse than leaving it blank.** "Are you authorized to work **without** sponsorship?" inverts the plain sponsorship answer. "Asian" is a substring of "Caucasian" and "male" is a substring of "female," so a naive `includes()` silently mis-selects race and gender. A visa question answered backwards can end an application. The safe default for anything ambiguous is to leave it for the student and say so.
-
-4. **Some fields must never be touched.** SSN, driver's license, background-check consent, and the accuracy-certification checkbox are the applicant's own sign-off, not data to autofill. A tool that fills them is a liability.
-
-5. **Auto-submitting on someone's behalf is a trust cliff.** Filling a form is reversible; clicking Submit is not. The moment a tool submits a job application the user did not review, it has done something they cannot take back.
-
-**RoleQuick is an attempt to solve all five as one coherent product** rather than a script that fills the easy inputs and mangles the hard ones. The default posture across every adapter is one rule with zero tolerance for drift: fill what you can prove, flag what you drafted, skip what you are unsure of, and never click Submit unless the student explicitly opted in.
-
-## Why you should care (even if you are not job hunting)
-
-If you are reading this to understand what I can build: this repository is a real, published browser extension that does hard DOM work correctly across five applicant-tracking systems that each render the same question five different ways. It is a study in the unglamorous engineering that separates a demo from a product: driving portal-mounted react-select widgets, committing controlled-component radios, deriving a question stem from an ancestor that contains exactly the group's options, inverting visa phrasing, defending a per-field never-fill list, and building a cancelable on-page countdown so the one irreversible action in the whole flow is always the user's choice. The answer-resolution core is pure and unit-tested; the DOM layer is written from live testing against real postings (the source comments cite the exact companies and dates). It is Manifest V3, minimal-permission, and shipped.
-
----
+Install: https://chromewebstore.google.com/detail/rolequick-tailored-resume/bdbedbmkjpfioknfpmhookefabipjaad
 
 ## System architecture
 
@@ -198,6 +168,10 @@ The unit tests deliberately target the layer most likely to cause real-world har
 ## Permissions (`wxt.config.ts`)
 
 The manifest requests only `activeTab`, `scripting`, `storage`, and `clipboardWrite`, and declares no production `host_permissions` (localhost only during `wxt serve`). The content-script `matches` list is the specific ATS allowlist rather than `<all_urls>`, and on-demand injection into company career sites goes through `activeTab` + `chrome.scripting` on the tab the student invoked. This is a conscious choice: every extra permission widens the install warning and slows Chrome Web Store review, and the whole product only needs to touch the tab the user is actively applying on.
+
+## Naming and storage compatibility
+
+The product is RoleQuick. It first shipped to the Chrome Web Store under the earlier name Volley, so the source keeps that history in one deliberate place: the persisted `chrome.storage.local` keys have new `rolequick_*` names but read with a backward-compatible fallback to their old `volley_*` names (see `src/lib/storage.ts` and `migrateLegacyStorage`), so an existing user's saved token and profile survive the update. The package name, injected DOM ids, window globals, and everything else use the `rolequick` name.
 
 ## Scope
 
