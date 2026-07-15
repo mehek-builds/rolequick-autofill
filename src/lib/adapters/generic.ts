@@ -250,19 +250,27 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   // distinct from the "are you at least 18" eligibility check handled above, which stays a Yes.
   if (/current age|what is your age|age range|how old are you|\bage group\b/.test(l)) return { mode: 'decline' };
 
-  // CITIZENSHIP / nationality (checked first, most specific) -> the citizenship field. It is
-  // often stored as a nationality adjective ("Indian"), but a country dropdown lists the country
-  // ("India") and a combobox typeahead filters by what is typed, so map the adjective to the
-  // country up front; oneof still lets a plain-text or exact-country field accept the raw value.
-  if (/citizenship|country of citizenship|what is your nationality|\bnationality\b/.test(l) && ap.citizenship) {
+  // CITIZENSHIP / nationality (checked first, most specific) -> the citizenship field. Matched on
+  // ANY "citizen"/"nationality" wording (e.g. "what country are you a citizen of?"), not just the
+  // literal "citizenship" token, so a citizenship question can never fall through to the residence
+  // rule below and get answered with the residence country (a high-stakes mis-fill for students
+  // whose citizenship differs from where they live). Citizenship is often stored as a nationality
+  // adjective ("Indian"), but a country dropdown lists the country ("India") and a combobox
+  // typeahead filters by what is typed, so map the adjective to the country up front; oneof still
+  // lets a plain-text or exact-country field accept the raw value. When citizenship is unset we
+  // leave it blank rather than guess (the residence guard below stops it filling the wrong value).
+  if (/citizen|nationalit/.test(l) && ap.citizenship) {
     const c = ap.citizenship.trim().toLowerCase();
     const country = NATIONALITY_TO_COUNTRY[c];
     return country ? { mode: 'oneof', values: [country, ap.citizenship] } : { mode: 'value', value: ap.citizenship };
   }
   // Country of RESIDENCE / where you are based / where you intend to work from, and bare "country"
-  // location fields -> address_country (where the student lives), NOT citizenship. "Which country
-  // do you intend to work from" asks about location, not nationality; the two are different.
+  // location fields -> address_country (where the student lives), NOT citizenship. The leading
+  // !citizen/nationality guard enforces that split: a citizenship-worded question is handled above
+  // (or left blank when citizenship is unset), never answered with the residence country. "Which
+  // country do you intend to work from" asks about location, not nationality; the two differ.
   if (
+    !/citizen|nationalit/.test(l) &&
     /country of residence|which country|country you.{0,15}(based|reside|work from|located)|where are you based|based in which country|current country|\bcountry\b/.test(l) &&
     ap.address_country
   )

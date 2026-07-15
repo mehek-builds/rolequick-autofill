@@ -163,3 +163,35 @@ describe('matchOption: broadened decline wordings (fix #10)', () => {
       .toBe('I do not wish to identify');
   });
 });
+
+describe('desiredAnswer: citizenship and residence country are never conflated (fix: address_country separation)', () => {
+  it('answers a "citizen of?" question with citizenship, not the residence country', () => {
+    // The residence rule's bare \bcountry\b used to swallow this phrasing (it carries no literal
+    // "citizenship"/"nationality" token) and fill address_country into a citizenship field - the
+    // exact high-stakes mis-fill for students whose citizenship differs from where they live.
+    expect(desiredAnswer('what country are you a citizen of?', ap({ citizenship: 'India', address_country: 'United States' }), {}))
+      .toEqual({ mode: 'value', value: 'India' });
+    // "which country" also appears here, but the citizenship rule must win over the residence rule.
+    expect(desiredAnswer('of which country are you a citizen?', ap({ citizenship: 'India', address_country: 'United States' }), {}))
+      .toEqual({ mode: 'value', value: 'India' });
+  });
+
+  it('maps a nationality-adjective citizenship to its country for a citizenship dropdown', () => {
+    expect(desiredAnswer('country of citizenship', ap({ citizenship: 'Indian', address_country: 'United States' }), {}))
+      .toEqual({ mode: 'oneof', values: ['india', 'Indian'] });
+  });
+
+  it('leaves a citizenship question blank when citizenship is unset (never falls back to residence)', () => {
+    expect(desiredAnswer('country of citizenship', ap({ address_country: 'United States' }), {})).toBeNull();
+    expect(desiredAnswer('what country are you a citizen of?', ap({ address_country: 'United States' }), {})).toBeNull();
+  });
+
+  it('still fills the residence country for location questions and bare "country"', () => {
+    expect(desiredAnswer('which country do you intend to work from?', ap({ address_country: 'United States' }), {}))
+      .toEqual({ mode: 'value', value: 'United States' });
+    expect(desiredAnswer('country of residence', ap({ address_country: 'United States' }), {}))
+      .toEqual({ mode: 'value', value: 'United States' });
+    expect(desiredAnswer('country', ap({ citizenship: 'India', address_country: 'United States' }), {}))
+      .toEqual({ mode: 'value', value: 'United States' });
+  });
+});
