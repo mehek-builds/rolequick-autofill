@@ -209,6 +209,13 @@ export default defineContentScript({
     // report the application as submitted. Returns null when the only actionable control is a
     // step-advance - i.e. a multi-step form that isn't on its final page yet, so there is nothing
     // to auto-submit toward.
+    // Visible = has a layout box and isn't visibility:hidden. Unlike offsetParent !== null this keeps
+    // a legitimately-visible position:fixed control (whose offsetParent is null) while still excluding
+    // a display:none pre-rendered later-step button (and its descendants).
+    function isElementVisible(el: HTMLElement): boolean {
+      return el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+    }
+
     function findFinalSubmitButton(): HTMLElement | null {
       const STEP_ADVANCE = /\b(next|continue|save\s*(and|&)\s*continue|review|save\s+for\s+later|back)\b/i;
       const SUBMIT = /\bsubmit(\s+application)?\b|\bsend\s+application\b/i;
@@ -220,7 +227,7 @@ export default defineContentScript({
         if ((el as HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true') continue;
         // Must be visible: a multi-step form can pre-render a later step's "Submit" hidden in the
         // DOM; anchoring or firing on an off-screen button would submit a step the student can't see.
-        if (el.offsetParent === null) continue;
+        if (!isElementVisible(el)) continue;
         // `||` not `??`: textContent is "" (not null) for a void <input type="submit">, so `??`
         // would never fall through to .value and classic Greenhouse's submit input would be missed.
         const text = (el.textContent || (el as HTMLInputElement).value || '').trim();
@@ -919,7 +926,7 @@ export default defineContentScript({
           const t = e.target;
           if (
             !(t instanceof Element) ||
-            !t.closest('input, select, textarea, [role="combobox"], [role="listbox"], [role="option"], [contenteditable=""], [contenteditable="true"]')
+            !t.closest('input, select, textarea, [role="combobox"], [role="listbox"], [role="option"], [contenteditable=""], [contenteditable="true"], [class*="select__control"], [class*="Select-control"]')
           )
             return;
         }
@@ -953,10 +960,13 @@ export default defineContentScript({
           // anchored to can be replaced during the countdown, and clicking a detached node is a
           // silent no-op that would falsely report a submit. If the live button is gone, stop and
           // hand back to the student rather than pretending we submitted.
-          const target = submitBtn.isConnected ? submitBtn : findFinalSubmitButton();
+          // Reuse the anchored button only if it's still live AND visible (a re-render can hide its
+          // step container via an ancestor display:none without detaching the button); otherwise
+          // re-resolve (findFinalSubmitButton already returns only visible controls).
+          const target = submitBtn.isConnected && isElementVisible(submitBtn) ? submitBtn : findFinalSubmitButton();
           // Re-validate at the instant of click: 15s is long enough for the form to change under us.
-          // Only submit when the anchored button is still live AND no required field is now empty;
-          // otherwise hand back rather than fire on a changed or incomplete form.
+          // Only submit when the target is still live AND no required field is now empty; otherwise
+          // hand back rather than fire on a changed or incomplete form.
           if (target instanceof HTMLElement && target.isConnected && !hasEmptyRequiredFields()) {
             if (statusEl) statusEl.textContent = `${actionLabel}...`;
             target.click();
