@@ -218,6 +218,9 @@ export default defineContentScript({
       for (const el of candidates) {
         if (el.closest('[id*="volley"]')) continue;
         if ((el as HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true') continue;
+        // Must be visible: a multi-step form can pre-render a later step's "Submit" hidden in the
+        // DOM; anchoring or firing on an off-screen button would submit a step the student can't see.
+        if (el.offsetParent === null) continue;
         // `||` not `??`: textContent is "" (not null) for a void <input type="submit">, so `??`
         // would never fall through to .value and classic Greenhouse's submit input would be missed.
         const text = (el.textContent || (el as HTMLInputElement).value || '').trim();
@@ -245,7 +248,19 @@ export default defineContentScript({
           // after a selection (the chosen value lives in component state / a hidden input), so an
           // empty .value there is NOT an unanswered field - skip it rather than wrongly holding
           // auto-submit on the work-auth/country/EEO controls Greenhouse and Ashby render this way.
-          if (inp.getAttribute('role') === 'combobox' || inp.closest('[class*="select__control"], [class*="Select-control"]')) continue;
+          if (inp.getAttribute('role') === 'combobox' || inp.closest('[class*="select__control"], [class*="Select-control"]')) {
+            // .value stays empty on a react-select even after a selection, so read the control
+            // instead: a filled one renders a single/multi value node, an empty one a placeholder.
+            // Only HOLD auto-submit when we can positively see it's empty; if we can't tell, skip it
+            // as before so a genuinely filled control never wrongly blocks the submit.
+            const control = inp.closest('[class*="select__control"], [class*="Select-control"]') ?? inp.parentElement;
+            const hasValue = control?.querySelector(
+              '[class*="single-value"], [class*="singleValue"], [class*="multi-value"], [class*="multiValue"], [class*="Select-value"]',
+            );
+            const hasPlaceholder = control?.querySelector('[class*="placeholder"]');
+            if (!hasValue && hasPlaceholder) return true;
+            continue;
+          }
           if (inp.type === 'checkbox' || inp.type === 'radio') {
             const group = inp.name
               ? [...document.querySelectorAll<HTMLInputElement>(`input[name="${CSS.escape(inp.name)}"]`)]
@@ -728,7 +743,10 @@ export default defineContentScript({
         // anyway, after we'd already reported it sent). Otherwise fall through to highlight-and-
         // hand-back. It always fires from THIS student's own logged-in session, on data they
         // generated and can still cancel - never something Volley decides on its own.
-        const autoSubmitHeld = autoSubmitOn && (!finalSubmitBtn || resumeMissing || hasEmptyRequiredFields());
+        // document.hidden: never START a countdown while the student isn't looking at the tab (they
+        // can't see the window to back out); going hidden mid-countdown is handled separately.
+        const autoSubmitHeld =
+          autoSubmitOn && (!finalSubmitBtn || resumeMissing || hasEmptyRequiredFields() || document.hidden);
         if (autoSubmitOn && !autoSubmitHeld && finalSubmitBtn) {
           runAutoSubmitCountdown(
             card, statusEl,
@@ -758,6 +776,10 @@ export default defineContentScript({
     }
 
     const AUTO_SUBMIT_COUNTDOWN_SECONDS = 15;
+
+    // Cancel hook for an in-flight auto-submit countdown, exposed so SPA navigation (or any other
+    // context change) can tear the countdown down. null whenever no countdown is running.
+    let activeAutoSubmitCancel: (() => void) | null = null;
 
     // Opt-in only (AutofillSetupScreen toggle). Instead of clicking Submit the instant the fill
     // finishes, this anchors a live countdown timer directly onto the page's own Submit button:
@@ -853,25 +875,60 @@ export default defineContentScript({
         window.removeEventListener('scroll', reposition, true);
         window.removeEventListener('resize', reposition);
         window.removeEventListener('keydown', onKey);
+        document.removeEventListener('visibilitychange', onVisibility);
+        window.removeEventListener('pagehide', onPageHide);
+        document.removeEventListener('input', onUserInteract, true);
+        document.removeEventListener('pointerdown', onUserInteract, true);
+        activeAutoSubmitCancel = null;
         overlay.remove();
       };
 
-      const cancel = () => {
+      const cancel = (msg = 'Cancelled. Review, then submit yourself.') => {
         if (cancelled) return;
         cancelled = true;
         clearInterval(interval);
         cleanupChrome();
         submitBtn.style.outline = '3px solid #4f46e5';
         submitBtn.style.outlineOffset = '2px';
-        if (statusEl) statusEl.textContent = 'Cancelled. Review, then submit yourself.';
+        if (statusEl) statusEl.textContent = msg;
         reportEvent(false);
         setTimeout(() => card.remove(), 4000);
       };
 
+      // Anything that changes the context the student was watching cancels the pending submit: the
+      // Escape key, switching away from the tab (visibilitychange), the page unloading, or the
+      // student editing the form (a real input event, or a pointerdown on a form control). Guarded
+      // on isTrusted so the adapter's own programmatic fill events never trip it, and scoped to
+      // ignore clicks on our own overlay.
+      const isOurNode = (t: EventTarget | null) =>
+        t instanceof Element && !!t.closest('#volley-autosubmit-overlay, [id*="volley"]');
       const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') cancel(); };
+      const onVisibility = () => {
+        if (document.hidden) cancel('Tab hidden, so auto-submit was cancelled. Come back and submit it yourself.');
+      };
+      const onPageHide = () => cancel();
+      const onUserInteract = (e: Event) => {
+        if (!e.isTrusted || isOurNode(e.target)) return;
+        if (e.type === 'pointerdown') {
+          const t = e.target;
+          if (
+            !(t instanceof Element) ||
+            !t.closest('input, select, textarea, [role="combobox"], [role="listbox"], [role="option"], [contenteditable=""], [contenteditable="true"]')
+          )
+            return;
+        }
+        cancel('You edited the form, so auto-submit was cancelled. Submit it yourself when ready.');
+      };
       window.addEventListener('keydown', onKey);
-      overlay.querySelector('#wp-as-cancel')?.addEventListener('click', cancel);
-      if (noBtn) { noBtn.textContent = 'Cancel'; noBtn.onclick = cancel; }
+      document.addEventListener('visibilitychange', onVisibility);
+      window.addEventListener('pagehide', onPageHide);
+      document.addEventListener('input', onUserInteract, true);
+      document.addEventListener('pointerdown', onUserInteract, true);
+      // Let a SPA navigation elsewhere in the content script tear this countdown down too.
+      activeAutoSubmitCancel = () =>
+        cancel('The form navigated, so auto-submit was cancelled. Submit it yourself when ready.');
+      overlay.querySelector('#wp-as-cancel')?.addEventListener('click', () => cancel());
+      if (noBtn) { noBtn.textContent = 'Cancel'; noBtn.onclick = () => cancel(); }
       if (statusEl) {
         statusEl.textContent = `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. ${actionLabel} in ${remaining}s on the button - tap Cancel to review first.`;
       }
@@ -891,7 +948,10 @@ export default defineContentScript({
           // silent no-op that would falsely report a submit. If the live button is gone, stop and
           // hand back to the student rather than pretending we submitted.
           const target = submitBtn.isConnected ? submitBtn : findFinalSubmitButton();
-          if (target instanceof HTMLElement && target.isConnected) {
+          // Re-validate at the instant of click: 15s is long enough for the form to change under us.
+          // Only submit when the anchored button is still live AND no required field is now empty;
+          // otherwise hand back rather than fire on a changed or incomplete form.
+          if (target instanceof HTMLElement && target.isConnected && !hasEmptyRequiredFields()) {
             if (statusEl) statusEl.textContent = `${actionLabel}...`;
             target.click();
             reportEvent(true);
@@ -1160,6 +1220,9 @@ export default defineContentScript({
       const currentUrl = location.href;
       if (currentUrl !== lastUrl) {
         lastUrl = currentUrl;
+        // A navigation must kill any pending auto-submit countdown: the button it anchored to is
+        // about to be torn down, and firing after the page changed could submit the wrong form.
+        activeAutoSubmitCancel?.();
         cardInjected = false;
         approved = false;
         document.getElementById('volley-action-card')?.remove();
