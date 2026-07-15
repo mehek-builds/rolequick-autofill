@@ -125,7 +125,7 @@ function comboControlIn(block: Element): HTMLElement | null {
 // submit control is already excluded by the text list below (it reads "Submit application").
 function buttonOptionsIn(block: Element): Array<{ text: string; el: HTMLButtonElement }> {
   return [...block.querySelectorAll<HTMLButtonElement>('button')]
-    .filter((b) => !b.closest('[id*="volley"]'))
+    .filter((b) => !b.closest('[id*="rolequick"]'))
     .map((b) => ({ text: (b.textContent ?? '').trim(), el: b }))
     .filter(
       (b) =>
@@ -167,7 +167,7 @@ async function answerChoiceBlock(block: Element, desired: Desired): Promise<bool
   // "Select all that apply" checkbox groups (Ashby renders EEO ethnicity / community questions
   // this way): tick the opt-out box for a decline, or the matching box for a value.
   const checkboxes = [...block.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
-    .filter((cb) => !cb.closest('[id*="volley"]') && !cb.disabled)
+    .filter((cb) => !cb.closest('[id*="rolequick"]') && !cb.disabled)
     .map((cb) => ({
       text: (
         document.querySelector(`label[for="${CSS.escape(cb.id)}"]`)?.textContent ??

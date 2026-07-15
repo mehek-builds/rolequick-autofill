@@ -10,7 +10,7 @@ import type { ExperienceBankEntry, ApplicationProfile, Profile } from '../lib/ty
 import WarningBanner from './WarningBanner';
 import LoadingSpinner from './LoadingSpinner';
 
-// Onboarding for Volley v2's resume-gen + application-autofill flow (PRD-v2-resume-autofill.md
+// Onboarding for RoleQuick v2's resume-gen + application-autofill flow (PRD-v2-resume-autofill.md
 // Section 4-5). Sequenced fast-confirm-first, sensitive-last (Section 5's ordering rationale):
 // Bucket 1 (auto-extracted, quick confirm) -> Bucket 2 (signal-checked, never default absence
 // to "no") -> Bucket 3 (always ask, never inferred) -> links/preferences. Reachable from
@@ -379,7 +379,7 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
               <input
                 value={appProfile.date_of_birth ?? ''}
                 onChange={(e) => setAppProfile((p) => ({ ...p, date_of_birth: e.target.value }))}
-                placeholder="MM/DD/YYYY — only used when a form asks, never for SSN"
+                placeholder="MM/DD/YYYY - only used when a form asks, never for SSN"
                 className={inputClass}
               />
             </div>
@@ -393,7 +393,7 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
                 <span className="text-xs font-medium text-gray-600">
                   EEO voluntary disclosures <span className="text-gray-400">(optional, skip by default)</span>
                 </span>
-                <span className="text-gray-400">{eeoExpanded ? '−' : '+'}</span>
+                <span className="text-gray-400">{eeoExpanded ? '-' : '+'}</span>
               </button>
               {eeoExpanded && (
                 <div className="mt-3 flex animate-fade-in-up flex-col gap-3">

@@ -1,15 +1,10 @@
+// Token access goes through lib/storage, so the background reads the exact key the popup
+// writes, including the backward-compatible fallback to the legacy Volley-era key name.
+import { getToken as getStoredToken, migrateLegacyStorage } from '../lib/storage';
+
 // Set VITE_API_BASE at build time (e.g. your Vercel URL) to point at the deployed backend;
 // defaults to the local dev server.
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001';
-
-// Must match the key the popup writes to in lib/storage.ts (TOKEN_KEY).
-// Previously read 'token', which never matched, so the Apply auto-draft never authed.
-const TOKEN_KEY = 'volley_token';
-
-async function getStoredToken(): Promise<string | null> {
-  const result = await chrome.storage.local.get(TOKEN_KEY);
-  return (result[TOKEN_KEY] as string | undefined) ?? null;
-}
 
 // A hung backend must never leave the caller waiting forever - the resume-fill card awaits
 // these responses, so an unbounded fetch strands the student on "Tailoring your resume...".
@@ -194,6 +189,10 @@ async function generateResumeAndProfile(
 }
 
 export default defineBackground(() => {
+  // One-time copy of any legacy Volley-era storage keys to their new rolequick_* names, so a
+  // published update never orphans an existing user's saved token/profile/settings.
+  void migrateLegacyStorage();
+
   let lastDetectedJob: { title: string; company: string; url: string } | null = null;
 
   chrome.storage.session.get('lastDetectedJob').then((result) => {
@@ -322,7 +321,7 @@ export default defineBackground(() => {
         // account email, not a resume, so this skips the /resume/generate call entirely (no
         // point spending a resume-gen quota unit on a step before there's even an application to
         // tailor one for). Password is deliberately not fetched here - the student types their
-        // own (2026-07-03 product decision), Volley never touches that field.
+        // own (2026-07-03 product decision), RoleQuick never touches that field.
         getStoredToken().then(async (token) => {
           if (!token) {
             sendResponse({ error: 'not signed in' });

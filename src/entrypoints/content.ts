@@ -44,12 +44,12 @@ export default defineContentScript({
     // that host their own application form. A second click re-executes the whole bundle in
     // the same isolated world, so guard against double-running: the repeat call just re-shows
     // the generic card instead of standing up a second set of observers.
-    const w = window as unknown as { __volleyLoaded?: boolean; __volleyGenericInit?: () => void };
-    if (w.__volleyLoaded) {
-      w.__volleyGenericInit?.();
+    const w = window as unknown as { __rolequickLoaded?: boolean; __rolequickGenericInit?: () => void };
+    if (w.__rolequickLoaded) {
+      w.__rolequickGenericInit?.();
       return;
     }
-    w.__volleyLoaded = true;
+    w.__rolequickLoaded = true;
 
     let cardInjected = false;
     let approved = false; // true once user taps "Yes" on either card
@@ -179,7 +179,7 @@ export default defineContentScript({
         ...document.querySelectorAll<HTMLElement>(
           'button, input[type="submit"], input[type="button"], [role="button"], a[role="button"]',
         ),
-      ].filter((el) => !el.closest('[id*="volley"]') && el.offsetParent !== null);
+      ].filter((el) => !el.closest('[id*="rolequick"]') && el.offsetParent !== null);
 
       const EXCLUDE =
         /resume|cover\s*letter|\bsave\b|cancel|\bback\b|\bedit\b|sign\s*in|log\s*in|create account|\bupload\b|add another|remove|delete|\bsearch\b|ask ai|previous|learn more/i;
@@ -224,7 +224,7 @@ export default defineContentScript({
         ...document.querySelectorAll<HTMLElement>('button, input[type="submit"], [role="button"]'),
       ];
       for (const el of candidates) {
-        if (el.closest('[id*="volley"]')) continue;
+        if (el.closest('[id*="rolequick"]')) continue;
         if ((el as HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true') continue;
         // Must be visible: a multi-step form can pre-render a later step's "Submit" hidden in the
         // DOM; anchoring or firing on an off-screen button would submit a step the student can't see.
@@ -246,7 +246,7 @@ export default defineContentScript({
     function hasEmptyRequiredFields(): boolean {
       const req = [...document.querySelectorAll<HTMLElement>('[required], [aria-required="true"]')];
       for (const el of req) {
-        if (el.closest('[id*="volley"]')) continue;
+        if (el.closest('[id*="rolequick"]')) continue;
         const style = getComputedStyle(el);
         if (style.display === 'none' || style.visibility === 'hidden') continue;
         const tag = el.tagName.toLowerCase();
@@ -351,7 +351,7 @@ export default defineContentScript({
         btn.addEventListener('click', () => {
           if (approved) return; // Already drafting from card 1
           // Remove card 1 if still showing
-          document.getElementById('volley-action-card')?.remove();
+          document.getElementById('rolequick-action-card')?.remove();
           cardInjected = false;
           injectSubmitCard(title, company, url);
         });
@@ -422,10 +422,10 @@ export default defineContentScript({
     // outright if a third ever fired. Cards keep their own ids; removing one collapses the
     // stack naturally, and an empty container is invisible.
     function getCardStack(): HTMLElement {
-      let stack = document.getElementById('volley-card-stack');
+      let stack = document.getElementById('rolequick-card-stack');
       if (!stack) {
         stack = document.createElement('div');
-        stack.id = 'volley-card-stack';
+        stack.id = 'rolequick-card-stack';
         stack.style.cssText =
           'position:fixed;bottom:72px;right:20px;z-index:2147483647;display:flex;flex-direction:column;align-items:flex-end;gap:12px;';
         document.body.appendChild(stack);
@@ -502,13 +502,13 @@ export default defineContentScript({
 
     // Card 1: fires when application form loads
     function injectActionCard(title: string, company: string, url: string) {
-      if (cardInjected || document.getElementById('volley-action-card')) return;
+      if (cardInjected || document.getElementById('rolequick-action-card')) return;
       cardInjected = true;
 
       chrome.runtime.sendMessage({ type: 'JOB_DETECTED', payload: { title, company, url } });
 
       const card = document.createElement('div');
-      card.id = 'volley-action-card';
+      card.id = 'rolequick-action-card';
       card.innerHTML = cardShell(
         'Draft recruiter emails?',
         `${title} at ${company}`
@@ -519,11 +519,11 @@ export default defineContentScript({
 
     // Card 2: fires when Submit button is clicked (only if not already approved)
     function injectSubmitCard(title: string, company: string, url: string) {
-      if (approved || document.getElementById('volley-submit-card')) return;
+      if (approved || document.getElementById('rolequick-submit-card')) return;
       cardInjected = true;
 
       const card = document.createElement('div');
-      card.id = 'volley-submit-card';
+      card.id = 'rolequick-submit-card';
       card.innerHTML = cardShell(
         "You're applying - draft outreach emails while you wait?",
         `${title} at ${company}`
@@ -585,9 +585,9 @@ export default defineContentScript({
     // Shared by every ATS adapter: generate the JD-tailored resume, then run that adapter's
     // client-side fill-and-stop. Only the JD-extraction and fill functions differ per ATS.
     function injectResumeFillCard(title: string, company: string, extractJdText: () => string, fill: FillFn) {
-      if (document.getElementById('volley-resume-card')) return;
+      if (document.getElementById('rolequick-resume-card')) return;
       const card = document.createElement('div');
-      card.id = 'volley-resume-card';
+      card.id = 'rolequick-resume-card';
       card.innerHTML = resumeFillCardShell(title, company);
       getCardStack().appendChild(card);
 
@@ -762,7 +762,7 @@ export default defineContentScript({
         // attached, and no required field is still empty (native validation would block the submit
         // anyway, after we'd already reported it sent). Otherwise fall through to highlight-and-
         // hand-back. It always fires from THIS student's own logged-in session, on data they
-        // generated and can still cancel - never something Volley decides on its own.
+        // generated and can still cancel - never something RoleQuick decides on its own.
         // document.hidden: never START a countdown while the student isn't looking at the tab (they
         // can't see the window to back out); going hidden mid-countdown is handled separately.
         const autoSubmitHeld =
@@ -836,7 +836,7 @@ export default defineContentScript({
       submitBtn.style.borderRadius = getComputedStyle(submitBtn).borderRadius || '8px';
 
       const overlay = document.createElement('div');
-      overlay.id = 'volley-autosubmit-overlay';
+      overlay.id = 'rolequick-autosubmit-overlay';
       overlay.style.cssText =
         'position:fixed;inset:0;z-index:2147483647;pointer-events:none;' +
         "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;";
@@ -926,7 +926,7 @@ export default defineContentScript({
       // on isTrusted so the adapter's own programmatic fill events never trip it, and scoped to
       // ignore clicks on our own overlay.
       const isOurNode = (t: EventTarget | null) =>
-        t instanceof Element && !!t.closest('#volley-autosubmit-overlay, [id*="volley"]');
+        t instanceof Element && !!t.closest('#rolequick-autosubmit-overlay, [id*="rolequick"]');
       const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') cancel(); };
       // Going hidden does NOT cancel: the interval tick below freezes while document.hidden (it
       // never decrements or fires the click), so the countdown simply pauses and resumes when the
@@ -1016,7 +1016,7 @@ export default defineContentScript({
     }
 
     // ─── Workday account-creation speed-up (2026-07-03) ────────────────────────
-    // Volley doesn't create the account itself, and only ever fills the email field - password,
+    // RoleQuick doesn't create the account itself, and only ever fills the email field - password,
     // clicking Create Account, and completing email verification are entirely the student's own
     // steps by explicit product decision. Not a fill-and-stop-with-countdown card like the
     // others: there's no button to auto-submit toward, since the form is never actually
@@ -1057,9 +1057,9 @@ export default defineContentScript({
     }
 
     function injectWorkdayAccountCreationCard() {
-      if (document.getElementById('volley-account-card')) return;
+      if (document.getElementById('rolequick-account-card')) return;
       const card = document.createElement('div');
-      card.id = 'volley-account-card';
+      card.id = 'rolequick-account-card';
       card.innerHTML = accountCreationCardShell();
       getCardStack().appendChild(card);
 
@@ -1104,14 +1104,14 @@ export default defineContentScript({
     }
 
     // Guidance for Workday's "Start Your Application" triage screen (Autofill with Resume /
-    // Apply Manually / Use My Last Application) - previously Volley said nothing here, leaving
+    // Apply Manually / Use My Last Application) - previously RoleQuick said nothing here, leaving
     // the student to guess which option leads anywhere useful. This just points them at the
     // right one and clicks it for them - pure page navigation, not a form submission or account
     // action, so it isn't gated behind the auto-submit toggle the way real submits are.
     function injectWorkdayStartScreenCard() {
-      if (document.getElementById('volley-start-card')) return;
+      if (document.getElementById('rolequick-start-card')) return;
       const card = document.createElement('div');
-      card.id = 'volley-start-card';
+      card.id = 'rolequick-start-card';
       card.innerHTML = `
         <div style="
           position: relative;
@@ -1159,19 +1159,19 @@ export default defineContentScript({
     // Company-hosted application forms (vercel.com/careers, lifeatspotify.com, ...): this
     // only ever runs when the student explicitly injected the script from the popup, since
     // no manifest match covers these domains. Re-clicking the popup button re-enters here
-    // via the __volleyGenericInit guard at the top of main().
+    // via the __rolequickGenericInit guard at the top of main().
     function genericInit() {
       if (KNOWN_ATS_HOSTS.some((k) => window.location.hostname.includes(k))) return;
-      document.getElementById('volley-resume-card')?.remove();
+      document.getElementById('rolequick-resume-card')?.remove();
       if (!isLikelyApplicationForm()) {
         const note = document.createElement('div');
-        note.id = 'volley-generic-note';
+        note.id = 'rolequick-generic-note';
         note.style.cssText =
           'position:fixed;bottom:72px;right:20px;z-index:2147483647;background:white;border:1.5px solid #e0e7ff;' +
           'border-radius:14px;padding:12px 16px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;' +
           'font-size:12px;line-height:1.4;color:#374151;box-shadow:0 8px 32px rgba(79,70,229,0.18);max-width:272px;';
         note.textContent = "RoleQuick couldn't find an application form on this page. Open the page with the actual form fields, then try again.";
-        document.getElementById('volley-generic-note')?.remove();
+        document.getElementById('rolequick-generic-note')?.remove();
         document.body.appendChild(note);
         setTimeout(() => note.remove(), 6000);
         return;
@@ -1179,7 +1179,7 @@ export default defineContentScript({
       const job = getGenericJobDetails();
       injectResumeFillCard(job.title, job.company, extractGenericJdText, fillGenericApplication);
     }
-    w.__volleyGenericInit = genericInit;
+    w.__rolequickGenericInit = genericInit;
 
     function init() {
       const h = window.location.hostname;
@@ -1272,11 +1272,11 @@ export default defineContentScript({
         activeAutoSubmitCancel?.();
         cardInjected = false;
         approved = false;
-        document.getElementById('volley-action-card')?.remove();
-        document.getElementById('volley-submit-card')?.remove();
-        document.getElementById('volley-resume-card')?.remove();
-        document.getElementById('volley-account-card')?.remove();
-        document.getElementById('volley-start-card')?.remove();
+        document.getElementById('rolequick-action-card')?.remove();
+        document.getElementById('rolequick-submit-card')?.remove();
+        document.getElementById('rolequick-resume-card')?.remove();
+        document.getElementById('rolequick-account-card')?.remove();
+        document.getElementById('rolequick-start-card')?.remove();
         setTimeout(init, NAV_RECHECK_DELAY_MS);
       }
     }).observe(document.body, { childList: true, subtree: true });
@@ -1285,7 +1285,7 @@ export default defineContentScript({
     // application form) without a URL change in some tenants (a same-path client-side
     // re-render rather than a navigation), which the MutationObserver above wouldn't catch via
     // its URL-diff check. A cheap poll (just DOM marker lookups) re-runs init() whenever none of
-    // Volley's three Workday cards is currently showing, so a stage change gets picked up within
+    // RoleQuick's three Workday cards is currently showing, so a stage change gets picked up within
     // ~500ms instead of waiting for the next navigation event.
     if (isWorkdayHost) {
       // Poll for Workday's URL-less stage swaps, but not aggressively or forever: at 500ms this
@@ -1301,9 +1301,9 @@ export default defineContentScript({
           return;
         }
         if (
-          !document.getElementById('volley-account-card') &&
-          !document.getElementById('volley-resume-card') &&
-          !document.getElementById('volley-start-card')
+          !document.getElementById('rolequick-account-card') &&
+          !document.getElementById('rolequick-resume-card') &&
+          !document.getElementById('rolequick-start-card')
         ) {
           init();
         }

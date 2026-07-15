@@ -144,7 +144,7 @@ export function isWorkdayApplicationPage(): boolean {
   return hasApplicationFormMarkers();
 }
 
-// 2026-07-03: Volley never creates the Workday account itself (backend-driven third-party
+// 2026-07-03: RoleQuick never creates the Workday account itself (backend-driven third-party
 // account creation was scoped, researched, and explicitly decided against - see project memory
 // for the CFAA/agency-law reasoning). This only pre-fills the signup form's own fields so the
 // student reviews and clicks "Create Account" themselves, same fill-and-stop trust model as
@@ -479,7 +479,7 @@ export interface WorkdayAccountCreationParams {
 
 // Fills only the email field and stops - password is deliberately never touched here (2026-07-03
 // product decision: the student sets and enters their own password, clicks Create Account, and
-// completes email verification entirely on their own). This is the one Volley-fillable field on
+// completes email verification entirely on their own). This is the one RoleQuick-fillable field on
 // the signup form, not a fill-and-stop pattern with a countdown to auto-submit - there's nothing
 // to auto-submit toward since the password field is always left for the student to fill by hand.
 export async function fillWorkdayAccountCreation(params: WorkdayAccountCreationParams): Promise<AutofillResult> {
