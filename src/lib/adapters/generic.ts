@@ -154,7 +154,8 @@ function groupQuestionText(group: HTMLInputElement[], optionTexts: string[]): st
 // (menu never opened, or no option matched - better to leave it for the student than guess).
 async function fillComboboxFor(trigger: HTMLElement, desired: Desired): Promise<'filled' | 'skipped'> {
   if (!desired) return 'skipped';
-  const typeahead = desired.mode === 'value' ? desired.value : undefined;
+  const typeahead =
+    desired.mode === 'value' ? desired.value : desired.mode === 'oneof' ? desired.values[0] : undefined;
   const options = await openCombobox(trigger, typeahead);
   if (options.length === 0) { closeOpenCombobox(); return 'skipped'; }
   const match = matchOption(options, desired);
@@ -249,9 +250,15 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   // distinct from the "are you at least 18" eligibility check handled above, which stays a Yes.
   if (/current age|what is your age|age range|how old are you|\bage group\b/.test(l)) return { mode: 'decline' };
 
-  // Factual profile values.
-  if (/citizenship|country of citizenship|which country|country of residence/.test(l) && ap.citizenship)
-    return { mode: 'value', value: ap.citizenship };
+  // Factual profile values. Citizenship is often stored as a nationality adjective ("Indian"),
+  // but country dropdowns list the country ("India"), and a combobox typeahead filters options by
+  // what is typed - so type the mapped country name up front, not the adjective that matches
+  // nothing. A mode:'oneof' lets a plain-text or exact-country field still accept the raw value.
+  if (/citizenship|country of citizenship|which country|country of residence/.test(l) && ap.citizenship) {
+    const c = ap.citizenship.trim().toLowerCase();
+    const country = NATIONALITY_TO_COUNTRY[c];
+    return country ? { mode: 'oneof', values: [country, ap.citizenship] } : { mode: 'value', value: ap.citizenship };
+  }
   // Referral / "how did you hear": the option set varies wildly per form (LinkedIn, Company
   // website, Job board, Other, ...), so a single value rarely matches. Try the student's own
   // answer first, then common near-synonyms, then "Other" as the safe catch-all - one of these

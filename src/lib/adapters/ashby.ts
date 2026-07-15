@@ -97,7 +97,8 @@ function isNeverFillField(el: Element): boolean {
 // no option matches, dismissing any open portal first.
 async function fillCombobox(trigger: HTMLElement, desired: Desired): Promise<boolean> {
   if (!desired) return false;
-  const typeahead = desired.mode === 'value' ? desired.value : undefined;
+  const typeahead =
+    desired.mode === 'value' ? desired.value : desired.mode === 'oneof' ? desired.values[0] : undefined;
   const options = await openCombobox(trigger, typeahead);
   if (options.length === 0) { closeOpenCombobox(); return false; }
   const match = matchOption(options, desired);
@@ -179,14 +180,32 @@ async function answerChoiceBlock(block: Element, desired: Desired): Promise<bool
     }
   }
 
-  // Button-pill options (no radio/select): match by text and click.
+  // Button-pill options (no radio/select): match by text and click. Ashby's option pills are
+  // React-controlled, so a bare .click() can register visually (adds _active) but get reverted by
+  // a later re-render during the fill - dispatch the full pointer sequence so the framework's
+  // pointer/mouse handlers commit the selection, then verify it stuck and retry once if not.
   const buttons = buttonOptionsIn(block);
   if (buttons.length > 0) {
     const m = matchOption(buttons, desired);
     if (m) {
       await randomDelay();
-      m.el.click();
+      const opts = { bubbles: true, cancelable: true, view: window } as const;
+      const press = () => {
+        try { m.el.dispatchEvent(new PointerEvent('pointerdown', opts)); } catch { /* older engines */ }
+        m.el.dispatchEvent(new MouseEvent('mousedown', opts));
+        m.el.dispatchEvent(new MouseEvent('mouseup', opts));
+        m.el.click();
+      };
+      press();
       await waitForStableDom();
+      // Ashby marks the chosen pill with an `_active`/`_selected` class or aria-pressed; if it
+      // didn't take (a re-render swallowed the first click), press once more.
+      const stuck = () =>
+        /_active|_selected/.test(m.el.className) || m.el.getAttribute('aria-pressed') === 'true';
+      if (!stuck()) {
+        press();
+        await waitForStableDom();
+      }
       return true;
     }
   }
