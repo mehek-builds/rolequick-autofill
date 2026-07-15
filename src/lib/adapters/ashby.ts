@@ -118,9 +118,14 @@ function comboControlIn(block: Element): HTMLElement | null {
 // plain <button> option pills - no radio input, no role - live-seen as `<button>Yes</button>` /
 // `<button>No</button>`. Collect those buttons so they can be matched by text and clicked, while
 // excluding action buttons (upload/submit/remove/etc.) that also live in the block.
+//
+// Do NOT filter by `b.type !== 'submit'`: a <button> with no `type` attribute reports
+// `.type === 'submit'` by HTML default, which is exactly what these option pills are - excluding
+// them here is why the sponsorship Yes/No never filled (verified live on Ashby). The form's real
+// submit control is already excluded by the text list below (it reads "Submit application").
 function buttonOptionsIn(block: Element): Array<{ text: string; el: HTMLButtonElement }> {
   return [...block.querySelectorAll<HTMLButtonElement>('button')]
-    .filter((b) => !b.closest('[id*="volley"]') && b.type !== 'submit')
+    .filter((b) => !b.closest('[id*="volley"]'))
     .map((b) => ({ text: (b.textContent ?? '').trim(), el: b }))
     .filter(
       (b) =>
