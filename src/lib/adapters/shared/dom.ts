@@ -134,37 +134,60 @@ function readRenderedOptions(): ComboOption[] {
   return out;
 }
 
-// Open a combobox and return its options. Handles the typeahead-only variant (no options until
-// you type) by seeding the input with `typeahead` when the freshly-opened menu is empty.
+// Open a combobox and return its options. react-select (the widget Greenhouse, Ashby, and
+// Workday build their city / country / yes-no / EEO fields on) does NOT open from a bare
+// mousedown on the outer *__control div - verified live on job-boards.greenhouse.io, where the
+// 244-option country picker stayed closed to a control mousedown but opened from a pointer
+// sequence on the inner input and from a keyboard ArrowDown. So try the reliable paths in order
+// and stop the moment options render. Handles the typeahead-only variant (no options until a
+// query is typed) last, by seeding the input.
 export async function openCombobox(
   trigger: HTMLElement,
   typeahead?: string,
   timeoutMs = 1600,
 ): Promise<ComboOption[]> {
   const control = comboControl(trigger);
-  control.scrollIntoView({ block: 'center' });
-  await pause(40);
-  realPointerSequence(control);
   const input =
     (trigger instanceof HTMLInputElement ? trigger : null) ??
     control.querySelector<HTMLInputElement>('input');
-  input?.focus();
+  const focusTarget: HTMLElement = input ?? control;
+  control.scrollIntoView({ block: 'center' });
+  await pause(40);
 
-  const started = Date.now();
-  let opts = readRenderedOptions();
-  while (opts.length === 0 && Date.now() - started < timeoutMs) {
-    await pause(70);
-    opts = readRenderedOptions();
+  const waitForOptions = async (budgetMs: number): Promise<ComboOption[]> => {
+    const start = Date.now();
+    let found = readRenderedOptions();
+    while (found.length === 0 && Date.now() - start < budgetMs) {
+      await pause(60);
+      found = readRenderedOptions();
+    }
+    return found;
+  };
+
+  // 1) focus + pointer sequence on the inner input (the path that opens react-select).
+  focusTarget.focus?.();
+  realPointerSequence(input ?? control);
+  let opts = await waitForOptions(450);
+
+  // 2) pointer sequence on the outer control (native ARIA comboboxes, Workday listbox buttons).
+  if (opts.length === 0) {
+    realPointerSequence(control);
+    opts = await waitForOptions(350);
   }
 
-  // Typeahead widgets stay empty until a query is typed; seed it and wait again.
+  // 3) keyboard open: ArrowDown on the focused control, honored by react-select and most listboxes.
+  if (opts.length === 0) {
+    focusTarget.focus?.();
+    focusTarget.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', bubbles: true }),
+    );
+    opts = await waitForOptions(450);
+  }
+
+  // 4) typeahead-only widgets stay empty until a query is typed; seed it and wait the full budget.
   if (opts.length === 0 && typeahead && input) {
     setNativeValue(input, typeahead.slice(0, 24));
-    const t2 = Date.now();
-    while (opts.length === 0 && Date.now() - t2 < timeoutMs) {
-      await pause(70);
-      opts = readRenderedOptions();
-    }
+    opts = await waitForOptions(timeoutMs);
   }
   return opts;
 }
