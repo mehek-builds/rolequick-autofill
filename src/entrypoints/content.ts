@@ -163,26 +163,44 @@ export default defineContentScript({
     // ─── Submit button detection ─────────────────────────────────────────────
 
     function findSubmitButton(): Element | null {
-      // Try specific ATS selectors first, then fall back to generic
-      const selectors = [
-        '[data-automation-id="bottom-navigation-next-button"]', // Workday final step
-        'input[type="submit"]',
-        'button[type="submit"]',
-      ];
+      // Workday's final-step button has a stable id and no "submit" text, so match it directly.
+      const workday = document.querySelector('[data-automation-id="bottom-navigation-next-button"]');
+      if (workday) return workday;
 
-      for (const sel of selectors) {
-        const el = document.querySelector(sel);
-        if (el) return el;
+      // Everything else: SCORE every button/submit-like control by what it says, rather than
+      // taking the first `input[type=submit]`. Real forms often carry more than one submit-type
+      // button - live-seen on vercel.com, an "Apply for Role" that opens/anchors the form near the
+      // top AND the real "Submit Application" at the bottom, both `button[type=submit]`. A plain
+      // querySelector returns the wrong (top) one. We also can't require type=submit, since Lever's
+      // submit is a text button. So: score by label, exclude the obvious non-submits, and break
+      // ties toward the control lower on the page (the real submit sits at the bottom).
+      const controls = [
+        ...document.querySelectorAll<HTMLElement>(
+          'button, input[type="submit"], input[type="button"], [role="button"], a[role="button"]',
+        ),
+      ].filter((el) => !el.closest('[id*="volley"]') && el.offsetParent !== null);
+
+      const EXCLUDE =
+        /resume|cover\s*letter|\bsave\b|cancel|\bback\b|\bedit\b|sign\s*in|log\s*in|create account|\bupload\b|add another|remove|delete|\bsearch\b|ask ai|previous|learn more/i;
+      let best: { el: Element; score: number } | null = null;
+      for (let i = 0; i < controls.length; i++) {
+        const el = controls[i];
+        const label = `${el.textContent ?? ''} ${(el as HTMLInputElement).value ?? ''} ${el.getAttribute('aria-label') ?? ''}`
+          .replace(/\s+/g, ' ')
+          .trim()
+          .toLowerCase();
+        if (!label || label.length > 40 || EXCLUDE.test(label)) continue;
+        let score = 0;
+        if (/\bsubmit\b/.test(label)) score = 100;
+        else if (/send (my |your )?application/.test(label)) score = 80;
+        else if (/\bfinish\b|complete application/.test(label)) score = 60;
+        else if (/apply for|apply now|^\s*apply\b/.test(label)) score = 40;
+        if (score === 0) continue;
+        if ((el as HTMLButtonElement).type === 'submit') score += 5;
+        score += i / 1000; // tie-break toward the control lower in the DOM
+        if (!best || score > best.score) best = { el, score };
       }
-
-      // Generic: find a button whose text contains "Submit"
-      const allButtons = document.querySelectorAll('button, input[type="button"]');
-      for (const btn of allButtons) {
-        const text = (btn.textContent ?? (btn as HTMLInputElement).value ?? '').toLowerCase();
-        if (text.includes('submit') && !text.includes('resume')) return btn;
-      }
-
-      return null;
+      return best ? best.el : null;
     }
 
     // A TRUE final-submit control, distinct from a "Next"/"Continue"/"Save and Continue"/"Review"

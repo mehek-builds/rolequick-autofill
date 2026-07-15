@@ -209,6 +209,7 @@ export function getGenericJobDetails(): { title: string; company: string } {
 
 export type Desired =
   | { mode: 'value'; value: string }
+  | { mode: 'oneof'; values: string[] }
   | { mode: 'yes' }
   | { mode: 'no' }
   | { mode: 'decline' }
@@ -248,8 +249,22 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   // Factual profile values.
   if (/citizenship|country of citizenship|which country|country of residence/.test(l) && ap.citizenship)
     return { mode: 'value', value: ap.citizenship };
-  if (/how did you hear|referral source|hear about (this|us|the)|source of/.test(l) && ap.referral_source_default)
-    return { mode: 'value', value: ap.referral_source_default };
+  // Referral / "how did you hear": the option set varies wildly per form (LinkedIn, Company
+  // website, Job board, Other, ...), so a single value rarely matches. Try the student's own
+  // answer first, then common near-synonyms, then "Other" as the safe catch-all - one of these
+  // almost always exists, so the question gets answered instead of left blank.
+  if (/how did you hear|referral source|hear about (this|us|the)|source of/.test(l))
+    return {
+      mode: 'oneof',
+      values: [
+        ap.referral_source_default,
+        'company website',
+        'company careers',
+        'careers page',
+        'company site',
+        'other',
+      ].filter(Boolean) as string[],
+    };
   if (/salary|compensation|desired pay|expected pay|pay expectation/.test(l) && ap.desired_salary)
     return { mode: 'value', value: ap.desired_salary };
   if (/date of birth|birth\s*date|\bdob\b/.test(l) && ap.date_of_birth)
@@ -276,27 +291,49 @@ export function matchOption<T extends { text: string }>(options: T[], desired: D
   }
   if (desired.mode === 'yes' || desired.mode === 'no') {
     const wantYes = desired.mode === 'yes';
-    // "not"/"am not"/"do not"/"don't" reliably marks the negative option even when it doesn't
-    // start with "no" (e.g. "I am not a protected veteran").
-    const isNeg = (t: string) => /^\s*no\b/.test(t) || /\b(not|am not|do not|don'?t)\b/.test(t);
-    const isPos = (t: string) => (/^\s*yes\b/.test(t) || /\b(i am a|identify as|i have)\b/.test(t)) && !isNeg(t);
+    // "not"/"am not"/"do not"/"don't"/"require sponsorship" reliably marks the negative option
+    // even when it doesn't start with "no" (e.g. "I am not a protected veteran", "I will require
+    // sponsorship").
+    const isNeg = (t: string) =>
+      /^\s*no\b/.test(t) || /\b(not|am not|do not|don'?t)\b/.test(t) || /require(s|d)?\s+(visa\s+)?sponsor/.test(t);
+    // Positive options are often phrased as statements, not "Yes" - "I am authorized to work in
+    // the country", "I am eligible to work" (live-seen on vercel.com), so match those too, as long
+    // as they aren't negated.
+    const isPos = (t: string) =>
+      (/^\s*yes\b/.test(t) ||
+        /\b(i am a|identify as|i have)\b/.test(t) ||
+        /\bauthoriz(ed|ation)\b/.test(t) ||
+        /\beligible to work\b/.test(t) ||
+        /\blegally (authorized|able|permitted)\b/.test(t)) &&
+      !isNeg(t);
     const pos = options.filter((o) => isPos(norm(o.text)));
     const neg = options.filter((o) => isNeg(norm(o.text)) && !DECLINE_RE.test(o.text));
     const pick = wantYes ? pos : neg;
     return pick.length === 1 ? pick[0] : null; // ambiguous -> leave for the student
   }
-  // value: exact match first, then substring in either direction - but only when the substring
-  // match is UNAMBIGUOUS. "Korea" against a country list holding "Korea, Republic of" and
-  // "Korea, Democratic People's Republic of" must not silently commit whichever comes first in
-  // DOM order; two candidates means we can't be sure, so leave it for the student.
-  const v = norm(desired.value);
-  const exact = options.find((o) => norm(o.text) === v);
-  if (exact) return exact;
-  const contains = options.filter((o) => norm(o.text).includes(v));
-  if (contains.length === 1) return contains[0];
-  if (contains.length > 1) return null; // ambiguous -> leave for the student
-  const reverse = options.filter((o) => v.includes(norm(o.text)) && norm(o.text).length > 2);
-  return reverse.length === 1 ? reverse[0] : null;
+  // value / oneof: match the (first) value that lands an unambiguous option. exact match first,
+  // then substring in either direction - but only when the substring match is UNAMBIGUOUS. "Korea"
+  // against a list holding "Korea, Republic of" and "Korea, Democratic People's Republic of" must
+  // not silently commit whichever comes first; two candidates means leave it for the student.
+  const matchValue = (raw: string): T | null => {
+    const v = norm(raw);
+    if (!v) return null;
+    const exact = options.find((o) => norm(o.text) === v);
+    if (exact) return exact;
+    const contains = options.filter((o) => norm(o.text).includes(v));
+    if (contains.length === 1) return contains[0];
+    if (contains.length > 1) return null; // ambiguous -> leave for the student
+    const reverse = options.filter((o) => v.includes(norm(o.text)) && norm(o.text).length > 2);
+    return reverse.length === 1 ? reverse[0] : null;
+  };
+  if (desired.mode === 'oneof') {
+    for (const val of desired.values) {
+      const m = matchValue(val);
+      if (m) return m;
+    }
+    return null;
+  }
+  return matchValue(desired.value);
 }
 
 // ─── DOM fillers ────────────────────────────────────────────────────────────
