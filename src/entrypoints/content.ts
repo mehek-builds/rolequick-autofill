@@ -9,6 +9,7 @@ import {
 import { isLinkedInApplicationPage, extractLinkedInJdText, fillLinkedInApplication } from '../lib/adapters/linkedin';
 import { isLikelyApplicationForm, extractGenericJdText, getGenericJobDetails, fillGenericApplication } from '../lib/adapters/generic';
 import { getAutoSubmitEnabled } from '../lib/storage';
+import { skippedReasonsNeedReview } from '../lib/autosubmit-gate';
 import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
 
 export default defineContentScript({
@@ -52,10 +53,6 @@ export default defineContentScript({
 
     let cardInjected = false;
     let approved = false; // true once user taps "Yes" on either card
-    // Set to the cancel fn while an auto-submit countdown is live, so the card's close button and
-    // SPA navigation can stop the countdown (its interval/closure are otherwise unreachable). An
-    // uncancelled countdown could fire a submit after the user backed out, or onto a new page.
-    let activeCountdownCancel: (() => void) | null = null;
 
     // ─── Job title/company extraction ───────────────────────────────────────
 
@@ -167,27 +164,175 @@ export default defineContentScript({
     // ─── Submit button detection ─────────────────────────────────────────────
 
     function findSubmitButton(): Element | null {
-      // Try specific ATS selectors first, then fall back to generic
-      const selectors = [
-        '[data-automation-id="bottom-navigation-next-button"]', // Workday final step
-        'input[type="submit"]',
-        'button[type="submit"]',
+      // Workday's final-step button has a stable id and no "submit" text, so match it directly.
+      const workday = document.querySelector('[data-automation-id="bottom-navigation-next-button"]');
+      if (workday) return workday;
+
+      // Everything else: SCORE every button/submit-like control by what it says, rather than
+      // taking the first `input[type=submit]`. Real forms often carry more than one submit-type
+      // button - live-seen on vercel.com, an "Apply for Role" that opens/anchors the form near the
+      // top AND the real "Submit Application" at the bottom, both `button[type=submit]`. A plain
+      // querySelector returns the wrong (top) one. We also can't require type=submit, since Lever's
+      // submit is a text button. So: score by label, exclude the obvious non-submits, and break
+      // ties toward the control lower on the page (the real submit sits at the bottom).
+      const controls = [
+        ...document.querySelectorAll<HTMLElement>(
+          'button, input[type="submit"], input[type="button"], [role="button"], a[role="button"]',
+        ),
+      ].filter((el) => !el.closest('[id*="rolequick"]') && el.offsetParent !== null);
+
+      const EXCLUDE =
+        /resume|cover\s*letter|\bsave\b|cancel|\bback\b|\bedit\b|sign\s*in|log\s*in|create account|\bupload\b|add another|remove|delete|\bsearch\b|ask ai|previous|learn more/i;
+      let best: { el: Element; score: number } | null = null;
+      for (let i = 0; i < controls.length; i++) {
+        const el = controls[i];
+        const label = `${el.textContent ?? ''} ${(el as HTMLInputElement).value ?? ''} ${el.getAttribute('aria-label') ?? ''}`
+          .replace(/\s+/g, ' ')
+          .trim()
+          .toLowerCase();
+        if (!label || label.length > 40 || EXCLUDE.test(label)) continue;
+        let score = 0;
+        if (/\bsubmit\b/.test(label)) score = 100;
+        else if (/send (my |your )?application/.test(label)) score = 80;
+        else if (/\bfinish\b|complete application/.test(label)) score = 60;
+        else if (/apply for|apply now|^\s*apply\b/.test(label)) score = 40;
+        if (score === 0) continue;
+        if ((el as HTMLButtonElement).type === 'submit') score += 5;
+        score += i / 1000; // tie-break toward the control lower in the DOM
+        if (!best || score > best.score) best = { el, score };
+      }
+      return best ? best.el : null;
+    }
+
+    // A TRUE final-submit control, distinct from a "Next"/"Continue"/"Save and Continue"/"Review"
+    // step-advance button. The auto-submit countdown must anchor to THIS, never a step button:
+    // clicking a step button would advance a multi-step form (Workday's 5 pages) and then falsely
+    // report the application as submitted. Returns null when the only actionable control is a
+    // step-advance - i.e. a multi-step form that isn't on its final page yet, so there is nothing
+    // to auto-submit toward.
+    // Visible = has a layout box and isn't visibility:hidden. Unlike offsetParent !== null this keeps
+    // a legitimately-visible position:fixed control (whose offsetParent is null) while still excluding
+    // a display:none pre-rendered later-step button (and its descendants).
+    function isElementVisible(el: HTMLElement): boolean {
+      return el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+    }
+
+    function findFinalSubmitButton(): HTMLElement | null {
+      const STEP_ADVANCE = /\b(next|continue|save\s*(and|&)\s*continue|review|save\s+for\s+later|back)\b/i;
+      const SUBMIT = /\bsubmit(\s+application)?\b|\bsend\s+application\b/i;
+      const candidates = [
+        ...document.querySelectorAll<HTMLElement>('button, input[type="submit"], [role="button"]'),
       ];
-
-      for (const sel of selectors) {
-        const el = document.querySelector(sel);
-        if (el) return el;
+      for (const el of candidates) {
+        if (el.closest('[id*="rolequick"]')) continue;
+        if ((el as HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true') continue;
+        // Must be visible: a multi-step form can pre-render a later step's "Submit" hidden in the
+        // DOM; anchoring or firing on an off-screen button would submit a step the student can't see.
+        if (!isElementVisible(el)) continue;
+        // `||` not `??`: textContent is "" (not null) for a void <input type="submit">, so `??`
+        // would never fall through to .value and classic Greenhouse's submit input would be missed.
+        const text = (el.textContent || (el as HTMLInputElement).value || '').trim();
+        if (!text) continue;
+        // Skip a step-advance word ONLY when the text is not also a submit, so a final button
+        // labelled "Review and Submit" / "Review & Submit application" still counts as a submit.
+        if (STEP_ADVANCE.test(text) && !SUBMIT.test(text)) continue;
+        if (SUBMIT.test(text)) return el;
       }
-
-      // Generic: find a button whose text contains "Submit"
-      const allButtons = document.querySelectorAll('button, input[type="button"]');
-      for (const btn of allButtons) {
-        const text = (btn.textContent ?? (btn as HTMLInputElement).value ?? '').toLowerCase();
-        if (text.includes('submit') && !text.includes('resume')) return btn;
-      }
-
       return null;
     }
+
+    // Is any on-screen required field still empty? Used to hold back auto-submit: the browser's own
+    // validation would block the submit anyway, but by then we'd already have reported it as sent.
+    function hasEmptyRequiredFields(): boolean {
+      const req = [...document.querySelectorAll<HTMLElement>('[required], [aria-required="true"]')];
+      for (const el of req) {
+        if (el.closest('[id*="rolequick"]')) continue;
+        const style = getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') continue;
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'input') {
+          const inp = el as HTMLInputElement;
+          // react-select comboboxes put aria-required on a visible input that stays value-empty
+          // after a selection (the chosen value lives in component state / a hidden input), so an
+          // empty .value there is NOT an unanswered field - skip it rather than wrongly holding
+          // auto-submit on the work-auth/country/EEO controls Greenhouse and Ashby render this way.
+          if (inp.getAttribute('role') === 'combobox' || inp.closest('[class*="select__control"], [class*="Select-control"]')) {
+            // .value stays empty on a react-select even after a selection, so read the control
+            // instead: a filled one renders a single/multi value node, an empty one a placeholder.
+            // Only HOLD auto-submit when we can positively see it's empty; if we can't tell, skip it
+            // as before so a genuinely filled control never wrongly blocks the submit.
+            const control = inp.closest('[class*="select__control"], [class*="Select-control"]') ?? inp.parentElement;
+            const hasValue = control?.querySelector(
+              '[class*="single-value"], [class*="singleValue"], [class*="multi-value"], [class*="multiValue"], [class*="Select-value"]',
+            );
+            const hasPlaceholder = control?.querySelector('[class*="placeholder"]');
+            if (!hasValue && hasPlaceholder) return true;
+            continue;
+          }
+          if (inp.type === 'checkbox' || inp.type === 'radio') {
+            const group = inp.name
+              ? [...document.querySelectorAll<HTMLInputElement>(`input[name="${CSS.escape(inp.name)}"]`)]
+              : [inp];
+            if (!group.some((g) => g.checked)) return true;
+          } else if (!inp.value.trim() && !inp.files?.length) {
+            return true;
+          }
+        } else if (tag === 'select') {
+          if (!(el as HTMLSelectElement).value) return true;
+        } else if (tag === 'textarea') {
+          if (!(el as HTMLTextAreaElement).value.trim()) return true;
+        }
+      }
+      return false;
+    }
+
+    // Field labels in skipped_reasons come from the page DOM, so escape before inserting via
+    // innerHTML - a hostile <label> must not be able to inject markup into our card.
+    function escapeHtml(s: string): string {
+      return s.replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string,
+      );
+    }
+
+    // Show WHAT still needs the student, not just a filled count (the adapters compute a precise
+    // skipped list that content.ts previously discarded). This is the difference between a form that
+    // "looks done" and one where the student can see the resume, an agreement box, or a blank
+    // required field still needs them before they submit.
+    function renderFillSummary(
+      statusEl: HTMLElement | null,
+      fillResult: AutofillResult,
+      opts: { resumeMissing: boolean; autoSubmitHeld: boolean },
+    ): void {
+      if (!statusEl) return;
+      const head: string[] = [`Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}.`];
+      if (opts.resumeMissing) head.push('⚠ Resume not attached - add it yourself.');
+      if (opts.autoSubmitHeld) head.push('Auto-submit held: finish the flagged items, then submit.');
+      // Keep the reasons that actually need a human: resume, agreements, unmatched/never-fill,
+      // required blanks. Drop the resume line here (already surfaced above) and cap the list.
+      const needsYou = fillResult.skipped_reasons
+        .filter((r) => /agreement|never-fill|no matching|left for you|left blank|required|no unambiguous/i.test(r))
+        .filter((r) => !/^resume:/i.test(r))
+        .slice(0, 4);
+      statusEl.style.display = 'block';
+      statusEl.innerHTML =
+        head.map((l) => `<div>${escapeHtml(l)}</div>`).join('') +
+        (needsYou.length
+          ? `<div style="margin-top:4px;font-weight:600;">Still needs you:</div>` +
+            needsYou.map((r) => `<div>• ${escapeHtml(r)}</div>`).join('')
+          : '') +
+        `<div style="margin-top:4px;">Review, then submit yourself.</div>`;
+    }
+
+    // Result of the background resume-gen round trip, cached per job (company|role) for the tab's
+    // life so a multi-step flow reuses step 1's resume instead of paying for - and being metered
+    // for - a fresh generation on every step.
+    type ResumeGenResult = {
+      error?: string;
+      profile?: Profile;
+      applicationProfile?: ApplicationProfile;
+      resume?: { resume_url: string; file_name: string };
+    };
+    const resumeGenByJob = new Map<string, Promise<ResumeGenResult>>();
 
     function watchSubmitButton(title: string, company: string, url: string) {
       let watched = false;
@@ -452,28 +597,34 @@ export default defineContentScript({
       // the monthly resume credits, plus an hourly rate-limit slot) for every card the student
       // dismissed. Hover is the earliest reliable signal of intent: it still fires seconds
       // before a click, keeping nearly all of the head start at none of the dismissal cost.
-      const jdText = extractJdText();
-      type ResumeGenResult = {
-        error?: string;
-        profile?: Profile;
-        applicationProfile?: ApplicationProfile;
-        resume?: { resume_url: string; file_name: string };
-      };
+      // JD is read at intent time (first hover/click), NOT at card injection, so a JD that
+      // lazy-loads after the card appears is present when we tailor. Memoized so the gen call and
+      // the essay-draft hook read the same JD text.
+      let jdCache: string | null = null;
+      const getJd = (): string => (jdCache ??= extractJdText());
+
       // Slightly longer than the background's own resume-fetch budget (60s) so its descriptive
       // error surfaces first; this is the backstop for the worse case where the service worker
       // is torn down and the callback never fires at all.
       const RESUME_GEN_TIMEOUT_MS = 65000;
-      let resumeGenPromise: Promise<ResumeGenResult> | null = null;
+      const jobKey = `${company} ${title}`;
       const startResumeGen = (): Promise<ResumeGenResult> => {
-        resumeGenPromise ??= new Promise<ResumeGenResult>((resolve) => {
+        const cached = resumeGenByJob.get(jobKey);
+        if (cached) return cached; // reuse across steps of a multi-step application (no re-charge)
+        const p = new Promise<ResumeGenResult>((resolve) => {
           let settled = false;
-          const done = (r: ResumeGenResult) => { if (!settled) { settled = true; resolve(r); } };
+          const done = (r: ResumeGenResult) => {
+            if (settled) return;
+            settled = true;
+            if (r.error) resumeGenByJob.delete(jobKey); // never cache a failure; let a retry re-run
+            resolve(r);
+          };
           const timer = setTimeout(
             () => done({ error: 'Resume generation timed out - fill this form manually.' }),
             RESUME_GEN_TIMEOUT_MS,
           );
           chrome.runtime.sendMessage(
-            { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: jdText } },
+            { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: getJd() } },
             (result: ResumeGenResult | undefined) => {
               clearTimeout(timer);
               // A dead service worker resolves the callback with lastError set (or with no
@@ -487,13 +638,16 @@ export default defineContentScript({
             },
           );
         });
-        return resumeGenPromise;
+        resumeGenByJob.set(jobKey, p);
+        return p;
       };
       card.addEventListener('mouseenter', () => void startResumeGen(), { once: true });
 
-      // Closing the card also stops any running countdown - otherwise the timer keeps ticking and
-      // could submit after the student explicitly backed out.
-      const dismiss = () => { activeCountdownCancel?.(); card.remove(); };
+      // If an auto-submit countdown is mid-flight, dismissing the card (the x or "No") must cancel
+      // it too: the countdown's overlay and ticking interval live on document.body, OUTSIDE this
+      // card, so just removing the card would leave them running and still fire ~15s later after the
+      // student thought they'd dismissed everything. No-op when no countdown is active.
+      const dismiss = () => { activeAutoSubmitCancel?.(); card.remove(); };
       card.querySelector('#wp-resume-close')?.addEventListener('click', dismiss);
       card.querySelector('#wp-resume-no')?.addEventListener('click', dismiss);
       card.querySelector('#wp-resume-yes')?.addEventListener('click', async () => {
@@ -549,7 +703,7 @@ export default defineContentScript({
               draftAnswer: (question: string) =>
                 new Promise<string | null>((resolve) => {
                   chrome.runtime.sendMessage(
-                    { type: 'ANSWER_QUESTION', payload: { company, role: title, jd_text: jdText, question } },
+                    { type: 'ANSWER_QUESTION', payload: { company, role: title, jd_text: getJd(), question } },
                     (r: { answer?: string | null } | undefined) => resolve(r?.answer ?? null),
                   );
                 }),
@@ -576,15 +730,18 @@ export default defineContentScript({
         }
 
         const autoSubmitOn = await getAutoSubmitEnabled();
-
-        // If the student closed the card or navigated away DURING the async fill window (both remove
-        // the card), honor that: don't start a countdown or touch the page. The auto-submit
-        // countdown only becomes cancelable once it registers below, so during the up-to-90s fill
-        // await a dismiss/nav can't reach it - the card's liveness is the guard for that window.
-        // Also resolve the submit button only now (after the awaits), so a nav during fill can't
-        // leave us anchored to a stale button.
-        if (!card.isConnected) return;
-        const submitBtn = findSubmitButton();
+        const finalSubmitBtn = findFinalSubmitButton();
+        // Resume is "missing" if the blob never reached us (fetch failed upstream) or the adapter
+        // reported it could not attach it. Never auto-submit an application with no resume.
+        const resumeMissing = !resumeBlob || fillResult.skipped_reasons.some((r) => /^resume:/i.test(r));
+        // Any answer the adapter AI-drafted must be read by the student before it goes out in their
+        // name, so gate on the count the adapter now returns, not just a text match on the reasons.
+        const aiDrafted = fillResult.ai_drafted > 0;
+        // Items the adapter flagged as still needing the student (agreements, questions it could not
+        // answer, never-fill/sensitive fields, dropdowns left for manual selection, answers left
+        // blank). Classified by the pure skippedReasonsNeedReview() so it stays unit-tested. If the
+        // fill flagged ANYTHING for review, hold auto-submit and hand back rather than submit unread.
+        const needsReview = skippedReasonsNeedReview(fillResult.skipped_reasons);
 
         const reportEvent = (autoSubmitted: boolean) => {
           chrome.runtime.sendMessage({
@@ -599,37 +756,51 @@ export default defineContentScript({
           });
         };
 
-        // Auto-submit is opt-in (AutofillSetupScreen toggle, off by default) and only ever
-        // fires from THIS student's own extension, in their own logged-in session, on data
-        // they generated and could still cancel - never something RoleQuick decides on its own.
-        if (autoSubmitOn && submitBtn instanceof HTMLElement) {
+        // Auto-submit is opt-in (AutofillSetupScreen toggle, off by default) AND only fires when it
+        // is actually safe: a real FINAL-submit button exists (not a "Next"/"Continue" step button,
+        // which would advance a multi-step form and then falsely report a submit), the resume
+        // attached, and no required field is still empty (native validation would block the submit
+        // anyway, after we'd already reported it sent). Otherwise fall through to highlight-and-
+        // hand-back. It always fires from THIS student's own logged-in session, on data they
+        // generated and can still cancel - never something RoleQuick decides on its own.
+        // document.hidden: never START a countdown while the student isn't looking at the tab (they
+        // can't see the window to back out); going hidden mid-countdown is handled separately.
+        const autoSubmitHeld =
+          autoSubmitOn &&
+          (!finalSubmitBtn || resumeMissing || aiDrafted || needsReview || hasEmptyRequiredFields() || document.hidden);
+        if (autoSubmitOn && !autoSubmitHeld && finalSubmitBtn) {
           runAutoSubmitCountdown(
             card, statusEl,
             card.querySelector<HTMLButtonElement>('#wp-resume-yes'),
             card.querySelector<HTMLButtonElement>('#wp-resume-no'),
-            submitBtn, fillResult, reportEvent, 'Submitting',
+            finalSubmitBtn, fillResult, reportEvent, 'Submitting',
           );
           return;
         }
 
         reportEvent(false);
 
-        if (statusEl) {
-          statusEl.textContent = `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. Review, then submit yourself.`;
+        // Surface WHAT still needs the student (resume, agreements, unmatched/required blanks), not
+        // just a filled count - the adapters compute this precisely and it used to be discarded.
+        renderFillSummary(statusEl, fillResult, { resumeMissing, autoSubmitHeld });
+
+        // Highlight the real final-submit control if there is one; never click it here (PRD-v2
+        // Section 5 Step 4). On a multi-step form still mid-flow there is no final submit yet, so
+        // nothing is highlighted rather than pointing the student at a misleading "Next".
+        if (finalSubmitBtn instanceof HTMLElement) {
+          finalSubmitBtn.style.outline = '3px solid #4f46e5';
+          finalSubmitBtn.style.outlineOffset = '2px';
         }
 
-        // Highlight, never click - RoleQuick stops here (PRD-v2 Section 5 Step 4) unless the
-        // student has opted in to auto-submit above.
-        if (submitBtn instanceof HTMLElement) {
-          submitBtn.style.outline = '3px solid #4f46e5';
-          submitBtn.style.outlineOffset = '2px';
-        }
-
-        setTimeout(dismiss, 6000);
+        setTimeout(dismiss, 9000);
       });
     }
 
     const AUTO_SUBMIT_COUNTDOWN_SECONDS = 15;
+
+    // Cancel hook for an in-flight auto-submit countdown, exposed so SPA navigation (or any other
+    // context change) can tear the countdown down. null whenever no countdown is running.
+    let activeAutoSubmitCancel: (() => void) | null = null;
 
     // Opt-in only (AutofillSetupScreen toggle). Instead of clicking Submit the instant the fill
     // finishes, this anchors a live countdown timer directly onto the page's own Submit button:
@@ -647,12 +818,10 @@ export default defineContentScript({
       reportEvent: (autoSubmitted: boolean) => void,
       actionLabel: string,
     ) {
-      // Never count down toward a card the student already closed / that navigation removed.
-      if (!card.isConnected) return;
-      // Only one live countdown at a time: cancel any prior one before starting, so a re-injected
-      // card (Workday stage swap, SPA re-init) can't race a second countdown into a double submit.
-      activeCountdownCancel?.();
-
+      // Tear down any countdown already running before standing up a new one. Combined with the SPA
+      // navigation handler (which also calls this), there is never an orphaned interval/overlay or a
+      // duplicate countdown firing behind this one. No-op the first time (handle starts null).
+      activeAutoSubmitCancel?.();
       if (yesBtn) yesBtn.style.display = 'none';
 
       let remaining = AUTO_SUBMIT_COUNTDOWN_SECONDS;
@@ -731,53 +900,110 @@ export default defineContentScript({
         window.removeEventListener('scroll', reposition, true);
         window.removeEventListener('resize', reposition);
         window.removeEventListener('keydown', onKey);
+        document.removeEventListener('visibilitychange', onVisibility);
+        window.removeEventListener('pagehide', onPageHide);
+        document.removeEventListener('input', onUserInteract, true);
+        document.removeEventListener('pointerdown', onUserInteract, true);
+        activeAutoSubmitCancel = null;
         overlay.remove();
       };
 
-      const cancel = () => {
+      const cancel = (msg = 'Cancelled. Review, then submit yourself.') => {
         if (cancelled) return;
         cancelled = true;
-        activeCountdownCancel = null;
         clearInterval(interval);
         cleanupChrome();
         submitBtn.style.outline = '3px solid #4f46e5';
         submitBtn.style.outlineOffset = '2px';
-        if (statusEl) statusEl.textContent = 'Cancelled. Review, then submit yourself.';
+        if (statusEl) statusEl.textContent = msg;
         reportEvent(false);
         setTimeout(() => card.remove(), 4000);
       };
-      // Expose this countdown's cancel so the card's close button and SPA navigation can stop it.
-      activeCountdownCancel = cancel;
 
+      // Anything that changes the context the student was watching cancels the pending submit: the
+      // Escape key, switching away from the tab (visibilitychange), the page unloading, or the
+      // student editing the form (a real input event, or a pointerdown on a form control). Guarded
+      // on isTrusted so the adapter's own programmatic fill events never trip it, and scoped to
+      // ignore clicks on our own overlay.
+      const isOurNode = (t: EventTarget | null) =>
+        t instanceof Element && !!t.closest('#rolequick-autosubmit-overlay, [id*="rolequick"]');
       const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') cancel(); };
+      // Going hidden does NOT cancel: the interval tick below freezes while document.hidden (it
+      // never decrements or fires the click), so the countdown simply pauses and resumes when the
+      // student returns. On return, re-anchor the panel since the layout may have shifted while away.
+      const onVisibility = () => {
+        if (!document.hidden) position();
+      };
+      const onPageHide = () => cancel();
+      const onUserInteract = (e: Event) => {
+        if (!e.isTrusted || isOurNode(e.target)) return;
+        if (e.type === 'pointerdown') {
+          const t = e.target;
+          if (
+            !(t instanceof Element) ||
+            !t.closest('input, select, textarea, [role="combobox"], [role="listbox"], [role="option"], [contenteditable=""], [contenteditable="true"], [class*="select__control"], [class*="Select-control"]')
+          )
+            return;
+        }
+        cancel('You edited the form, so auto-submit was cancelled. Submit it yourself when ready.');
+      };
       window.addEventListener('keydown', onKey);
-      overlay.querySelector('#wp-as-cancel')?.addEventListener('click', cancel);
-      if (noBtn) { noBtn.textContent = 'Cancel'; noBtn.onclick = cancel; }
+      document.addEventListener('visibilitychange', onVisibility);
+      window.addEventListener('pagehide', onPageHide);
+      document.addEventListener('input', onUserInteract, true);
+      document.addEventListener('pointerdown', onUserInteract, true);
+      // Let a SPA navigation elsewhere in the content script tear this countdown down too.
+      activeAutoSubmitCancel = () =>
+        cancel('The form navigated, so auto-submit was cancelled. Submit it yourself when ready.');
+      overlay.querySelector('#wp-as-cancel')?.addEventListener('click', () => cancel());
+      if (noBtn) { noBtn.textContent = 'Cancel'; noBtn.onclick = () => cancel(); }
       if (statusEl) {
         statusEl.textContent = `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. ${actionLabel} in ${remaining}s on the button - tap Cancel to review first.`;
       }
 
       const interval = setInterval(() => {
-        remaining -= 1;
         if (cancelled) { clearInterval(interval); return; }
+        // Freeze while the tab is hidden: never progress toward - or fire - a submit the student
+        // can't see (no window in front of them to back out of). Resumes on the next tick once the
+        // tab is visible again, so the countdown pauses rather than racing on in the background.
+        if (document.hidden) return;
+        remaining -= 1;
         if (remaining <= 0) {
           clearInterval(interval);
-          activeCountdownCancel = null;
           if (num) num.textContent = '0';
           if (ring) ring.style.strokeDashoffset = String(CIRC);
           cleanupChrome();
           submitBtn.style.outline = '';
           submitBtn.style.outlineOffset = '';
-          // Click ONLY the exact button this countdown anchored and highlighted. Do NOT re-resolve
-          // to some other submit button: on a multi-step form - or after an SPA navigation the
-          // countdown didn't catch - that could submit a form the student never reviewed. If our
-          // button is gone, hand back rather than submit something else.
-          if (submitBtn.isConnected) {
+          // Re-resolve the submit control at fire time: on a multi-step React form the button we
+          // anchored to can be replaced during the countdown, and clicking a detached node is a
+          // silent no-op that would falsely report a submit. If the live button is gone, stop and
+          // hand back to the student rather than pretending we submitted.
+          // Reuse the anchored button only if it's still live AND visible (a re-render can hide its
+          // step container via an ancestor display:none without detaching the button); otherwise
+          // re-resolve (findFinalSubmitButton already returns only visible controls).
+          const target = submitBtn.isConnected && isElementVisible(submitBtn) ? submitBtn : findFinalSubmitButton();
+          // Re-validate at the instant of click: 15s is long enough for the form - or the tab - to
+          // change under us. Fire ONLY when the target is still live AND visible, the tab is visible
+          // AND focused (never submit into a background or blurred tab), and no required field is now
+          // empty. Anything else hands back to the student instead of clicking.
+          const tabActive = !document.hidden && document.hasFocus();
+          if (
+            target instanceof HTMLElement &&
+            target.isConnected &&
+            isElementVisible(target) &&
+            tabActive &&
+            !hasEmptyRequiredFields()
+          ) {
             if (statusEl) statusEl.textContent = `${actionLabel}...`;
-            submitBtn.click();
+            target.click();
             reportEvent(true);
           } else {
-            if (statusEl) statusEl.textContent = 'The form changed before submitting. Review and submit it yourself.';
+            if (statusEl) {
+              statusEl.textContent = tabActive
+                ? 'The form changed before submitting. Review and submit it yourself.'
+                : 'The tab was not in focus, so auto-submit was held. Come back and submit it yourself.';
+            }
             reportEvent(false);
           }
           setTimeout(() => card.remove(), 2000);
@@ -1041,9 +1267,9 @@ export default defineContentScript({
       const currentUrl = location.href;
       if (currentUrl !== lastUrl) {
         lastUrl = currentUrl;
-        // Stop any live auto-submit countdown BEFORE tearing down cards: the page context it
-        // anchored to is gone, so letting it fire could submit the newly-navigated form.
-        activeCountdownCancel?.();
+        // A navigation must kill any pending auto-submit countdown: the button it anchored to is
+        // about to be torn down, and firing after the page changed could submit the wrong form.
+        activeAutoSubmitCancel?.();
         cardInjected = false;
         approved = false;
         document.getElementById('rolequick-action-card')?.remove();

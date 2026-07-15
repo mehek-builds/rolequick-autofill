@@ -154,7 +154,8 @@ function groupQuestionText(group: HTMLInputElement[], optionTexts: string[]): st
 // (menu never opened, or no option matched - better to leave it for the student than guess).
 async function fillComboboxFor(trigger: HTMLElement, desired: Desired): Promise<'filled' | 'skipped'> {
   if (!desired) return 'skipped';
-  const typeahead = desired.mode === 'value' ? desired.value : undefined;
+  const typeahead =
+    desired.mode === 'value' ? desired.value : desired.mode === 'oneof' ? desired.values[0] : undefined;
   const options = await openCombobox(trigger, typeahead);
   if (options.length === 0) { closeOpenCombobox(); return 'skipped'; }
   const match = matchOption(options, desired);
@@ -164,8 +165,11 @@ async function fillComboboxFor(trigger: HTMLElement, desired: Desired): Promise<
 }
 
 function candidateInputs(): Array<HTMLInputElement | HTMLTextAreaElement> {
+  // `number` and `date` are included so a numeric salary field or a native date-of-birth picker
+  // is actually considered (and, if unmapped, counted as skipped) instead of being invisible to
+  // the filler and left silently blank with no skip reason.
   return [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
-    'input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input:not([type]), textarea',
+    'input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input[type="date"], input:not([type]), textarea',
   )].filter((el) => !el.closest('[id*="rolequick"]') && !el.disabled && !el.readOnly && isVisible(el));
 }
 
@@ -192,6 +196,9 @@ export function getGenericJobDetails(): { title: string; company: string } {
     document.querySelector<HTMLMetaElement>(`meta[property="${name}"], meta[name="${name}"]`)?.content?.trim();
   let title = meta('og:title') || document.title || '';
   const site = meta('og:site_name');
+  // Strip a trailing separator run (whitespace, pipe, en-dash, or hyphen) left after the site
+  // suffix is removed. The en-dash is matched via a Unicode escape (not a literal glyph) so the
+  // source stays free of em/en dash characters while still stripping a real en-dash separator.
   if (site && title.endsWith(site)) title = title.slice(0, title.length - site.length).replace(/[\s|\u2013-]+$/, '');
   else if (title.includes(' | ')) title = title.split(' | ')[0].trim();
   const host = location.hostname.replace(/^www\./, '');
@@ -206,6 +213,7 @@ export function getGenericJobDetails(): { title: string; company: string } {
 
 export type Desired =
   | { mode: 'value'; value: string }
+  | { mode: 'oneof'; values: string[] }
   | { mode: 'yes' }
   | { mode: 'no' }
   | { mode: 'decline' }
@@ -215,37 +223,22 @@ export function eeoAnswer(pref: string | undefined): Desired {
   return pref && pref.trim() ? { mode: 'value', value: pref.trim() } : { mode: 'decline' };
 }
 
-// Work-authorization / sponsorship yes-no resolver, shared by desiredAnswer AND every ATS adapter
-// (they each need the raw wantYes boolean to drive site-specific radios/combos). Returns true if
-// the correct answer is "Yes", false if "No", or null if this isn't a work-auth/sponsor question
-// or the profile can't answer it. Crucially, it handles the INVERTING "without sponsorship"
-// phrasing: "authorized to work WITHOUT sponsorship?" / "able to work without requiring
-// sponsorship?" flip the plain sponsorship answer - the honest Yes there means the student does
-// NOT need sponsorship. Getting a visa question backwards is the worst wrong answer we can give,
-// so this is deliberately the first thing checked.
-export function workAuthWantYes(label: string, ap: ApplicationProfile): boolean | null {
-  const l = label.toLowerCase();
-  const mentionsSponsor = /sponsor/.test(l);
-  const isAuth = /authoriz(ed|ation)\s+to\s+work|legally\s+authorized|right\s+to\s+work|work\s+authoriz/.test(l);
-  const withoutSponsor =
-    mentionsSponsor &&
-    /\bwithout\b|\bno\s+sponsor|\b(do(es)?\s+not|not|don'?t|won'?t)\s+(require|need)/.test(l);
-
-  if (withoutSponsor && ap.needs_sponsorship !== undefined)
-    return !ap.needs_sponsorship && ap.work_authorized !== false;
-  if (isAuth && ap.work_authorized !== undefined) return ap.work_authorized;
-  if (mentionsSponsor && ap.needs_sponsorship !== undefined) return ap.needs_sponsorship;
-  return null;
-}
-
 export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string, string>): Desired {
   const l = label;
   if (NEVER_FILL_PATTERNS.some((re) => re.test(l))) return null;
 
-  // Eligibility yes/no (work authorization + sponsorship, incl. "without sponsorship" phrasing).
-  const wa = workAuthWantYes(l, ap);
-  if (wa !== null) return wa ? { mode: 'yes' } : { mode: 'no' };
-  if (/(at least|over|older than)\s*(18|eighteen)|age of majority|(?<!of )\b18\s+years?\s+(of age|old)/.test(l))
+  // Eligibility yes/no. Use `!= null`, NOT `!== undefined`: GET /profile/application returns
+  // `null` (not undefined) for a boolean the student never set, and `null !== undefined` is true,
+  // so the old guard let an unset field through and, because `null` is falsy, actively answered
+  // "No" - marking a work-authorized student as NOT authorized. `!= null` leaves it blank instead.
+  if (/authoriz(ed|ation)\s+to\s+work|legally\s+authorized|right\s+to\s+work|work\s+authoriz/.test(l) && ap.work_authorized != null)
+    return ap.work_authorized ? { mode: 'yes' } : { mode: 'no' };
+  if (/sponsor/.test(l) && ap.needs_sponsorship != null)
+    return ap.needs_sponsorship ? { mode: 'yes' } : { mode: 'no' };
+  // Affirmative age-of-majority only. Exclude negated phrasings ("are you UNDER 18?", "younger
+  // than 18 years") - the old bare "18 years" alternative matched those and answered "Yes" to
+  // being a minor.
+  if (/(at least|over|older than)\s*(18|eighteen)|age of majority|18\s*\+|\b18\s+years?\b/.test(l) && !/\bunder\b|younger than|below|less than/.test(l))
     return { mode: 'yes' };
 
   // EEO / demographics: real answer if the student provided one, else decline.
@@ -256,12 +249,51 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   if (/hispanic|latino/.test(l)) return { mode: 'decline' };
   if (/veteran|military|protected\s+veteran/.test(l)) return eeoAnswer(eeo.veteran);
   if (/disab/.test(l)) return eeoAnswer(eeo.disability);
+  // Age as a demographic (a diversity-survey "what is your current age" bucket) is decline-only -
+  // distinct from the "are you at least 18" eligibility check handled above, which stays a Yes.
+  if (/current age|what is your age|age range|how old are you|\bage group\b/.test(l)) return { mode: 'decline' };
 
-  // Factual profile values.
-  if (/citizenship|country of citizenship|which country|country of residence/.test(l) && ap.citizenship)
-    return { mode: 'value', value: ap.citizenship };
-  if (/how did you hear|referral source|hear about (this|us|the)|source of/.test(l) && ap.referral_source_default)
-    return { mode: 'value', value: ap.referral_source_default };
+  // CITIZENSHIP / nationality (checked first, most specific) -> the citizenship field. Matched on
+  // ANY "citizen"/"nationality" wording (e.g. "what country are you a citizen of?"), not just the
+  // literal "citizenship" token, so a citizenship question can never fall through to the residence
+  // rule below and get answered with the residence country (a high-stakes mis-fill for students
+  // whose citizenship differs from where they live). Citizenship is often stored as a nationality
+  // adjective ("Indian"), but a country dropdown lists the country ("India") and a combobox
+  // typeahead filters by what is typed, so map the adjective to the country up front; oneof still
+  // lets a plain-text or exact-country field accept the raw value. When citizenship is unset we
+  // leave it blank rather than guess (the residence guard below stops it filling the wrong value).
+  if (/citizen|nationalit/.test(l) && ap.citizenship) {
+    const c = ap.citizenship.trim().toLowerCase();
+    const country = NATIONALITY_TO_COUNTRY[c];
+    return country ? { mode: 'oneof', values: [country, ap.citizenship] } : { mode: 'value', value: ap.citizenship };
+  }
+  // Country of RESIDENCE / where you are based / where you intend to work from, and bare "country"
+  // location fields -> address_country (where the student lives), NOT citizenship. The leading
+  // !citizen/nationality guard enforces that split: a citizenship-worded question is handled above
+  // (or left blank when citizenship is unset), never answered with the residence country. "Which
+  // country do you intend to work from" asks about location, not nationality; the two differ.
+  if (
+    !/citizen|nationalit/.test(l) &&
+    /country of residence|which country|country you.{0,15}(based|reside|work from|located)|where are you based|based in which country|current country|\bcountry\b/.test(l) &&
+    ap.address_country
+  )
+    return { mode: 'value', value: ap.address_country };
+  // Referral / "how did you hear": the option set varies wildly per form (LinkedIn, Company
+  // website, Job board, Other, ...), so a single value rarely matches. Try the student's own
+  // answer first, then common near-synonyms, then "Other" as the safe catch-all - one of these
+  // almost always exists, so the question gets answered instead of left blank.
+  if (/how did you hear|referral source|hear about (this|us|the)|source of/.test(l))
+    return {
+      mode: 'oneof',
+      values: [
+        ap.referral_source_default,
+        'company website',
+        'company careers',
+        'careers page',
+        'company site',
+        'other',
+      ].filter(Boolean) as string[],
+    };
   if (/salary|compensation|desired pay|expected pay|pay expectation/.test(l) && ap.desired_salary)
     return { mode: 'value', value: ap.desired_salary };
   if (/date of birth|birth\s*date|\bdob\b/.test(l) && ap.date_of_birth)
@@ -272,7 +304,21 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   return null;
 }
 
-const DECLINE_RE = /decline|prefer not|don'?t wish|do not wish|not to (say|answer)|rather not/i;
+// Opt-out wordings for EEO/demographic questions. Broadened beyond "decline/prefer not" to catch
+// the common "Choose not to disclose" / "I do not wish to identify" phrasings that ATSes use, so a
+// required EEO field with that wording gets a decline selection instead of being left blank (which
+// would block submission).
+const DECLINE_RE = /decline|prefer not|don'?t wish|do not wish|wish not|rather not|choose not|not to (say|answer|disclose|identify|self.?identify)|not wish to (disclose|identify)/i;
+
+// Common nationality adjective -> country name, so a citizenship stored as "Indian" can still
+// answer a country dropdown that lists "India". Keys/values are lowercased to match `norm()`.
+const NATIONALITY_TO_COUNTRY: Record<string, string> = {
+  indian: 'india', american: 'united states', emirati: 'united arab emirates',
+  british: 'united kingdom', canadian: 'canada', chinese: 'china', pakistani: 'pakistan',
+  filipino: 'philippines', nigerian: 'nigeria', german: 'germany', french: 'france',
+  singaporean: 'singapore', australian: 'australia', mexican: 'mexico', brazilian: 'brazil',
+  japanese: 'japan', korean: 'south korea', irish: 'ireland', spanish: 'spain', italian: 'italy',
+};
 
 // Pick the option whose text best satisfies `desired`, or null if none is a confident match
 // (better to leave blank and report than to select the wrong answer).
@@ -284,36 +330,56 @@ export function matchOption<T extends { text: string }>(options: T[], desired: D
   }
   if (desired.mode === 'yes' || desired.mode === 'no') {
     const wantYes = desired.mode === 'yes';
-    // "not"/"am not"/"do not"/"don't" reliably marks the negative option even when it doesn't
-    // start with "no" (e.g. "I am not a protected veteran").
-    const isNeg = (t: string) => /^\s*no\b/.test(t) || /\b(not|am not|do not|don'?t)\b/.test(t);
-    const isPos = (t: string) => (/^\s*yes\b/.test(t) || /\b(i am a|identify as|i have)\b/.test(t)) && !isNeg(t);
+    // "not"/"am not"/"do not"/"don't"/"require sponsorship" reliably marks the negative option
+    // even when it doesn't start with "no" (e.g. "I am not a protected veteran", "I will require
+    // sponsorship").
+    const isNeg = (t: string) =>
+      /^\s*no\b/.test(t) || /\b(not|am not|do not|don'?t)\b/.test(t) || /require(s|d)?\s+(visa\s+)?sponsor/.test(t);
+    // Positive options are often phrased as statements, not "Yes" - "I am authorized to work in
+    // the country", "I am eligible to work" (live-seen on vercel.com), so match those too, as long
+    // as they aren't negated.
+    const isPos = (t: string) =>
+      (/^\s*yes\b/.test(t) ||
+        /\b(i am a|identify as|i have)\b/.test(t) ||
+        /\bauthoriz(ed|ation)\b/.test(t) ||
+        /\beligible to work\b/.test(t) ||
+        /\blegally (authorized|able|permitted)\b/.test(t)) &&
+      !isNeg(t);
     const pos = options.filter((o) => isPos(norm(o.text)));
     const neg = options.filter((o) => isNeg(norm(o.text)) && !DECLINE_RE.test(o.text));
     const pick = wantYes ? pos : neg;
     return pick.length === 1 ? pick[0] : null; // ambiguous -> leave for the student
   }
-  // value: exact match first, then substring in either direction - but only when the substring
-  // match is UNAMBIGUOUS. "Korea" against a country list holding "Korea, Republic of" and
-  // "Korea, Democratic People's Republic of" must not silently commit whichever comes first in
-  // DOM order; two candidates means we can't be sure, so leave it for the student.
-  const v = norm(desired.value);
-  const exact = options.find((o) => norm(o.text) === v);
-  if (exact) return exact;
-  // Word-boundary substring, never a bare fragment. A plain `.includes` mis-selects on
-  // coincidental letter runs: "asian" is inside "cauc-asian" and "male" is inside "fe-male", so
-  // an Asian applicant against a [White/Caucasian, ...] taxonomy would silently get Caucasian.
-  // The boundary check still matches the legitimate cases ("Korea" -> "Korea, Republic of").
-  const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const vRe = new RegExp('\\b' + escapeRe(v) + '\\b');
-  const contains = options.filter((o) => vRe.test(norm(o.text)));
-  if (contains.length === 1) return contains[0];
-  if (contains.length > 1) return null; // ambiguous -> leave for the student
-  const reverse = options.filter((o) => {
-    const ot = norm(o.text);
-    return ot.length > 2 && new RegExp('\\b' + escapeRe(ot) + '\\b').test(v);
-  });
-  return reverse.length === 1 ? reverse[0] : null;
+  // value / oneof: match the (first) value that lands an unambiguous option. exact match first,
+  // then substring in either direction - but only when the substring match is UNAMBIGUOUS. "Korea"
+  // against a list holding "Korea, Republic of" and "Korea, Democratic People's Republic of" must
+  // not silently commit whichever comes first; two candidates means leave it for the student.
+  const matchValue = (raw: string): T | null => {
+    const base = norm(raw);
+    if (!base) return null;
+    // A citizenship stored as a nationality adjective ("Indian") will never match a country
+    // option ("India"), so also try the mapped country name - lets country / "which country do
+    // you intend to work from" questions fill from a nationality-valued citizenship field.
+    const candidates = NATIONALITY_TO_COUNTRY[base] ? [base, NATIONALITY_TO_COUNTRY[base]] : [base];
+    for (const v of candidates) {
+      const exact = options.find((o) => norm(o.text) === v);
+      if (exact) return exact;
+      const contains = options.filter((o) => norm(o.text).includes(v));
+      if (contains.length === 1) return contains[0];
+      if (contains.length > 1) return null; // ambiguous -> leave for the student
+      const reverse = options.filter((o) => v.includes(norm(o.text)) && norm(o.text).length > 2);
+      if (reverse.length === 1) return reverse[0];
+    }
+    return null;
+  };
+  if (desired.mode === 'oneof') {
+    for (const val of desired.values) {
+      const m = matchValue(val);
+      if (m) return m;
+    }
+    return null;
+  }
+  return matchValue(desired.value);
 }
 
 // ─── DOM fillers ────────────────────────────────────────────────────────────
@@ -606,7 +672,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
-  return { ats_name: 'generic', fields_filled, fields_skipped, skipped_reasons };
+  return { ats_name: 'generic', fields_filled, fields_skipped, ai_drafted, skipped_reasons };
 }
 
 // Visually mark an AI-drafted field so the student can't miss that it needs review.
@@ -614,7 +680,7 @@ function markForReview(el: HTMLElement) {
   el.style.outline = '2px solid #f59e0b';
   el.style.outlineOffset = '1px';
   const badge = document.createElement('div');
-  badge.textContent = '✎ AI draft, review before submitting';
+  badge.textContent = '✎ AI draft: review before submitting';
   badge.style.cssText =
     'font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;color:#b45309;margin-top:4px;';
   el.insertAdjacentElement('afterend', badge);

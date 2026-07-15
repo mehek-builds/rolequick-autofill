@@ -43,7 +43,7 @@ import {
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, matchOption, workAuthWantYes, type Desired } from './generic';
+import { desiredAnswer, matchOption, type Desired } from './generic';
 
 // Resolves once the DOM has gone quiet for `quietMs`, or after `maxMs` regardless - Ashby's
 // React tree re-renders after most field changes, and firing the next fill mid-re-render risks
@@ -97,7 +97,8 @@ function isNeverFillField(el: Element): boolean {
 // no option matches, dismissing any open portal first.
 async function fillCombobox(trigger: HTMLElement, desired: Desired): Promise<boolean> {
   if (!desired) return false;
-  const typeahead = desired.mode === 'value' ? desired.value : undefined;
+  const typeahead =
+    desired.mode === 'value' ? desired.value : desired.mode === 'oneof' ? desired.values[0] : undefined;
   const options = await openCombobox(trigger, typeahead);
   if (options.length === 0) { closeOpenCombobox(); return false; }
   const match = matchOption(options, desired);
@@ -111,6 +112,27 @@ function comboControlIn(block: Element): HTMLElement | null {
   return block.querySelector<HTMLElement>(
     'input[role="combobox"], [role="combobox"], [aria-haspopup="listbox"], [class*="select__control"], [class*="Select-control"]',
   );
+}
+
+// Ashby renders some single-choice questions (sponsorship, eligibility, some EEO) as a row of
+// plain <button> option pills - no radio input, no role - live-seen as `<button>Yes</button>` /
+// `<button>No</button>`. Collect those buttons so they can be matched by text and clicked, while
+// excluding action buttons (upload/submit/remove/etc.) that also live in the block.
+//
+// Do NOT filter by `b.type !== 'submit'`: a <button> with no `type` attribute reports
+// `.type === 'submit'` by HTML default, which is exactly what these option pills are - excluding
+// them here is why the sponsorship Yes/No never filled (verified live on Ashby). The form's real
+// submit control is already excluded by the text list below (it reads "Submit application").
+function buttonOptionsIn(block: Element): Array<{ text: string; el: HTMLButtonElement }> {
+  return [...block.querySelectorAll<HTMLButtonElement>('button')]
+    .filter((b) => !b.closest('[id*="rolequick"]'))
+    .map((b) => ({ text: (b.textContent ?? '').trim(), el: b }))
+    .filter(
+      (b) =>
+        b.text.length > 0 &&
+        b.text.length <= 40 &&
+        !/upload|replace|drag|drop|submit|browse|remove|delete|\bsave\b|cancel|\+\s*add/i.test(b.text),
+    );
 }
 
 // Answer a question block that resolved to a known desired value, across a native <select>,
@@ -141,6 +163,64 @@ async function answerChoiceBlock(block: Element, desired: Desired): Promise<bool
 
   const combo = comboControlIn(block);
   if (combo && isComboboxControl(combo) && (await fillCombobox(combo, desired))) return true;
+
+  // "Select all that apply" checkbox groups (Ashby renders EEO ethnicity / community questions
+  // this way): tick the opt-out box for a decline, or the matching box for a value.
+  const checkboxes = [...block.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+    .filter((cb) => !cb.closest('[id*="rolequick"]') && !cb.disabled)
+    .map((cb) => ({
+      text: (
+        document.querySelector(`label[for="${CSS.escape(cb.id)}"]`)?.textContent ??
+        cb.closest('label')?.textContent ??
+        cb.getAttribute('aria-label') ??
+        ''
+      ).trim(),
+      el: cb,
+    }));
+  if (checkboxes.length > 0) {
+    const m = matchOption(checkboxes, desired);
+    if (m) {
+      if (!m.el.checked) await checkRadio(m.el);
+      return true;
+    }
+  }
+
+  // Button-pill options (no radio/select): match by text and click. Ashby's option pills are
+  // React-controlled, so a bare .click() can register visually (adds _active) but get reverted by
+  // a later re-render during the fill - dispatch the full pointer sequence so the framework's
+  // pointer/mouse handlers commit the selection, then verify it stuck and retry once if not.
+  const buttons = buttonOptionsIn(block);
+  if (buttons.length > 0) {
+    const m = matchOption(buttons, desired);
+    if (m) {
+      await randomDelay();
+      const opts = { bubbles: true, cancelable: true, view: window } as const;
+      const press = () => {
+        try { m.el.dispatchEvent(new PointerEvent('pointerdown', opts)); } catch { /* older engines */ }
+        m.el.dispatchEvent(new MouseEvent('mousedown', opts));
+        m.el.dispatchEvent(new MouseEvent('mouseup', opts));
+        m.el.click();
+      };
+      press();
+      await waitForStableDom();
+      // A selected pill signals it via a class (_active/_selected/_checked), an ARIA state
+      // (aria-pressed/checked/selected), or a data-state. Recognizing all of them matters: if the
+      // first press DID take via a signal we don't check, stuck() would read false and we'd press a
+      // second time and toggle the selection back OFF. Only retry on a still-connected node too, so a
+      // re-render that detached the matched pill doesn't get a wasted second press.
+      const stuck = () =>
+        /_active|_selected|_checked/.test(m.el.className) ||
+        m.el.getAttribute('aria-pressed') === 'true' ||
+        m.el.getAttribute('aria-checked') === 'true' ||
+        m.el.getAttribute('aria-selected') === 'true' ||
+        /^(?:on|true|active|selected|checked)$/i.test(m.el.getAttribute('data-state') ?? '');
+      if (!stuck() && m.el.isConnected) {
+        press();
+        await waitForStableDom();
+      }
+      return true;
+    }
+  }
 
   return false;
 }
@@ -345,11 +425,14 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
       }
     }
 
-    const isEeo = /gender|race|ethnicity|veteran|disability/i.test(label);
+    const isEeo = /gender|race|ethnicit|veteran|disab|current age|sexual orientation|communities|identify with/i.test(label);
     if (isEeo) {
-      // Real answer when the student stored one (eeo prefs), else decline. Works whether the
-      // control is a native select, native radios (value="on", matched by label), or a combobox.
-      const desired = desiredAnswer(label, applicationProfile, eeo);
+      // Real answer when the student stored one (eeo prefs), else decline - and for any diversity
+      // question we have no specific rule for (age buckets, "which communities", orientation), the
+      // safe default is still decline rather than blank, so a required survey field doesn't block
+      // submission. Works across native select, native radios, checkbox "select all" groups, react
+      // -select comboboxes, and Ashby's <button> option pills.
+      const desired = desiredAnswer(label, applicationProfile, eeo) ?? { mode: 'decline' };
       if (await answerChoiceBlock(block, desired)) {
         fields_filled++;
       } else {
@@ -359,8 +442,14 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
       continue;
     }
 
-    const wantYes = workAuthWantYes(label, applicationProfile);
-    if (wantYes !== null) {
+    const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
+    const isSponsorQuestion = /sponsorship/i.test(label);
+    const eligibilityAnswer = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
+    // `!= null` and keyed to the RELEVANT field: an unset boolean arrives as `null` (not undefined),
+    // and an auth question must not read a null work_authorized just because sponsorship is set.
+    // Either slip previously answered "No" and could auto-reject an authorized student.
+    if ((isAuthQuestion || isSponsorQuestion) && eligibilityAnswer != null) {
+      const wantYes = eligibilityAnswer;
       const select = block.querySelector<HTMLSelectElement>('select');
       if (select) {
         const opt = [...select.options].find((o) => new RegExp(wantYes ? '^yes' : '^no', 'i').test(o.text.trim()));
@@ -388,6 +477,12 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
       // Some boards render this question as a react-select combobox rather than native radios.
       const combo = comboControlIn(block);
       if (combo && (await fillCombobox(combo, wantYes ? { mode: 'yes' } : { mode: 'no' }))) {
+        fields_filled++;
+        continue;
+      }
+      // Ashby renders this Yes/No as <button> pills on some boards (no radios, no select, no
+      // combo). answerChoiceBlock now matches button pills too, so it is the catch-all.
+      if (await answerChoiceBlock(block, wantYes ? { mode: 'yes' } : { mode: 'no' })) {
         fields_filled++;
         continue;
       }
@@ -478,5 +573,5 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
     skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
-  return { ats_name: 'ashby', fields_filled, fields_skipped, skipped_reasons };
+  return { ats_name: 'ashby', fields_filled, fields_skipped, ai_drafted, skipped_reasons };
 }

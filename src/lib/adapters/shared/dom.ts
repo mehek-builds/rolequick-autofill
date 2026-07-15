@@ -57,10 +57,25 @@ export function splitName(fullName: string): { first: string; last: string } {
 // Radios that carry no meaningful `value` (Ashby/LinkedIn use "on"): the real option text lives
 // in the associated `label[for=radio.id]`. Returns each radio paired with its label text.
 export function radioOptionsIn(block: Element): Array<{ radio: HTMLInputElement; text: string }> {
-  return [...block.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((radio) => ({
-    radio,
-    text: (document.querySelector(`label[for="${radio.id}"]`)?.textContent ?? '').trim().toLowerCase(),
-  }));
+  return [...block.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((radio) => {
+    // `label[for=id]` only resolves when the radio has an id AND a separate <label for>. LinkedIn
+    // (and some others) wrap the input in its label with no `for`, so also fall back to the
+    // enclosing <label>, then aria-label, then the value. Without these fallbacks the option text
+    // came back empty and no yes/no/EEO option ever matched - the canonical radio non-fill.
+    const forLabel = radio.id ? document.querySelector(`label[for="${CSS.escape(radio.id)}"]`) : null;
+    // `||` not `??`: an empty (but non-null) `label[for]` textContent must still fall through to
+    // the wrapping label / aria-label / value rather than resolve to "".
+    const text = (
+      forLabel?.textContent ||
+      radio.closest('label')?.textContent ||
+      radio.getAttribute('aria-label') ||
+      radio.value ||
+      ''
+    )
+      .trim()
+      .toLowerCase();
+    return { radio, text };
+  });
 }
 
 // ─── Combobox / react-select filling ────────────────────────────────────────

@@ -44,7 +44,7 @@ import {
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. These are pure (no DOM) and covered by
 // generic.answers.test.ts + ats-answer.test.ts.
-import { desiredAnswer, matchOption, workAuthWantYes, type Desired } from './generic';
+import { desiredAnswer, matchOption, type Desired } from './generic';
 
 function labelTextFor(el: Element): string {
   const container = el.closest('.field-wrapper, .field, #custom_fields > div, li') ?? el.parentElement;
@@ -290,8 +290,14 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
       continue;
     }
 
-    const wantYes = workAuthWantYes(label, applicationProfile);
-    if (wantYes !== null) {
+    const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
+    const isSponsorQuestion = /sponsorship/i.test(label);
+    const eligibilityAnswer = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
+    // `!= null` and keyed to the RELEVANT field: an unset boolean arrives as `null` (not undefined),
+    // and an auth question must not read a null work_authorized just because sponsorship is set.
+    // Either slip previously answered "No" and could auto-reject an authorized student.
+    if ((isAuthQuestion || isSponsorQuestion) && eligibilityAnswer != null) {
+      const wantYes = eligibilityAnswer;
       const desired: Desired = wantYes ? { mode: 'yes' } : { mode: 'no' };
 
       // Native radios carry real values on Greenhouse (value="Yes"/"No"); try those first.
@@ -397,5 +403,5 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
     skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
-  return { ats_name: 'greenhouse', fields_filled, fields_skipped, skipped_reasons };
+  return { ats_name: 'greenhouse', fields_filled, fields_skipped, ai_drafted, skipped_reasons };
 }

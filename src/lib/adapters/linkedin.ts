@@ -47,7 +47,7 @@ import {
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, matchOption, workAuthWantYes, type Desired } from './generic';
+import { desiredAnswer, matchOption, type Desired } from './generic';
 
 function getModal(): Element | null {
   for (const sel of EASY_APPLY_MODAL_SELECTORS) {
@@ -164,21 +164,9 @@ async function checkRadio(radio: HTMLInputElement): Promise<void> {
 // `<input type="file">` can't be set directly by script; construct a File/DataTransfer and
 // dispatch it. LinkedIn's resume-upload card wraps a real file input in most postings.
 async function fillResumeFile(modal: Element, blob: Blob, fileName: string): Promise<boolean> {
-  // Don't just grab the first file input: an Easy Apply modal can also have a cover-letter or
-  // photo slot, and dropping the resume PDF into the wrong one is worse than skipping it. Prefer an
-  // input whose context names resume/CV, avoid ones naming cover-letter/photo, and only fall back
-  // to a lone input when there's exactly one.
-  const inputs = [...modal.querySelectorAll<HTMLInputElement>('input[type="file"]')];
-  if (inputs.length === 0) return false;
-  const contextOf = (el: HTMLInputElement) =>
-    `${el.getAttribute('name') ?? ''} ${el.getAttribute('id') ?? ''} ${el.getAttribute('aria-label') ?? ''} ${
-      el.closest('.jobs-document-upload-redesign-card__container, [class*="upload"], label, fieldset')?.textContent ?? ''
-    }`.toLowerCase();
-  const isOther = (el: HTMLInputElement) => /cover\s*letter|photo|headshot|portfolio/.test(contextOf(el));
-  const input =
-    inputs.find((el) => /resume|\bcv\b/.test(contextOf(el))) ??
-    (inputs.length === 1 ? inputs[0] : inputs.find((el) => !isOther(el))) ??
-    null;
+  const input = modal.querySelector<HTMLInputElement>(
+    '.jobs-document-upload-redesign-card__container input[type="file"], input[type="file"][name="file"], input[type="file"]',
+  );
   if (!input) return false;
   await randomDelay();
   const file = new File([blob], fileName, { type: 'application/pdf' });
@@ -214,7 +202,7 @@ export async function fillLinkedInApplication(params: LinkedInFillParams): Promi
 
   const modal = getModal();
   if (!modal) {
-    return { ats_name: 'linkedin', fields_filled: 0, fields_skipped: 0, skipped_reasons: ['Easy Apply modal not found - it may have closed'] };
+    return { ats_name: 'linkedin', fields_filled: 0, fields_skipped: 0, ai_drafted: 0, skipped_reasons: ['Easy Apply modal not found - it may have closed'] };
   }
 
   if (resumeBlob && resumeFileName) {
@@ -289,8 +277,14 @@ export async function fillLinkedInApplication(params: LinkedInFillParams): Promi
       continue;
     }
 
-    const wantYes = workAuthWantYes(label, applicationProfile);
-    if (wantYes !== null) {
+    const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
+    const isSponsorQuestion = /sponsorship/i.test(label);
+    const eligibilityAnswer = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
+    // `!= null` and keyed to the RELEVANT field: an unset boolean arrives as `null` (not undefined),
+    // and an auth question must not read a null work_authorized just because sponsorship is set.
+    // Either slip previously answered "No" and could auto-reject an authorized student.
+    if ((isAuthQuestion || isSponsorQuestion) && eligibilityAnswer != null) {
+      const wantYes = eligibilityAnswer;
       const select = block.querySelector<HTMLSelectElement>('select');
       if (select) {
         const opt = [...select.options].find((o) => new RegExp(wantYes ? '^yes' : '^no', 'i').test(o.text.trim()));
@@ -397,5 +391,5 @@ export async function fillLinkedInApplication(params: LinkedInFillParams): Promi
     skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
-  return { ats_name: 'linkedin', fields_filled, fields_skipped, skipped_reasons };
+  return { ats_name: 'linkedin', fields_filled, fields_skipped, ai_drafted, skipped_reasons };
 }

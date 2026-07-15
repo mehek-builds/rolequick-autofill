@@ -99,6 +99,7 @@ export interface ApplicationProfile {
   address_city?: string;
   address_state?: string;
   address_zip?: string;
+  address_country?: string; // country the student is BASED IN (residence), distinct from citizenship
   linkedin_url?: string;
   github_url?: string;
   portfolio_url?: string;
@@ -134,5 +135,9 @@ export interface AutofillResult {
   ats_name: string;
   fields_filled: number;
   fields_skipped: number;
+  // How many open-ended answers the adapter AI-drafted this run. Surfaced so content.ts can hold
+  // auto-submit whenever anything was drafted: an AI answer must be read by the student before it
+  // goes out in their name, and a text match on skipped_reasons is too easy to drift from.
+  ai_drafted: number;
   skipped_reasons: string[];
 }

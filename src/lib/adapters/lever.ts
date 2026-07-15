@@ -18,7 +18,7 @@ import {
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, matchOption, workAuthWantYes, type Desired } from './generic';
+import { desiredAnswer, matchOption, type Desired } from './generic';
 
 function labelTextFor(el: Element): string {
   const container = el.closest('.application-question, .card, li') ?? el.parentElement;
@@ -164,7 +164,10 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
     await fillField(phoneEl, applicationProfile.phone);
     fields_filled++;
   }
-  if (orgEl && profile.experience[0]?.company) {
+  // `profile.experience` is typed as a required array but comes from a jsonb `parsed_json` blob
+  // with no runtime guarantee; optional-chain the whole path so a profile that parsed without an
+  // experience array doesn't throw and get mis-reported to the student as a fill timeout.
+  if (orgEl && profile.experience?.[0]?.company) {
     await fillField(orgEl, profile.experience[0].company);
     fields_filled++;
   }
@@ -220,8 +223,14 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
       continue;
     }
 
-    const wantYes = workAuthWantYes(label, applicationProfile);
-    if (wantYes !== null) {
+    const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
+    const isSponsorQuestion = /sponsorship/i.test(label);
+    const eligibilityAnswer = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
+    // `!= null` and keyed to the RELEVANT field: an unset boolean arrives as `null` (not undefined),
+    // and an auth question must not read a null work_authorized just because sponsorship is set.
+    // Either slip previously answered "No" and could auto-reject an authorized student.
+    if ((isAuthQuestion || isSponsorQuestion) && eligibilityAnswer != null) {
+      const wantYes = eligibilityAnswer;
       const desired: Desired = wantYes ? { mode: 'yes' } : { mode: 'no' };
       // Lever's yes/no radios carry real values; try the live-tested selector first.
       const target = block.querySelector<HTMLInputElement>(
@@ -314,5 +323,5 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
     skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
-  return { ats_name: 'lever', fields_filled, fields_skipped, skipped_reasons };
+  return { ats_name: 'lever', fields_filled, fields_skipped, ai_drafted, skipped_reasons };
 }

@@ -37,7 +37,7 @@ import {
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, matchOption, workAuthWantYes, type Desired } from './generic';
+import { desiredAnswer, matchOption, type Desired } from './generic';
 
 // ─── Shared answer helpers (mirror generic.ts's engine) ───────────────────────
 
@@ -198,9 +198,20 @@ export function extractWorkdayJdText(): string {
 // dispatch it. Workday's upload widget renders a dropzone over a real file input in most
 // tenants; this targets that input directly rather than the dropzone UI element.
 async function fillResumeFile(blob: Blob, fileName: string): Promise<boolean> {
-  const input = document.querySelector<HTMLInputElement>(
-    '[data-automation-id="file-upload-drop-zone"] input[type="file"], [data-automation-id*="resumeUpload"] input[type="file"], input[type="file"]',
-  );
+  // Prefer Workday's resume dropzone. If we must fall back to a bare file input, skip one that is
+  // clearly a cover-letter/other-docs uploader - Workday pages can carry several file inputs, and a
+  // blind `input[type="file"]` grab could attach the resume to the wrong slot.
+  const input =
+    document.querySelector<HTMLInputElement>(
+      '[data-automation-id="file-upload-drop-zone"] input[type="file"], [data-automation-id*="resumeUpload" i] input[type="file"]',
+    ) ??
+    [...document.querySelectorAll<HTMLInputElement>('input[type="file"]')].find((el) => {
+      const ctx = `${el.getAttribute('data-automation-id') ?? ''} ${
+        el.closest('[data-automation-id]')?.getAttribute('data-automation-id') ?? ''
+      } ${el.closest('div,section,fieldset')?.textContent?.slice(0, 120) ?? ''}`.toLowerCase();
+      return !/cover\s*letter/.test(ctx);
+    }) ??
+    null;
   if (!input) return false;
   await randomDelay();
   const file = new File([blob], fileName, { type: 'application/pdf' });
@@ -214,8 +225,18 @@ async function fillResumeFile(blob: Blob, fileName: string): Promise<boolean> {
 function labelTextFor(el: Element): string {
   // Workday wraps most fields in a container carrying `data-automation-id` ending in
   // "...Section" or similar, with the visible question text elsewhere in that container
-  // (not always a real <label for=...>) - fall back to the whole container's text.
+  // (not always a real <label for=...>).
   const container = el.closest('[data-automation-id$="Section"], fieldset, li') ?? el.parentElement;
+  // Prefer a discrete question label over the entire container's text: one Workday section can wrap
+  // several questions, and gluing them into one string lets a control match a NEIGHBOURING
+  // question's keywords (e.g. an EEO term bleeding into a work-auth block, or auth vs sponsorship
+  // colliding). Fall back to full text only when no legend/label exists.
+  const legend = container?.querySelector('legend')?.textContent?.trim();
+  if (legend) return legend.toLowerCase();
+  const labelEl = container
+    ?.querySelector('label, [data-automation-id="formLabel"], [data-automation-id="richText"]')
+    ?.textContent?.trim();
+  if (labelEl) return labelEl.toLowerCase();
   return (container?.textContent ?? '').trim().toLowerCase();
 }
 
@@ -297,16 +318,7 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
   // defensive pattern as the other three adapters - and skip+flag rather than guess.
   const questionBlocks = Array.from(
     document.querySelectorAll('[data-automation-id$="Section"], fieldset'),
-  ).filter(
-    (el) =>
-      el.querySelector('input, select, textarea') &&
-      // Innermost blocks only (same guard as Ashby): a "Voluntary Disclosures" Section that wraps
-      // separate gender/race/veteran/disability sub-questions would otherwise be treated as ONE
-      // block, fill only its first control, and silently skip the rest. Excluding blocks that
-      // contain another Section/fieldset keeps each EEO question its own block. Safe when there is
-      // no nesting (a leaf block has no inner Section/fieldset, so it still passes).
-      !el.querySelector('[data-automation-id$="Section"], fieldset'),
-  );
+  ).filter((el) => el.querySelector('input, select, textarea'));
 
   for (const block of questionBlocks) {
     if (isNeverFillField(block)) {
@@ -350,8 +362,14 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
       continue;
     }
 
-    const wantYes = workAuthWantYes(label, applicationProfile);
-    if (wantYes !== null) {
+    const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
+    const isSponsorQuestion = /sponsorship/i.test(label);
+    const eligibilityAnswer = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
+    // `!= null` and keyed to the RELEVANT field: an unset boolean arrives as `null` (not undefined),
+    // and an auth question must not read a null work_authorized just because sponsorship is set.
+    // Either slip previously answered "No" and could auto-reject an authorized student.
+    if ((isAuthQuestion || isSponsorQuestion) && eligibilityAnswer != null) {
+      const wantYes = eligibilityAnswer;
       const desired: Desired = wantYes ? { mode: 'yes' } : { mode: 'no' };
       const radio = block.querySelector<HTMLInputElement>(`input[type="radio"][value="${wantYes ? 'Yes' : 'No'}" i]`);
       if (radio) {
@@ -452,7 +470,7 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
     skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
-  return { ats_name: 'workday', fields_filled, fields_skipped, skipped_reasons };
+  return { ats_name: 'workday', fields_filled, fields_skipped, ai_drafted, skipped_reasons };
 }
 
 export interface WorkdayAccountCreationParams {
@@ -481,5 +499,5 @@ export async function fillWorkdayAccountCreation(params: WorkdayAccountCreationP
     }
   }
 
-  return { ats_name: 'workday', fields_filled, fields_skipped, skipped_reasons };
+  return { ats_name: 'workday', fields_filled, fields_skipped, ai_drafted: 0, skipped_reasons };
 }

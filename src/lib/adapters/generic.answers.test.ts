@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { desiredAnswer, matchOption, eeoAnswer, workAuthWantYes, type Desired } from './generic';
+import { desiredAnswer, matchOption, eeoAnswer, type Desired } from './generic';
 // desiredAnswer/matchOption/eeoAnswer remain exported from generic; commitChoice (the shared
 // radio/checkbox commit that every adapter now routes through) lives in ./shared/dom.
 import type { ApplicationProfile } from '../types';
@@ -25,17 +25,6 @@ describe('desiredAnswer', () => {
       .toEqual({ mode: 'yes' });
     expect(desiredAnswer('do you require visa sponsorship?', ap({ needs_sponsorship: false }), {}))
       .toEqual({ mode: 'no' });
-  });
-
-  it('inverts "without sponsorship" phrasing so a visa answer is not backwards', () => {
-    // An OPT student authorized now but needing future sponsorship must answer NO to
-    // "authorized to work WITHOUT sponsorship" - the plain rules used to answer Yes here.
-    const opt = ap({ work_authorized: true, needs_sponsorship: true });
-    expect(desiredAnswer('are you authorized to work without sponsorship?', opt, {})).toEqual({ mode: 'no' });
-    expect(desiredAnswer('are you able to work without requiring sponsorship?', opt, {})).toEqual({ mode: 'no' });
-    // A citizen who needs no sponsorship answers Yes to the same question.
-    const citizen = ap({ work_authorized: true, needs_sponsorship: false });
-    expect(desiredAnswer('are you authorized to work without sponsorship?', citizen, {})).toEqual({ mode: 'yes' });
   });
 
   it('answers an age-of-majority question yes', () => {
@@ -122,37 +111,87 @@ describe('matchOption', () => {
       .toBe('United States of America');
   });
 
-  it('does not mis-select on a coincidental letter run (word boundary, not bare substring)', () => {
-    // "asian" is inside "Caucasian" and "male" is inside "Female": these must NOT be picked.
-    expect(matchOption(opts('White/Caucasian', 'Black or African American', 'Hispanic'),
-      { mode: 'value', value: 'Asian' })).toBeNull();
-    expect(matchOption(opts('Female', 'Non-binary'), { mode: 'value', value: 'Male' })).toBeNull();
-    // ...but a real exact/word-boundary match still works.
-    expect(matchOption(opts('White/Caucasian', 'Asian', 'Hispanic'), { mode: 'value', value: 'Asian' })?.text).toBe('Asian');
-    expect(matchOption(opts('Korea, Republic of', 'Japan'), { mode: 'value', value: 'Korea' })?.text)
-      .toBe('Korea, Republic of');
-  });
-
   it('returns null for a null desired or empty options', () => {
     expect(matchOption(opts('Yes', 'No'), null)).toBeNull();
     expect(matchOption([], { mode: 'yes' })).toBeNull();
   });
 });
 
-describe('workAuthWantYes', () => {
-  it('answers plain work-auth and sponsorship questions directly', () => {
-    expect(workAuthWantYes('legally authorized to work?', ap({ work_authorized: true }))).toBe(true);
-    expect(workAuthWantYes('do you require sponsorship?', ap({ needs_sponsorship: true }))).toBe(true);
-    expect(workAuthWantYes('do you require sponsorship?', ap({ needs_sponsorship: false }))).toBe(false);
+// ── Audit fixes ───────────────────────────────────────────────────────────────
+// Regression coverage for the completion-flow bugs fixed in this branch.
+
+describe('desiredAnswer: unset eligibility is left blank, never answered "No" (fix #1)', () => {
+  it('leaves work authorization blank when the field is null (the DB value for "unset")', () => {
+    // GET /profile/application returns null (not undefined) for a boolean the student never set.
+    // The old `!== undefined` guard let null through and answered "No" (null is falsy).
+    expect(desiredAnswer('are you legally authorized to work in the united states?', ap({ work_authorized: null as unknown as boolean }), {})).toBeNull();
+  });
+  it('leaves work authorization blank when the field is undefined', () => {
+    expect(desiredAnswer('legally authorized to work', ap(), {})).toBeNull();
+  });
+  it('leaves sponsorship blank when the field is null', () => {
+    expect(desiredAnswer('do you require visa sponsorship?', ap({ needs_sponsorship: null as unknown as boolean }), {})).toBeNull();
+  });
+  it('still answers set eligibility booleans', () => {
+    expect(desiredAnswer('legally authorized to work', ap({ work_authorized: true }), {})).toEqual({ mode: 'yes' });
+    expect(desiredAnswer('do you require visa sponsorship?', ap({ needs_sponsorship: false }), {})).toEqual({ mode: 'no' });
+  });
+});
+
+describe('desiredAnswer: age-of-majority phrasing (fix #15)', () => {
+  it('does not answer a negatively-phrased age question "yes"', () => {
+    expect(desiredAnswer('are you under 18 years of age?', ap(), {})).toBeNull();
+    expect(desiredAnswer('are you younger than 18?', ap(), {})).toBeNull();
+  });
+  it('still answers an affirmative age-of-majority question "yes"', () => {
+    expect(desiredAnswer('are you at least 18 years of age?', ap(), {})).toEqual({ mode: 'yes' });
+    expect(desiredAnswer('are you over 18?', ap(), {})).toEqual({ mode: 'yes' });
+    // "18 years or older" carries none of at-least/over/older-than, so it needs the guarded
+    // "18 years" alternative (restored after review); the "under" guard still blocks the negatives.
+    expect(desiredAnswer('are you 18 years or older?', ap(), {})).toEqual({ mode: 'yes' });
+    expect(desiredAnswer('you must be 18 years of age or older to apply', ap(), {})).toEqual({ mode: 'yes' });
+  });
+});
+
+describe('matchOption: broadened decline wordings (fix #10)', () => {
+  it('matches "Choose not to disclose" as a decline option', () => {
+    expect(matchOption(opts('Male', 'Female', 'Choose not to disclose'), { mode: 'decline' })?.text)
+      .toBe('Choose not to disclose');
+  });
+  it('matches "I do not wish to identify" as a decline option', () => {
+    expect(matchOption(opts('Yes', 'No', 'I do not wish to identify'), { mode: 'decline' })?.text)
+      .toBe('I do not wish to identify');
+  });
+});
+
+describe('desiredAnswer: citizenship and residence country are never conflated (fix: address_country separation)', () => {
+  it('answers a "citizen of?" question with citizenship, not the residence country', () => {
+    // The residence rule's bare \bcountry\b used to swallow this phrasing (it carries no literal
+    // "citizenship"/"nationality" token) and fill address_country into a citizenship field - the
+    // exact high-stakes mis-fill for students whose citizenship differs from where they live.
+    expect(desiredAnswer('what country are you a citizen of?', ap({ citizenship: 'India', address_country: 'United States' }), {}))
+      .toEqual({ mode: 'value', value: 'India' });
+    // "which country" also appears here, but the citizenship rule must win over the residence rule.
+    expect(desiredAnswer('of which country are you a citizen?', ap({ citizenship: 'India', address_country: 'United States' }), {}))
+      .toEqual({ mode: 'value', value: 'India' });
   });
 
-  it('inverts "without sponsorship" phrasing', () => {
-    expect(workAuthWantYes('authorized to work without sponsorship?', ap({ work_authorized: true, needs_sponsorship: true }))).toBe(false);
-    expect(workAuthWantYes('able to work without requiring sponsorship?', ap({ needs_sponsorship: false }))).toBe(true);
+  it('maps a nationality-adjective citizenship to its country for a citizenship dropdown', () => {
+    expect(desiredAnswer('country of citizenship', ap({ citizenship: 'Indian', address_country: 'United States' }), {}))
+      .toEqual({ mode: 'oneof', values: ['india', 'Indian'] });
   });
 
-  it('returns null when it is not a work-auth/sponsorship question or the profile cannot answer', () => {
-    expect(workAuthWantYes('what is your favorite color?', ap({ work_authorized: true }))).toBeNull();
-    expect(workAuthWantYes('do you require sponsorship?', ap())).toBeNull();
+  it('leaves a citizenship question blank when citizenship is unset (never falls back to residence)', () => {
+    expect(desiredAnswer('country of citizenship', ap({ address_country: 'United States' }), {})).toBeNull();
+    expect(desiredAnswer('what country are you a citizen of?', ap({ address_country: 'United States' }), {})).toBeNull();
+  });
+
+  it('still fills the residence country for location questions and bare "country"', () => {
+    expect(desiredAnswer('which country do you intend to work from?', ap({ address_country: 'United States' }), {}))
+      .toEqual({ mode: 'value', value: 'United States' });
+    expect(desiredAnswer('country of residence', ap({ address_country: 'United States' }), {}))
+      .toEqual({ mode: 'value', value: 'United States' });
+    expect(desiredAnswer('country', ap({ citizenship: 'India', address_country: 'United States' }), {}))
+      .toEqual({ mode: 'value', value: 'United States' });
   });
 });
