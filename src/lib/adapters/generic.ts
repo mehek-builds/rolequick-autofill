@@ -166,7 +166,7 @@ async function fillComboboxFor(trigger: HTMLElement, desired: Desired): Promise<
 function candidateInputs(): Array<HTMLInputElement | HTMLTextAreaElement> {
   return [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
     'input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input:not([type]), textarea',
-  )].filter((el) => !el.closest('[id*="volley"]') && !el.disabled && !el.readOnly && isVisible(el));
+  )].filter((el) => !el.closest('[id*="rolequick"]') && !el.disabled && !el.readOnly && isVisible(el));
 }
 
 export function isLikelyApplicationForm(): boolean {
@@ -192,7 +192,7 @@ export function getGenericJobDetails(): { title: string; company: string } {
     document.querySelector<HTMLMetaElement>(`meta[property="${name}"], meta[name="${name}"]`)?.content?.trim();
   let title = meta('og:title') || document.title || '';
   const site = meta('og:site_name');
-  if (site && title.endsWith(site)) title = title.slice(0, title.length - site.length).replace(/[\s|–-]+$/, '');
+  if (site && title.endsWith(site)) title = title.slice(0, title.length - site.length).replace(/[\s|\u2013-]+$/, '');
   else if (title.includes(' | ')) title = title.split(' | ')[0].trim();
   const host = location.hostname.replace(/^www\./, '');
   const company = site || host.split('.')[0];
@@ -327,7 +327,7 @@ async function fillTextField(el: HTMLInputElement | HTMLTextAreaElement, value: 
 
 function findResumeFileInput(): HTMLInputElement | null {
   const fileInputs = [...document.querySelectorAll<HTMLInputElement>('input[type="file"]')].filter(
-    (el) => !el.closest('[id*="volley"]'),
+    (el) => !el.closest('[id*="rolequick"]'),
   );
   if (fileInputs.length === 0) return null;
   const scored = fileInputs.map((el) => {
@@ -453,7 +453,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
 
   // ── <select> dropdowns ──
   for (const select of [...document.querySelectorAll<HTMLSelectElement>('select')]) {
-    if (select.closest('[id*="volley"]') || select.disabled || !isVisible(select)) continue;
+    if (select.closest('[id*="rolequick"]') || select.disabled || !isVisible(select)) continue;
     if (select.selectedIndex > 0 && select.value && !/select|choose|^$/i.test(select.options[select.selectedIndex]?.text ?? '')) continue; // already answered
     const label = questionLabel(select);
     const desired = desiredAnswer(label, ap, eeo);
@@ -473,7 +473,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
 
   // ── Radio groups (grouped by name) ──
   const radios = [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')].filter(
-    (el) => !el.closest('[id*="volley"]') && !el.disabled && isInteractableChoice(el),
+    (el) => !el.closest('[id*="rolequick"]') && !el.disabled && isInteractableChoice(el),
   );
   const radioGroups = new Map<string, HTMLInputElement[]>();
   for (const r of radios) {
@@ -509,7 +509,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
   //    way as before. ──
   const checkboxGroups = new Map<string | HTMLInputElement, HTMLInputElement[]>();
   for (const cb of [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]) {
-    if (cb.closest('[id*="volley"]') || cb.disabled || cb.checked || !isInteractableChoice(cb)) continue;
+    if (cb.closest('[id*="rolequick"]') || cb.disabled || cb.checked || !isInteractableChoice(cb)) continue;
     const key = cb.name || cb; // unnamed checkboxes each form their own group of one
     (checkboxGroups.get(key) ?? checkboxGroups.set(key, []).get(key)!).push(cb);
   }

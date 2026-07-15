@@ -6,7 +6,7 @@ This is not a form-filler that pastes the same saved answers everywhere. It is a
 
 **Install it on the Chrome Web Store:** https://chromewebstore.google.com/detail/rolequick-tailored-resume/bdbedbmkjpfioknfpmhookefabipjaad
 
-> Note on naming: the product is RoleQuick. The codebase predates the rename (its internal package is `volley-extension`, and storage keys, injected DOM ids, and telemetry field names still carry the `volley` prefix). Those names are load-bearing in the source, so this document uses them where it points at real code.
+> Note on naming: the product is RoleQuick. It first shipped to the Chrome Web Store under the earlier name Volley, so the source keeps that history in one deliberate place: the persisted `chrome.storage.local` keys have new `rolequick_*` names but read with a backward-compatible fallback to their old `volley_*` names (see `src/lib/storage.ts` and `migrateLegacyStorage`), so an existing user's saved token and profile survive the update. The package name, injected DOM ids, window globals, and everything else use the `rolequick` name.
 
 ---
 
@@ -50,7 +50,7 @@ The extension is a thin, careful client. Every piece of AI generation happens on
         └───────────────▲───────────────────────────────────────────────┘
                         │ REST (Bearer JWT), VITE_API_BASE
         ┌───────────────┴───────────────────────────────────────────────┐
- BACKEND│  RoleQuick / Volley API (separate repo, not in this codebase)  │
+ BACKEND│  RoleQuick backend API (separate repo, not in this codebase)   │
         │  /auth · /profile · /resolve · /draft · /resume/generate ·    │
         │  /application/answer · /track · /autofill/event               │
         └───────────────────────────────────────────────────────────────┘

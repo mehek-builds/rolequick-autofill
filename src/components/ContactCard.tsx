@@ -16,7 +16,7 @@ const PERSONA_LABELS: Record<Persona, string> = {
 };
 
 // Neutral-leaning pills. Brand color is reserved for the CTA + the alum signal,
-// which is Volley's differentiator and the one badge that earns real color.
+// which is RoleQuick's differentiator and the one badge that earns real color.
 const PERSONA_COLORS: Record<Persona, string> = {
   alumni: 'bg-brand-50 text-brand-700',
   near_peer: 'bg-teal-50 text-teal-700',
