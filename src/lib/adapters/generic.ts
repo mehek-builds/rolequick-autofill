@@ -164,8 +164,11 @@ async function fillComboboxFor(trigger: HTMLElement, desired: Desired): Promise<
 }
 
 function candidateInputs(): Array<HTMLInputElement | HTMLTextAreaElement> {
+  // `number` and `date` are included so a numeric salary field or a native date-of-birth picker
+  // is actually considered (and, if unmapped, counted as skipped) instead of being invisible to
+  // the filler and left silently blank with no skip reason.
   return [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
-    'input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input:not([type]), textarea',
+    'input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input[type="date"], input:not([type]), textarea',
   )].filter((el) => !el.closest('[id*="volley"]') && !el.disabled && !el.readOnly && isVisible(el));
 }
 
@@ -219,12 +222,18 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   const l = label;
   if (NEVER_FILL_PATTERNS.some((re) => re.test(l))) return null;
 
-  // Eligibility yes/no.
-  if (/authoriz(ed|ation)\s+to\s+work|legally\s+authorized|right\s+to\s+work|work\s+authoriz/.test(l) && ap.work_authorized !== undefined)
+  // Eligibility yes/no. Use `!= null`, NOT `!== undefined`: GET /profile/application returns
+  // `null` (not undefined) for a boolean the student never set, and `null !== undefined` is true,
+  // so the old guard let an unset field through and, because `null` is falsy, actively answered
+  // "No" - marking a work-authorized student as NOT authorized. `!= null` leaves it blank instead.
+  if (/authoriz(ed|ation)\s+to\s+work|legally\s+authorized|right\s+to\s+work|work\s+authoriz/.test(l) && ap.work_authorized != null)
     return ap.work_authorized ? { mode: 'yes' } : { mode: 'no' };
-  if (/sponsor/.test(l) && ap.needs_sponsorship !== undefined)
+  if (/sponsor/.test(l) && ap.needs_sponsorship != null)
     return ap.needs_sponsorship ? { mode: 'yes' } : { mode: 'no' };
-  if (/(at least|over|older than)\s*(18|eighteen)|age of majority|18 years/.test(l))
+  // Affirmative age-of-majority only. Exclude negated phrasings ("are you UNDER 18?", "younger
+  // than 18 years") - the old bare "18 years" alternative matched those and answered "Yes" to
+  // being a minor.
+  if (/(at least|over|older than)\s*(18|eighteen)|age of majority|18\s*\+|\b18\s+years?\b/.test(l) && !/\bunder\b|younger than|below|less than/.test(l))
     return { mode: 'yes' };
 
   // EEO / demographics: real answer if the student provided one, else decline.
@@ -251,7 +260,11 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   return null;
 }
 
-const DECLINE_RE = /decline|prefer not|don'?t wish|do not wish|not to (say|answer)|rather not/i;
+// Opt-out wordings for EEO/demographic questions. Broadened beyond "decline/prefer not" to catch
+// the common "Choose not to disclose" / "I do not wish to identify" phrasings that ATSes use, so a
+// required EEO field with that wording gets a decline selection instead of being left blank (which
+// would block submission).
+const DECLINE_RE = /decline|prefer not|don'?t wish|do not wish|wish not|rather not|choose not|not to (say|answer|disclose|identify|self.?identify)|not wish to (disclose|identify)/i;
 
 // Pick the option whose text best satisfies `desired`, or null if none is a confident match
 // (better to leave blank and report than to select the wrong answer).
@@ -573,7 +586,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
   }
 
   if (ai_drafted > 0) {
-    skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted — review before submitting`);
+    skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
   return { ats_name: 'generic', fields_filled, fields_skipped, skipped_reasons };
@@ -584,7 +597,7 @@ function markForReview(el: HTMLElement) {
   el.style.outline = '2px solid #f59e0b';
   el.style.outlineOffset = '1px';
   const badge = document.createElement('div');
-  badge.textContent = '✎ AI draft — review before submitting';
+  badge.textContent = '✎ AI draft: review before submitting';
   badge.style.cssText =
     'font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;color:#b45309;margin-top:4px;';
   el.insertAdjacentElement('afterend', badge);

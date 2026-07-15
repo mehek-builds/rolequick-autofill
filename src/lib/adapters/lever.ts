@@ -164,7 +164,10 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
     await fillField(phoneEl, applicationProfile.phone);
     fields_filled++;
   }
-  if (orgEl && profile.experience[0]?.company) {
+  // `profile.experience` is typed as a required array but comes from a jsonb `parsed_json` blob
+  // with no runtime guarantee; optional-chain the whole path so a profile that parsed without an
+  // experience array doesn't throw and get mis-reported to the student as a fill timeout.
+  if (orgEl && profile.experience?.[0]?.company) {
     await fillField(orgEl, profile.experience[0].company);
     fields_filled++;
   }
@@ -222,8 +225,12 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
 
     const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
     const isSponsorQuestion = /sponsorship/i.test(label);
-    if ((isAuthQuestion || isSponsorQuestion) && (applicationProfile.work_authorized !== undefined || applicationProfile.needs_sponsorship !== undefined)) {
-      const wantYes = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
+    const eligibilityAnswer = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
+    // `!= null` and keyed to the RELEVANT field: an unset boolean arrives as `null` (not undefined),
+    // and an auth question must not read a null work_authorized just because sponsorship is set.
+    // Either slip previously answered "No" and could auto-reject an authorized student.
+    if ((isAuthQuestion || isSponsorQuestion) && eligibilityAnswer != null) {
+      const wantYes = eligibilityAnswer;
       const desired: Desired = wantYes ? { mode: 'yes' } : { mode: 'no' };
       // Lever's yes/no radios carry real values; try the live-tested selector first.
       const target = block.querySelector<HTMLInputElement>(

@@ -116,3 +116,50 @@ describe('matchOption', () => {
     expect(matchOption([], { mode: 'yes' })).toBeNull();
   });
 });
+
+// ── Audit fixes ───────────────────────────────────────────────────────────────
+// Regression coverage for the completion-flow bugs fixed in this branch.
+
+describe('desiredAnswer: unset eligibility is left blank, never answered "No" (fix #1)', () => {
+  it('leaves work authorization blank when the field is null (the DB value for "unset")', () => {
+    // GET /profile/application returns null (not undefined) for a boolean the student never set.
+    // The old `!== undefined` guard let null through and answered "No" (null is falsy).
+    expect(desiredAnswer('are you legally authorized to work in the united states?', ap({ work_authorized: null as unknown as boolean }), {})).toBeNull();
+  });
+  it('leaves work authorization blank when the field is undefined', () => {
+    expect(desiredAnswer('legally authorized to work', ap(), {})).toBeNull();
+  });
+  it('leaves sponsorship blank when the field is null', () => {
+    expect(desiredAnswer('do you require visa sponsorship?', ap({ needs_sponsorship: null as unknown as boolean }), {})).toBeNull();
+  });
+  it('still answers set eligibility booleans', () => {
+    expect(desiredAnswer('legally authorized to work', ap({ work_authorized: true }), {})).toEqual({ mode: 'yes' });
+    expect(desiredAnswer('do you require visa sponsorship?', ap({ needs_sponsorship: false }), {})).toEqual({ mode: 'no' });
+  });
+});
+
+describe('desiredAnswer: age-of-majority phrasing (fix #15)', () => {
+  it('does not answer a negatively-phrased age question "yes"', () => {
+    expect(desiredAnswer('are you under 18 years of age?', ap(), {})).toBeNull();
+    expect(desiredAnswer('are you younger than 18?', ap(), {})).toBeNull();
+  });
+  it('still answers an affirmative age-of-majority question "yes"', () => {
+    expect(desiredAnswer('are you at least 18 years of age?', ap(), {})).toEqual({ mode: 'yes' });
+    expect(desiredAnswer('are you over 18?', ap(), {})).toEqual({ mode: 'yes' });
+    // "18 years or older" carries none of at-least/over/older-than, so it needs the guarded
+    // "18 years" alternative (restored after review); the "under" guard still blocks the negatives.
+    expect(desiredAnswer('are you 18 years or older?', ap(), {})).toEqual({ mode: 'yes' });
+    expect(desiredAnswer('you must be 18 years of age or older to apply', ap(), {})).toEqual({ mode: 'yes' });
+  });
+});
+
+describe('matchOption: broadened decline wordings (fix #10)', () => {
+  it('matches "Choose not to disclose" as a decline option', () => {
+    expect(matchOption(opts('Male', 'Female', 'Choose not to disclose'), { mode: 'decline' })?.text)
+      .toBe('Choose not to disclose');
+  });
+  it('matches "I do not wish to identify" as a decline option', () => {
+    expect(matchOption(opts('Yes', 'No', 'I do not wish to identify'), { mode: 'decline' })?.text)
+      .toBe('I do not wish to identify');
+  });
+});

@@ -185,6 +185,114 @@ export default defineContentScript({
       return null;
     }
 
+    // A TRUE final-submit control, distinct from a "Next"/"Continue"/"Save and Continue"/"Review"
+    // step-advance button. The auto-submit countdown must anchor to THIS, never a step button:
+    // clicking a step button would advance a multi-step form (Workday's 5 pages) and then falsely
+    // report the application as submitted. Returns null when the only actionable control is a
+    // step-advance - i.e. a multi-step form that isn't on its final page yet, so there is nothing
+    // to auto-submit toward.
+    function findFinalSubmitButton(): HTMLElement | null {
+      const STEP_ADVANCE = /\b(next|continue|save\s*(and|&)\s*continue|review|save\s+for\s+later|back)\b/i;
+      const SUBMIT = /\bsubmit(\s+application)?\b|\bsend\s+application\b/i;
+      const candidates = [
+        ...document.querySelectorAll<HTMLElement>('button, input[type="submit"], [role="button"]'),
+      ];
+      for (const el of candidates) {
+        if (el.closest('[id*="volley"]')) continue;
+        if ((el as HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true') continue;
+        // `||` not `??`: textContent is "" (not null) for a void <input type="submit">, so `??`
+        // would never fall through to .value and classic Greenhouse's submit input would be missed.
+        const text = (el.textContent || (el as HTMLInputElement).value || '').trim();
+        if (!text) continue;
+        // Skip a step-advance word ONLY when the text is not also a submit, so a final button
+        // labelled "Review and Submit" / "Review & Submit application" still counts as a submit.
+        if (STEP_ADVANCE.test(text) && !SUBMIT.test(text)) continue;
+        if (SUBMIT.test(text)) return el;
+      }
+      return null;
+    }
+
+    // Is any on-screen required field still empty? Used to hold back auto-submit: the browser's own
+    // validation would block the submit anyway, but by then we'd already have reported it as sent.
+    function hasEmptyRequiredFields(): boolean {
+      const req = [...document.querySelectorAll<HTMLElement>('[required], [aria-required="true"]')];
+      for (const el of req) {
+        if (el.closest('[id*="volley"]')) continue;
+        const style = getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') continue;
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'input') {
+          const inp = el as HTMLInputElement;
+          // react-select comboboxes put aria-required on a visible input that stays value-empty
+          // after a selection (the chosen value lives in component state / a hidden input), so an
+          // empty .value there is NOT an unanswered field - skip it rather than wrongly holding
+          // auto-submit on the work-auth/country/EEO controls Greenhouse and Ashby render this way.
+          if (inp.getAttribute('role') === 'combobox' || inp.closest('[class*="select__control"], [class*="Select-control"]')) continue;
+          if (inp.type === 'checkbox' || inp.type === 'radio') {
+            const group = inp.name
+              ? [...document.querySelectorAll<HTMLInputElement>(`input[name="${CSS.escape(inp.name)}"]`)]
+              : [inp];
+            if (!group.some((g) => g.checked)) return true;
+          } else if (!inp.value.trim() && !inp.files?.length) {
+            return true;
+          }
+        } else if (tag === 'select') {
+          if (!(el as HTMLSelectElement).value) return true;
+        } else if (tag === 'textarea') {
+          if (!(el as HTMLTextAreaElement).value.trim()) return true;
+        }
+      }
+      return false;
+    }
+
+    // Field labels in skipped_reasons come from the page DOM, so escape before inserting via
+    // innerHTML - a hostile <label> must not be able to inject markup into our card.
+    function escapeHtml(s: string): string {
+      return s.replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string,
+      );
+    }
+
+    // Show WHAT still needs the student, not just a filled count (the adapters compute a precise
+    // skipped list that content.ts previously discarded). This is the difference between a form that
+    // "looks done" and one where the student can see the resume, an agreement box, or a blank
+    // required field still needs them before they submit.
+    function renderFillSummary(
+      statusEl: HTMLElement | null,
+      fillResult: AutofillResult,
+      opts: { resumeMissing: boolean; autoSubmitHeld: boolean },
+    ): void {
+      if (!statusEl) return;
+      const head: string[] = [`Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}.`];
+      if (opts.resumeMissing) head.push('⚠ Resume not attached - add it yourself.');
+      if (opts.autoSubmitHeld) head.push('Auto-submit held: finish the flagged items, then submit.');
+      // Keep the reasons that actually need a human: resume, agreements, unmatched/never-fill,
+      // required blanks. Drop the resume line here (already surfaced above) and cap the list.
+      const needsYou = fillResult.skipped_reasons
+        .filter((r) => /agreement|never-fill|no matching|left for you|left blank|required|no unambiguous/i.test(r))
+        .filter((r) => !/^resume:/i.test(r))
+        .slice(0, 4);
+      statusEl.style.display = 'block';
+      statusEl.innerHTML =
+        head.map((l) => `<div>${escapeHtml(l)}</div>`).join('') +
+        (needsYou.length
+          ? `<div style="margin-top:4px;font-weight:600;">Still needs you:</div>` +
+            needsYou.map((r) => `<div>• ${escapeHtml(r)}</div>`).join('')
+          : '') +
+        `<div style="margin-top:4px;">Review, then submit yourself.</div>`;
+    }
+
+    // Result of the background resume-gen round trip, cached per job (company|role) for the tab's
+    // life so a multi-step flow reuses step 1's resume instead of paying for - and being metered
+    // for - a fresh generation on every step.
+    type ResumeGenResult = {
+      error?: string;
+      profile?: Profile;
+      applicationProfile?: ApplicationProfile;
+      resume?: { resume_url: string; file_name: string };
+    };
+    const resumeGenByJob = new Map<string, Promise<ResumeGenResult>>();
+
     function watchSubmitButton(title: string, company: string, url: string) {
       let watched = false;
       let observer: MutationObserver | null = null;
@@ -448,28 +556,34 @@ export default defineContentScript({
       // the monthly resume credits, plus an hourly rate-limit slot) for every card the student
       // dismissed. Hover is the earliest reliable signal of intent: it still fires seconds
       // before a click, keeping nearly all of the head start at none of the dismissal cost.
-      const jdText = extractJdText();
-      type ResumeGenResult = {
-        error?: string;
-        profile?: Profile;
-        applicationProfile?: ApplicationProfile;
-        resume?: { resume_url: string; file_name: string };
-      };
+      // JD is read at intent time (first hover/click), NOT at card injection, so a JD that
+      // lazy-loads after the card appears is present when we tailor. Memoized so the gen call and
+      // the essay-draft hook read the same JD text.
+      let jdCache: string | null = null;
+      const getJd = (): string => (jdCache ??= extractJdText());
+
       // Slightly longer than the background's own resume-fetch budget (60s) so its descriptive
       // error surfaces first; this is the backstop for the worse case where the service worker
       // is torn down and the callback never fires at all.
       const RESUME_GEN_TIMEOUT_MS = 65000;
-      let resumeGenPromise: Promise<ResumeGenResult> | null = null;
+      const jobKey = `${company} ${title}`;
       const startResumeGen = (): Promise<ResumeGenResult> => {
-        resumeGenPromise ??= new Promise<ResumeGenResult>((resolve) => {
+        const cached = resumeGenByJob.get(jobKey);
+        if (cached) return cached; // reuse across steps of a multi-step application (no re-charge)
+        const p = new Promise<ResumeGenResult>((resolve) => {
           let settled = false;
-          const done = (r: ResumeGenResult) => { if (!settled) { settled = true; resolve(r); } };
+          const done = (r: ResumeGenResult) => {
+            if (settled) return;
+            settled = true;
+            if (r.error) resumeGenByJob.delete(jobKey); // never cache a failure; let a retry re-run
+            resolve(r);
+          };
           const timer = setTimeout(
             () => done({ error: 'Resume generation timed out - fill this form manually.' }),
             RESUME_GEN_TIMEOUT_MS,
           );
           chrome.runtime.sendMessage(
-            { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: jdText } },
+            { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: getJd() } },
             (result: ResumeGenResult | undefined) => {
               clearTimeout(timer);
               // A dead service worker resolves the callback with lastError set (or with no
@@ -483,7 +597,8 @@ export default defineContentScript({
             },
           );
         });
-        return resumeGenPromise;
+        resumeGenByJob.set(jobKey, p);
+        return p;
       };
       card.addEventListener('mouseenter', () => void startResumeGen(), { once: true });
 
@@ -543,7 +658,7 @@ export default defineContentScript({
               draftAnswer: (question: string) =>
                 new Promise<string | null>((resolve) => {
                   chrome.runtime.sendMessage(
-                    { type: 'ANSWER_QUESTION', payload: { company, role: title, jd_text: jdText, question } },
+                    { type: 'ANSWER_QUESTION', payload: { company, role: title, jd_text: getJd(), question } },
                     (r: { answer?: string | null } | undefined) => resolve(r?.answer ?? null),
                   );
                 }),
@@ -569,8 +684,11 @@ export default defineContentScript({
           return;
         }
 
-        const submitBtn = findSubmitButton();
         const autoSubmitOn = await getAutoSubmitEnabled();
+        const finalSubmitBtn = findFinalSubmitButton();
+        // Resume is "missing" if the blob never reached us (fetch failed upstream) or the adapter
+        // reported it could not attach it. Never auto-submit an application with no resume.
+        const resumeMissing = !resumeBlob || fillResult.skipped_reasons.some((r) => /^resume:/i.test(r));
 
         const reportEvent = (autoSubmitted: boolean) => {
           chrome.runtime.sendMessage({
@@ -585,33 +703,39 @@ export default defineContentScript({
           });
         };
 
-        // Auto-submit is opt-in (AutofillSetupScreen toggle, off by default) and only ever
-        // fires from THIS student's own extension, in their own logged-in session, on data
-        // they generated and could still cancel - never something Volley decides on its own.
-        if (autoSubmitOn && submitBtn instanceof HTMLElement) {
+        // Auto-submit is opt-in (AutofillSetupScreen toggle, off by default) AND only fires when it
+        // is actually safe: a real FINAL-submit button exists (not a "Next"/"Continue" step button,
+        // which would advance a multi-step form and then falsely report a submit), the resume
+        // attached, and no required field is still empty (native validation would block the submit
+        // anyway, after we'd already reported it sent). Otherwise fall through to highlight-and-
+        // hand-back. It always fires from THIS student's own logged-in session, on data they
+        // generated and can still cancel - never something Volley decides on its own.
+        const autoSubmitHeld = autoSubmitOn && (!finalSubmitBtn || resumeMissing || hasEmptyRequiredFields());
+        if (autoSubmitOn && !autoSubmitHeld && finalSubmitBtn) {
           runAutoSubmitCountdown(
             card, statusEl,
             card.querySelector<HTMLButtonElement>('#wp-resume-yes'),
             card.querySelector<HTMLButtonElement>('#wp-resume-no'),
-            submitBtn, fillResult, reportEvent, 'Submitting',
+            finalSubmitBtn, fillResult, reportEvent, 'Submitting',
           );
           return;
         }
 
         reportEvent(false);
 
-        if (statusEl) {
-          statusEl.textContent = `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. Review, then submit yourself.`;
+        // Surface WHAT still needs the student (resume, agreements, unmatched/required blanks), not
+        // just a filled count - the adapters compute this precisely and it used to be discarded.
+        renderFillSummary(statusEl, fillResult, { resumeMissing, autoSubmitHeld });
+
+        // Highlight the real final-submit control if there is one; never click it here (PRD-v2
+        // Section 5 Step 4). On a multi-step form still mid-flow there is no final submit yet, so
+        // nothing is highlighted rather than pointing the student at a misleading "Next".
+        if (finalSubmitBtn instanceof HTMLElement) {
+          finalSubmitBtn.style.outline = '3px solid #4f46e5';
+          finalSubmitBtn.style.outlineOffset = '2px';
         }
 
-        // Highlight, never click - Volley stops here (PRD-v2 Section 5 Step 4) unless the
-        // student has opted in to auto-submit above.
-        if (submitBtn instanceof HTMLElement) {
-          submitBtn.style.outline = '3px solid #4f46e5';
-          submitBtn.style.outlineOffset = '2px';
-        }
-
-        setTimeout(dismiss, 6000);
+        setTimeout(dismiss, 9000);
       });
     }
 
@@ -748,7 +872,7 @@ export default defineContentScript({
           // anchored to can be replaced during the countdown, and clicking a detached node is a
           // silent no-op that would falsely report a submit. If the live button is gone, stop and
           // hand back to the student rather than pretending we submitted.
-          const target = submitBtn.isConnected ? submitBtn : findSubmitButton();
+          const target = submitBtn.isConnected ? submitBtn : findFinalSubmitButton();
           if (target instanceof HTMLElement && target.isConnected) {
             if (statusEl) statusEl.textContent = `${actionLabel}...`;
             target.click();

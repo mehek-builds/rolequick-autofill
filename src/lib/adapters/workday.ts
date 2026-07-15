@@ -198,9 +198,20 @@ export function extractWorkdayJdText(): string {
 // dispatch it. Workday's upload widget renders a dropzone over a real file input in most
 // tenants; this targets that input directly rather than the dropzone UI element.
 async function fillResumeFile(blob: Blob, fileName: string): Promise<boolean> {
-  const input = document.querySelector<HTMLInputElement>(
-    '[data-automation-id="file-upload-drop-zone"] input[type="file"], [data-automation-id*="resumeUpload"] input[type="file"], input[type="file"]',
-  );
+  // Prefer Workday's resume dropzone. If we must fall back to a bare file input, skip one that is
+  // clearly a cover-letter/other-docs uploader - Workday pages can carry several file inputs, and a
+  // blind `input[type="file"]` grab could attach the resume to the wrong slot.
+  const input =
+    document.querySelector<HTMLInputElement>(
+      '[data-automation-id="file-upload-drop-zone"] input[type="file"], [data-automation-id*="resumeUpload" i] input[type="file"]',
+    ) ??
+    [...document.querySelectorAll<HTMLInputElement>('input[type="file"]')].find((el) => {
+      const ctx = `${el.getAttribute('data-automation-id') ?? ''} ${
+        el.closest('[data-automation-id]')?.getAttribute('data-automation-id') ?? ''
+      } ${el.closest('div,section,fieldset')?.textContent?.slice(0, 120) ?? ''}`.toLowerCase();
+      return !/cover\s*letter/.test(ctx);
+    }) ??
+    null;
   if (!input) return false;
   await randomDelay();
   const file = new File([blob], fileName, { type: 'application/pdf' });
@@ -214,8 +225,18 @@ async function fillResumeFile(blob: Blob, fileName: string): Promise<boolean> {
 function labelTextFor(el: Element): string {
   // Workday wraps most fields in a container carrying `data-automation-id` ending in
   // "...Section" or similar, with the visible question text elsewhere in that container
-  // (not always a real <label for=...>) - fall back to the whole container's text.
+  // (not always a real <label for=...>).
   const container = el.closest('[data-automation-id$="Section"], fieldset, li') ?? el.parentElement;
+  // Prefer a discrete question label over the entire container's text: one Workday section can wrap
+  // several questions, and gluing them into one string lets a control match a NEIGHBOURING
+  // question's keywords (e.g. an EEO term bleeding into a work-auth block, or auth vs sponsorship
+  // colliding). Fall back to full text only when no legend/label exists.
+  const legend = container?.querySelector('legend')?.textContent?.trim();
+  if (legend) return legend.toLowerCase();
+  const labelEl = container
+    ?.querySelector('label, [data-automation-id="formLabel"], [data-automation-id="richText"]')
+    ?.textContent?.trim();
+  if (labelEl) return labelEl.toLowerCase();
   return (container?.textContent ?? '').trim().toLowerCase();
 }
 
@@ -343,8 +364,12 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
 
     const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
     const isSponsorQuestion = /sponsorship/i.test(label);
-    if ((isAuthQuestion || isSponsorQuestion) && (applicationProfile.work_authorized !== undefined || applicationProfile.needs_sponsorship !== undefined)) {
-      const wantYes = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
+    const eligibilityAnswer = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
+    // `!= null` and keyed to the RELEVANT field: an unset boolean arrives as `null` (not undefined),
+    // and an auth question must not read a null work_authorized just because sponsorship is set.
+    // Either slip previously answered "No" and could auto-reject an authorized student.
+    if ((isAuthQuestion || isSponsorQuestion) && eligibilityAnswer != null) {
+      const wantYes = eligibilityAnswer;
       const desired: Desired = wantYes ? { mode: 'yes' } : { mode: 'no' };
       const radio = block.querySelector<HTMLInputElement>(`input[type="radio"][value="${wantYes ? 'Yes' : 'No'}" i]`);
       if (radio) {

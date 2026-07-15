@@ -279,8 +279,12 @@ export async function fillLinkedInApplication(params: LinkedInFillParams): Promi
 
     const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
     const isSponsorQuestion = /sponsorship/i.test(label);
-    if ((isAuthQuestion || isSponsorQuestion) && (applicationProfile.work_authorized !== undefined || applicationProfile.needs_sponsorship !== undefined)) {
-      const wantYes = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
+    const eligibilityAnswer = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
+    // `!= null` and keyed to the RELEVANT field: an unset boolean arrives as `null` (not undefined),
+    // and an auth question must not read a null work_authorized just because sponsorship is set.
+    // Either slip previously answered "No" and could auto-reject an authorized student.
+    if ((isAuthQuestion || isSponsorQuestion) && eligibilityAnswer != null) {
+      const wantYes = eligibilityAnswer;
       const select = block.querySelector<HTMLSelectElement>('select');
       if (select) {
         const opt = [...select.options].find((o) => new RegExp(wantYes ? '^yes' : '^no', 'i').test(o.text.trim()));
