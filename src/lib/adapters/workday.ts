@@ -23,7 +23,89 @@ import type { ApplicationProfile, AutofillResult, Profile } from '../types';
 // application page - false negatives here are the safe failure mode (erring toward not
 // firing beats firing too early, same as detection).
 
-import { commitChoice, NEVER_FILL_LABEL_PATTERNS, randomDelay, setNativeValue, fillField, splitName } from './shared/dom';
+import {
+  commitChoice,
+  NEVER_FILL_LABEL_PATTERNS,
+  randomDelay,
+  setNativeValue,
+  fillField,
+  splitName,
+  isComboboxControl,
+  openCombobox,
+  pickComboOption,
+  closeOpenCombobox,
+} from './shared/dom';
+// Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
+// the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
+import { desiredAnswer, matchOption, type Desired } from './generic';
+
+// ─── Shared answer helpers (mirror generic.ts's engine) ───────────────────────
+
+// Drive a Workday prompt / react-select listbox to the desired answer: open it, read the rendered
+// options, click the confident match. Returns false (never guesses) when the menu never opens or
+// no option matches, dismissing any open portal first.
+async function fillCombobox(trigger: HTMLElement, desired: Desired): Promise<boolean> {
+  if (!desired) return false;
+  const typeahead = desired.mode === 'value' ? desired.value : undefined;
+  const options = await openCombobox(trigger, typeahead);
+  if (options.length === 0) { closeOpenCombobox(); return false; }
+  const match = matchOption(options, desired);
+  if (!match) { closeOpenCombobox(); return false; }
+  await pickComboOption(match);
+  return true;
+}
+
+// Workday renders many choices as a "prompt" button that opens a listbox popup, plus the usual
+// react-select controls; both are covered here.
+function comboControlIn(block: Element): HTMLElement | null {
+  return block.querySelector<HTMLElement>(
+    'input[role="combobox"], [role="combobox"], [aria-haspopup="listbox"], button[aria-haspopup="listbox"], [class*="select__control"], [class*="Select-control"]',
+  );
+}
+
+// Answer a question block that resolved to a known desired value, across a native <select>,
+// native radios, or a Workday prompt / react-select combobox. Radio option text prefers the
+// associated <label>, falling back to the value attribute.
+async function answerChoiceBlock(block: Element, desired: Desired): Promise<boolean> {
+  if (!desired) return false;
+
+  const select = block.querySelector<HTMLSelectElement>('select');
+  if (select) {
+    const options = [...select.options]
+      .filter((o) => o.value && !/^(select|choose|please|--)/i.test(o.text.trim()))
+      .map((o) => ({ text: o.text, value: o.value }));
+    const m = matchOption(options, desired);
+    if (m) {
+      select.value = m.value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    }
+  }
+
+  const radios = [...block.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((r) => ({
+    text: (document.querySelector(`label[for="${r.id}"]`)?.textContent ?? r.closest('label')?.textContent ?? r.value ?? '').trim(),
+    el: r,
+  }));
+  if (radios.length > 0) {
+    const m = matchOption(radios, desired);
+    if (m) { commitChoice(m.el); return true; }
+  }
+
+  const combo = comboControlIn(block);
+  if (combo && isComboboxControl(combo) && (await fillCombobox(combo, desired))) return true;
+
+  return false;
+}
+
+// Visually flag an AI-drafted field so the student can't miss that it needs review.
+function markForReview(el: HTMLElement): void {
+  el.style.outline = '2px solid #f59e0b';
+  el.style.outlineOffset = '1px';
+  const badge = document.createElement('div');
+  badge.textContent = 'AI draft: review before submitting';
+  badge.style.cssText = 'font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;color:#b45309;margin-top:4px;';
+  el.insertAdjacentElement('afterend', badge);
+}
 
 function hasAccountCreationMarkers(): boolean {
   const hasPasswordField = !!document.querySelector('input[type="password"]');
@@ -148,13 +230,21 @@ export interface WorkdayFillParams {
   applicationProfile: ApplicationProfile;
   resumeBlob?: Blob;
   resumeFileName?: string;
+  // Generic-adapter extras, now honored here too. eeo carries the student's demographic prefs for
+  // EEO questions; draftAnswer AI-drafts an open-ended textarea; onProgress streams counts.
+  eeo?: Record<string, string>;
+  draftAnswer?: (question: string) => Promise<string | null>;
+  onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
 }
 
 export async function fillWorkdayApplication(params: WorkdayFillParams): Promise<AutofillResult> {
-  const { fullName, email, applicationProfile, resumeBlob, resumeFileName } = params;
+  const { fullName, email, applicationProfile, resumeBlob, resumeFileName, draftAnswer, onProgress } = params;
+  const eeo = params.eeo ?? {};
   let fields_filled = 0;
   let fields_skipped = 0;
+  let ai_drafted = 0;
   const skipped_reasons: string[] = [];
+  const pendingDrafts: Array<{ el: HTMLTextAreaElement; question: string }> = [];
 
   // High-confidence fields: these automation-id conventions are broadly consistent across
   // Workday tenants per public documentation, unlike everything else on this platform.
@@ -239,23 +329,14 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
 
     const isEeo = /gender|race|ethnicity|veteran|disability/i.test(label);
     if (isEeo) {
-      // Never guess or default EEO fields (PRD-v2 non-goals). Only select a decline-to-answer
-      // option where one exists; otherwise leave the field untouched.
-      const select = block.querySelector<HTMLSelectElement>('select');
-      const declineOption = select ? [...select.options].find((o) => /decline/i.test(o.text)) : undefined;
-      if (select && declineOption) {
-        select.value = declineOption.value;
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-        fields_filled++;
-        continue;
-      }
-      const declineRadio = block.querySelector<HTMLInputElement>('input[type="radio"][value*="Decline" i]');
-      if (declineRadio) {
-        commitChoice(declineRadio);
+      // Real answer when the student stored one (eeo prefs), else decline. Works whether the
+      // control is a native select, native radios, or a Workday prompt / react-select combobox.
+      const desired = desiredAnswer(label, applicationProfile, eeo);
+      if (await answerChoiceBlock(block, desired)) {
         fields_filled++;
       } else {
         fields_skipped++;
-        skipped_reasons.push('EEO field: no decline-to-answer option found, left blank');
+        skipped_reasons.push('EEO field: no matching option found, left blank');
       }
       continue;
     }
@@ -264,6 +345,7 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
     const isSponsorQuestion = /sponsorship/i.test(label);
     if ((isAuthQuestion || isSponsorQuestion) && (applicationProfile.work_authorized !== undefined || applicationProfile.needs_sponsorship !== undefined)) {
       const wantYes = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
+      const desired: Desired = wantYes ? { mode: 'yes' } : { mode: 'no' };
       const radio = block.querySelector<HTMLInputElement>(`input[type="radio"][value="${wantYes ? 'Yes' : 'No'}" i]`);
       if (radio) {
         commitChoice(radio);
@@ -280,16 +362,87 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
           continue;
         }
       }
+      // Workday commonly renders this as a prompt/listbox rather than a native control.
+      const combo = comboControlIn(block);
+      if (combo && (await fillCombobox(combo, desired))) {
+        fields_filled++;
+        continue;
+      }
       fields_skipped++;
       skipped_reasons.push(`${label.slice(0, 40)}: no clean Yes/No control found, left blank`);
       continue;
     }
 
-    const textInput = block.querySelector('input[type="text"], textarea');
-    if (textInput && !(textInput as HTMLInputElement).value) {
+    // Other known-answer questions (age of majority, citizenship, availability, referral source,
+    // salary, DOB) resolved from the profile, across select / radio / combobox / free text.
+    const known = desiredAnswer(label, applicationProfile, eeo);
+    if (known) {
+      if (await answerChoiceBlock(block, known)) {
+        fields_filled++;
+        continue;
+      }
+      if (known.mode === 'value') {
+        const textEl = block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"], input[type="tel"]');
+        if (textEl && !textEl.value && !isComboboxControl(textEl)) {
+          await fillField(textEl, known.value);
+          fields_filled++;
+          continue;
+        }
+      }
+      fields_skipped++;
+      skipped_reasons.push(`${label.slice(0, 40)}: no matching control, left blank`);
+      continue;
+    }
+
+    // Open-ended screening questions: draft the textarea via the hook if available (flagged for
+    // review), else leave it blank. Short text inputs we couldn't map stay blank for the student.
+    const textarea = block.querySelector<HTMLTextAreaElement>('textarea');
+    if (textarea && !textarea.value) {
+      if (draftAnswer) {
+        pendingDrafts.push({ el: textarea, question: label.slice(0, 200) });
+      } else {
+        fields_skipped++;
+        skipped_reasons.push(`open-ended question left blank: "${label.slice(0, 60)}"`);
+      }
+      continue;
+    }
+    const textInput = block.querySelector<HTMLInputElement>('input[type="text"]');
+    if (textInput && !textInput.value) {
       fields_skipped++;
       skipped_reasons.push(`open-ended question left blank: "${label.slice(0, 60)}"`);
     }
+  }
+
+  // Draft every collected essay CONCURRENTLY (each is an independent LLM round trip), writing and
+  // flagging each as it resolves. A failed or empty draft falls back to leaving it blank, unchanged.
+  if (pendingDrafts.length > 0 && draftAnswer) {
+    let pendingEssays = pendingDrafts.length;
+    onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
+    await Promise.all(
+      pendingDrafts.map(async ({ el, question }) => {
+        let drafted: string | null = null;
+        try {
+          drafted = (await draftAnswer(question))?.trim() || null;
+        } catch {
+          drafted = null;
+        }
+        if (drafted) {
+          await fillField(el, drafted);
+          markForReview(el);
+          ai_drafted++;
+          fields_filled++;
+        } else {
+          fields_skipped++;
+          skipped_reasons.push(`open-ended question left blank: "${question.slice(0, 60)}"`);
+        }
+        pendingEssays--;
+        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
+      }),
+    );
+  }
+
+  if (ai_drafted > 0) {
+    skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
   return { ats_name: 'workday', fields_filled, fields_skipped, skipped_reasons };
