@@ -203,11 +203,18 @@ async function answerChoiceBlock(block: Element, desired: Desired): Promise<bool
       };
       press();
       await waitForStableDom();
-      // Ashby marks the chosen pill with an `_active`/`_selected` class or aria-pressed; if it
-      // didn't take (a re-render swallowed the first click), press once more.
+      // A selected pill signals it via a class (_active/_selected/_checked), an ARIA state
+      // (aria-pressed/checked/selected), or a data-state. Recognizing all of them matters: if the
+      // first press DID take via a signal we don't check, stuck() would read false and we'd press a
+      // second time and toggle the selection back OFF. Only retry on a still-connected node too, so a
+      // re-render that detached the matched pill doesn't get a wasted second press.
       const stuck = () =>
-        /_active|_selected/.test(m.el.className) || m.el.getAttribute('aria-pressed') === 'true';
-      if (!stuck()) {
+        /_active|_selected|_checked/.test(m.el.className) ||
+        m.el.getAttribute('aria-pressed') === 'true' ||
+        m.el.getAttribute('aria-checked') === 'true' ||
+        m.el.getAttribute('aria-selected') === 'true' ||
+        /^(?:on|true|active|selected|checked)$/i.test(m.el.getAttribute('data-state') ?? '');
+      if (!stuck() && m.el.isConnected) {
         press();
         await waitForStableDom();
       }
