@@ -1,5 +1,11 @@
 import type { ApplicationProfile, AutofillResult, Profile } from '../types';
-import { commitChoice as checkChoice } from './shared/dom';
+import {
+  commitChoice as checkChoice,
+  isComboboxControl,
+  openCombobox,
+  pickComboOption,
+  closeOpenCombobox,
+} from './shared/dom';
 
 // Generic adapter for companies that build their OWN application form on their own domain
 // against an ATS's API (live-tested targets 2026-07-04: vercel.com/careers - Greenhouse API
@@ -143,8 +149,18 @@ function groupQuestionText(group: HTMLInputElement[], optionTexts: string[]): st
   return text || controlIdentity(group[0]);
 }
 
-function isAutocompleteWidget(el: HTMLElement): boolean {
-  return el.getAttribute('role') === 'combobox' || !!el.getAttribute('aria-autocomplete');
+// Drive a combobox / react-select control to the desired answer: open it, read its rendered
+// options, and click the match. Returns 'filled' on a confident selection, 'skipped' otherwise
+// (menu never opened, or no option matched - better to leave it for the student than guess).
+async function fillComboboxFor(trigger: HTMLElement, desired: Desired): Promise<'filled' | 'skipped'> {
+  if (!desired) return 'skipped';
+  const typeahead = desired.mode === 'value' ? desired.value : undefined;
+  const options = await openCombobox(trigger, typeahead);
+  if (options.length === 0) { closeOpenCombobox(); return 'skipped'; }
+  const match = matchOption(options, desired);
+  if (!match) { closeOpenCombobox(); return 'skipped'; }
+  await pickComboOption(match);
+  return 'filled';
 }
 
 function candidateInputs(): Array<HTMLInputElement | HTMLTextAreaElement> {
@@ -356,12 +372,26 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
       value = value.replace(/\/+$/, '').split('/').pop() ?? value; // "linkedin.com/in/" + handle
     }
 
-    if (value) {
-      if (isAutocompleteWidget(el) && !/linkedin|github|portfolio|e-?mail/.test(id)) {
+    // Combobox / react-select (city, country, work-auth yes/no, EEO rendered as a styled
+    // dropdown rather than a native <select>): open it and click the matching option. Poking
+    // .value does nothing to these, so they were previously collected and skipped. Links and
+    // email stay plain text fields even if they carry a combobox role.
+    if (isComboboxControl(el) && !/linkedin|github|portfolio|e-?mail/.test(id)) {
+      const desired: Desired = value !== undefined ? { mode: 'value', value } : desiredAnswer(id, ap, eeo);
+      const res = await fillComboboxFor(el as HTMLElement, desired);
+      if (res === 'filled') {
+        fields_filled++;
+      } else if (desired) {
         fields_skipped++;
-        skipped_reasons.push(`autocomplete field left for manual selection: "${short(id)}"`);
-        continue;
+        skipped_reasons.push(`dropdown left for you: "${short(id)}"`);
+      } else if (id) {
+        fields_skipped++;
+        skipped_reasons.push(`unrecognized field left blank: "${short(id)}"`);
       }
+      continue;
+    }
+
+    if (value) {
       await fillTextField(el, value);
       fields_filled++;
       continue;

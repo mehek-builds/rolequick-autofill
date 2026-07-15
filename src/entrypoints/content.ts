@@ -611,11 +611,14 @@ export default defineContentScript({
       });
     }
 
-    const AUTO_SUBMIT_COUNTDOWN_SECONDS = 8;
+    const AUTO_SUBMIT_COUNTDOWN_SECONDS = 15;
 
-    // Opt-in only (AutofillSetupScreen toggle). Shows a cancelable countdown in the same card
-    // rather than clicking Submit the instant the fill finishes, so a mis-filled field or a
-    // second thought still has a window to stop it before anything real goes out.
+    // Opt-in only (AutofillSetupScreen toggle). Instead of clicking Submit the instant the fill
+    // finishes, this anchors a live countdown timer directly onto the page's own Submit button:
+    // a depleting ring with the seconds remaining and a big Cancel control, pinned over the
+    // button and following it on scroll/resize. The student sees exactly what is about to be
+    // clicked and has a full 15s + Cancel + Escape to stop it, so nothing real goes out without a
+    // clear, on-the-button window to back out.
     function runAutoSubmitCountdown(
       card: HTMLElement,
       statusEl: HTMLElement | null,
@@ -630,25 +633,101 @@ export default defineContentScript({
 
       let remaining = AUTO_SUBMIT_COUNTDOWN_SECONDS;
       let cancelled = false;
+      const RADIUS = 20;
+      const CIRC = 2 * Math.PI * RADIUS;
 
-      const render = () => {
-        if (statusEl) {
-          statusEl.textContent = `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. ${actionLabel} in ${remaining}s - tap Cancel to review first.`;
-        }
+      // The button itself gets a highlighted ring so it's unmistakable which control the timer
+      // is counting down toward.
+      submitBtn.style.outline = '3px solid #4f46e5';
+      submitBtn.style.outlineOffset = '3px';
+      submitBtn.style.borderRadius = getComputedStyle(submitBtn).borderRadius || '8px';
+
+      const overlay = document.createElement('div');
+      overlay.id = 'volley-autosubmit-overlay';
+      overlay.style.cssText =
+        'position:fixed;inset:0;z-index:2147483647;pointer-events:none;' +
+        "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;";
+      overlay.innerHTML = `
+        <div id="wp-as-panel" style="
+          pointer-events:auto;position:absolute;display:flex;align-items:center;gap:12px;
+          background:#1e1b4b;color:#fff;border-radius:12px;padding:10px 12px;
+          box-shadow:0 10px 34px rgba(30,27,75,0.42);white-space:nowrap;
+          animation:wp-slide-in 0.2s ease-out;
+        ">
+          <div style="position:relative;width:46px;height:46px;flex-shrink:0;">
+            <svg width="46" height="46" viewBox="0 0 46 46" style="transform:rotate(-90deg);">
+              <circle cx="23" cy="23" r="${RADIUS}" fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="4"/>
+              <circle id="wp-as-ring" cx="23" cy="23" r="${RADIUS}" fill="none" stroke="#a5b4fc"
+                stroke-width="4" stroke-linecap="round" stroke-dasharray="${CIRC}"
+                stroke-dashoffset="0" style="transition:stroke-dashoffset 1s linear;"/>
+            </svg>
+            <div id="wp-as-num" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;">${remaining}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px;">
+            <div style="font-size:12px;font-weight:700;">${actionLabel} your application</div>
+            <div id="wp-as-sub" style="font-size:11px;color:#c7d2fe;">${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'} filled. Auto-submits in ${remaining}s.</div>
+          </div>
+          <button id="wp-as-cancel" style="
+            pointer-events:auto;background:#f43f5e;color:#fff;border:none;border-radius:8px;
+            padding:9px 16px;font-size:12px;font-weight:700;cursor:pointer;
+            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+          ">Cancel</button>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+
+      const panel = overlay.querySelector<HTMLElement>('#wp-as-panel')!;
+      const ring = overlay.querySelector<SVGCircleElement>('#wp-as-ring');
+      const num = overlay.querySelector<HTMLElement>('#wp-as-num');
+      const sub = overlay.querySelector<HTMLElement>('#wp-as-sub');
+
+      // Keep the panel pinned just above the Submit button (falling back to just below it when
+      // there isn't room), clamped inside the viewport, and re-anchored whenever the page scrolls
+      // or resizes so it tracks the real button no matter where it sits on the form.
+      const position = () => {
+        const r = submitBtn.getBoundingClientRect();
+        const p = panel.getBoundingClientRect();
+        let top = r.top - p.height - 12;
+        if (top < 8) top = Math.min(r.bottom + 12, window.innerHeight - p.height - 8);
+        let left = r.left + r.width / 2 - p.width / 2;
+        left = Math.max(8, Math.min(left, window.innerWidth - p.width - 8));
+        panel.style.top = `${Math.max(8, top)}px`;
+        panel.style.left = `${left}px`;
       };
-      render();
+      position();
+      // Bring the button into view so the countdown is actually on screen, then re-anchor once
+      // the smooth scroll settles.
+      submitBtn.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      setTimeout(position, 380);
+      const reposition = () => position();
+      window.addEventListener('scroll', reposition, true);
+      window.addEventListener('resize', reposition);
 
-      if (noBtn) {
-        noBtn.textContent = 'Cancel';
-        noBtn.onclick = () => {
-          cancelled = true;
-          clearInterval(interval);
-          if (statusEl) statusEl.textContent = 'Cancelled. Review, then continue yourself.';
-          submitBtn.style.outline = '3px solid #4f46e5';
-          submitBtn.style.outlineOffset = '2px';
-          reportEvent(false);
-          setTimeout(() => card.remove(), 4000);
-        };
+      const cleanupChrome = () => {
+        window.removeEventListener('scroll', reposition, true);
+        window.removeEventListener('resize', reposition);
+        window.removeEventListener('keydown', onKey);
+        overlay.remove();
+      };
+
+      const cancel = () => {
+        if (cancelled) return;
+        cancelled = true;
+        clearInterval(interval);
+        cleanupChrome();
+        submitBtn.style.outline = '3px solid #4f46e5';
+        submitBtn.style.outlineOffset = '2px';
+        if (statusEl) statusEl.textContent = 'Cancelled. Review, then submit yourself.';
+        reportEvent(false);
+        setTimeout(() => card.remove(), 4000);
+      };
+
+      const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') cancel(); };
+      window.addEventListener('keydown', onKey);
+      overlay.querySelector('#wp-as-cancel')?.addEventListener('click', cancel);
+      if (noBtn) { noBtn.textContent = 'Cancel'; noBtn.onclick = cancel; }
+      if (statusEl) {
+        statusEl.textContent = `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. ${actionLabel} in ${remaining}s on the button - tap Cancel to review first.`;
       }
 
       const interval = setInterval(() => {
@@ -656,13 +735,20 @@ export default defineContentScript({
         if (cancelled) { clearInterval(interval); return; }
         if (remaining <= 0) {
           clearInterval(interval);
+          if (num) num.textContent = '0';
+          if (ring) ring.style.strokeDashoffset = String(CIRC);
+          cleanupChrome();
+          submitBtn.style.outline = '';
+          submitBtn.style.outlineOffset = '';
           if (statusEl) statusEl.textContent = `${actionLabel}...`;
           submitBtn.click();
           reportEvent(true);
           setTimeout(() => card.remove(), 2000);
           return;
         }
-        render();
+        if (num) num.textContent = String(remaining);
+        if (ring) ring.style.strokeDashoffset = String(CIRC * (1 - remaining / AUTO_SUBMIT_COUNTDOWN_SECONDS));
+        if (sub) sub.textContent = `${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'} filled. Auto-submits in ${remaining}s.`;
       }, 1000);
     }
 
