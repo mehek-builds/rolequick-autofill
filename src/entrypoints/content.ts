@@ -52,6 +52,10 @@ export default defineContentScript({
 
     let cardInjected = false;
     let approved = false; // true once user taps "Yes" on either card
+    // Set to the cancel fn while an auto-submit countdown is live, so the card's close button and
+    // SPA navigation can stop the countdown (its interval/closure are otherwise unreachable). An
+    // uncancelled countdown could fire a submit after the user backed out, or onto a new page.
+    let activeCountdownCancel: (() => void) | null = null;
 
     // ─── Job title/company extraction ───────────────────────────────────────
 
@@ -187,12 +191,17 @@ export default defineContentScript({
 
     function watchSubmitButton(title: string, company: string, url: string) {
       let watched = false;
+      let observer: MutationObserver | null = null;
 
       function attachListener() {
         if (watched) return;
         const btn = findSubmitButton();
         if (!btn) return;
         watched = true;
+        // The button exists; stop re-scanning the whole body subtree on every mutation.
+        // Without this the observer runs findSubmitButton() (several querySelectorAll + a text
+        // scan of every button) on each DOM change for the life of the tab.
+        observer?.disconnect();
 
         btn.addEventListener('click', () => {
           if (approved) return; // Already drafting from card 1
@@ -203,10 +212,13 @@ export default defineContentScript({
         });
       }
 
-      // Try immediately, then watch for the button to appear (multi-step forms)
+      // Try immediately; only fall back to watching for the button (multi-step forms) if it
+      // isn't there yet, and disconnect as soon as it is (in attachListener).
       attachListener();
-      const observer = new MutationObserver(() => attachListener());
-      observer.observe(document.body, { childList: true, subtree: true });
+      if (!watched) {
+        observer = new MutationObserver(() => attachListener());
+        observer.observe(document.body, { childList: true, subtree: true });
+      }
     }
 
     // ─── LinkedIn Easy Apply modal detection ────────────────────────────────
@@ -434,23 +446,54 @@ export default defineContentScript({
       card.innerHTML = resumeFillCardShell(title, company);
       getCardStack().appendChild(card);
 
-      // Pre-warm: fire the resume-gen request the instant the card renders, not on "Yes" -
-      // it's the slowest step (an LLM round trip), so by the time the student reads the card
-      // and clicks, it's often already done instead of only starting then.
+      // Pre-warm on first HOVER of the card, not on render. Resume generation is the slowest
+      // step (an LLM round trip), so starting it before "Yes" hides most of the wait - but a
+      // render-time pre-warm charged one backend generation (real Anthropic spend AND one of
+      // the monthly resume credits, plus an hourly rate-limit slot) for every card the student
+      // dismissed. Hover is the earliest reliable signal of intent: it still fires seconds
+      // before a click, keeping nearly all of the head start at none of the dismissal cost.
       const jdText = extractJdText();
-      const resumeGenPromise = new Promise<{
+      type ResumeGenResult = {
         error?: string;
         profile?: Profile;
         applicationProfile?: ApplicationProfile;
         resume?: { resume_url: string; file_name: string };
-      }>((resolve) => {
-        chrome.runtime.sendMessage(
-          { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: jdText } },
-          (result) => resolve(result),
-        );
-      });
+      };
+      // Slightly longer than the background's own resume-fetch budget (60s) so its descriptive
+      // error surfaces first; this is the backstop for the worse case where the service worker
+      // is torn down and the callback never fires at all.
+      const RESUME_GEN_TIMEOUT_MS = 65000;
+      let resumeGenPromise: Promise<ResumeGenResult> | null = null;
+      const startResumeGen = (): Promise<ResumeGenResult> => {
+        resumeGenPromise ??= new Promise<ResumeGenResult>((resolve) => {
+          let settled = false;
+          const done = (r: ResumeGenResult) => { if (!settled) { settled = true; resolve(r); } };
+          const timer = setTimeout(
+            () => done({ error: 'Resume generation timed out - fill this form manually.' }),
+            RESUME_GEN_TIMEOUT_MS,
+          );
+          chrome.runtime.sendMessage(
+            { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: jdText } },
+            (result: ResumeGenResult | undefined) => {
+              clearTimeout(timer);
+              // A dead service worker resolves the callback with lastError set (or with no
+              // result), rather than the response object - treat both as a recoverable error
+              // instead of letting `undefined` fall through as a fake success.
+              if (chrome.runtime.lastError || !result) {
+                done({ error: chrome.runtime.lastError?.message || 'Could not reach the extension - fill this form manually.' });
+              } else {
+                done(result);
+              }
+            },
+          );
+        });
+        return resumeGenPromise;
+      };
+      card.addEventListener('mouseenter', () => void startResumeGen(), { once: true });
 
-      const dismiss = () => card.remove();
+      // Closing the card also stops any running countdown - otherwise the timer keeps ticking and
+      // could submit after the student explicitly backed out.
+      const dismiss = () => { activeCountdownCancel?.(); card.remove(); };
       card.querySelector('#wp-resume-close')?.addEventListener('click', dismiss);
       card.querySelector('#wp-resume-no')?.addEventListener('click', dismiss);
       card.querySelector('#wp-resume-yes')?.addEventListener('click', async () => {
@@ -459,7 +502,7 @@ export default defineContentScript({
         if (yesBtn) yesBtn.disabled = true;
         if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Tailoring your resume...'; }
 
-        const result = await resumeGenPromise;
+        const result = await startResumeGen();
         if (!result || result.error || !result.profile || !result.applicationProfile || !result.resume) {
           if (statusEl) statusEl.textContent = result?.error || 'Could not generate a resume - fill this one manually.';
           return;
@@ -470,6 +513,9 @@ export default defineContentScript({
         let resumeBlob: Blob | undefined;
         try {
           const blobRes = await fetch(result.resume.resume_url);
+          // Without the ok check, a 403/404 error page would be handed to the file input as if
+          // it were the PDF; better to skip the file (the adapter flags it) than upload garbage.
+          if (!blobRes.ok) throw new Error(`resume fetch ${blobRes.status}`);
           resumeBlob = await blobRes.blob();
         } catch {
           // No resume file available client-side; the adapter will skip the file input
@@ -477,11 +523,15 @@ export default defineContentScript({
         }
 
         // Safety net: a stuck field (an unexpected widget, a listener that never fires) must
-        // never leave the student staring at "Filling the application..." forever with no
-        // way to know what happened. 20s is generous for even a form with many custom
-        // questions; if the adapter is still running past that, something is wrong and the
-        // student needs to be told rather than left waiting silently.
-        const FILL_TIMEOUT_MS = 20000;
+        // never leave the student staring at "Filling the application..." forever with no way
+        // to know what happened. This is a true-hang backstop, NOT a routine budget: every
+        // adapter now AI-drafts open-ended essays inside fill() (parallel LLM round trips, each
+        // able to fire a grounding-retry), so a form with a few essays can legitimately run well
+        // past 20s. At the old 20s this race routinely tripped on essay-heavy forms, dismissed
+        // the card, and let the essays fill in AFTER the student was told to finish manually.
+        // 90s only fires on a genuine hang; onProgress streams field counts meanwhile so the
+        // student is never staring at a frozen status.
+        const FILL_TIMEOUT_MS = 90000;
         let fillResult: AutofillResult;
         try {
           fillResult = await Promise.race([
@@ -525,8 +575,16 @@ export default defineContentScript({
           return;
         }
 
-        const submitBtn = findSubmitButton();
         const autoSubmitOn = await getAutoSubmitEnabled();
+
+        // If the student closed the card or navigated away DURING the async fill window (both remove
+        // the card), honor that: don't start a countdown or touch the page. The auto-submit
+        // countdown only becomes cancelable once it registers below, so during the up-to-90s fill
+        // await a dismiss/nav can't reach it - the card's liveness is the guard for that window.
+        // Also resolve the submit button only now (after the awaits), so a nav during fill can't
+        // leave us anchored to a stale button.
+        if (!card.isConnected) return;
+        const submitBtn = findSubmitButton();
 
         const reportEvent = (autoSubmitted: boolean) => {
           chrome.runtime.sendMessage({
@@ -571,11 +629,14 @@ export default defineContentScript({
       });
     }
 
-    const AUTO_SUBMIT_COUNTDOWN_SECONDS = 8;
+    const AUTO_SUBMIT_COUNTDOWN_SECONDS = 15;
 
-    // Opt-in only (AutofillSetupScreen toggle). Shows a cancelable countdown in the same card
-    // rather than clicking Submit the instant the fill finishes, so a mis-filled field or a
-    // second thought still has a window to stop it before anything real goes out.
+    // Opt-in only (AutofillSetupScreen toggle). Instead of clicking Submit the instant the fill
+    // finishes, this anchors a live countdown timer directly onto the page's own Submit button:
+    // a depleting ring with the seconds remaining and a big Cancel control, pinned over the
+    // button and following it on scroll/resize. The student sees exactly what is about to be
+    // clicked and has a full 15s + Cancel + Escape to stop it, so nothing real goes out without a
+    // clear, on-the-button window to back out.
     function runAutoSubmitCountdown(
       card: HTMLElement,
       statusEl: HTMLElement | null,
@@ -586,29 +647,114 @@ export default defineContentScript({
       reportEvent: (autoSubmitted: boolean) => void,
       actionLabel: string,
     ) {
+      // Never count down toward a card the student already closed / that navigation removed.
+      if (!card.isConnected) return;
+      // Only one live countdown at a time: cancel any prior one before starting, so a re-injected
+      // card (Workday stage swap, SPA re-init) can't race a second countdown into a double submit.
+      activeCountdownCancel?.();
+
       if (yesBtn) yesBtn.style.display = 'none';
 
       let remaining = AUTO_SUBMIT_COUNTDOWN_SECONDS;
       let cancelled = false;
+      const RADIUS = 20;
+      const CIRC = 2 * Math.PI * RADIUS;
 
-      const render = () => {
-        if (statusEl) {
-          statusEl.textContent = `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. ${actionLabel} in ${remaining}s - tap Cancel to review first.`;
-        }
+      // The button itself gets a highlighted ring so it's unmistakable which control the timer
+      // is counting down toward.
+      submitBtn.style.outline = '3px solid #4f46e5';
+      submitBtn.style.outlineOffset = '3px';
+      submitBtn.style.borderRadius = getComputedStyle(submitBtn).borderRadius || '8px';
+
+      const overlay = document.createElement('div');
+      overlay.id = 'volley-autosubmit-overlay';
+      overlay.style.cssText =
+        'position:fixed;inset:0;z-index:2147483647;pointer-events:none;' +
+        "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;";
+      overlay.innerHTML = `
+        <div id="wp-as-panel" style="
+          pointer-events:auto;position:absolute;display:flex;align-items:center;gap:12px;
+          background:#1e1b4b;color:#fff;border-radius:12px;padding:10px 12px;
+          box-shadow:0 10px 34px rgba(30,27,75,0.42);white-space:nowrap;
+          animation:wp-slide-in 0.2s ease-out;
+        ">
+          <div style="position:relative;width:46px;height:46px;flex-shrink:0;">
+            <svg width="46" height="46" viewBox="0 0 46 46" style="transform:rotate(-90deg);">
+              <circle cx="23" cy="23" r="${RADIUS}" fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="4"/>
+              <circle id="wp-as-ring" cx="23" cy="23" r="${RADIUS}" fill="none" stroke="#a5b4fc"
+                stroke-width="4" stroke-linecap="round" stroke-dasharray="${CIRC}"
+                stroke-dashoffset="0" style="transition:stroke-dashoffset 1s linear;"/>
+            </svg>
+            <div id="wp-as-num" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;">${remaining}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px;">
+            <div style="font-size:12px;font-weight:700;">${actionLabel} your application</div>
+            <div id="wp-as-sub" style="font-size:11px;color:#c7d2fe;">${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'} filled. Auto-submits in ${remaining}s.</div>
+          </div>
+          <button id="wp-as-cancel" style="
+            pointer-events:auto;background:#f43f5e;color:#fff;border:none;border-radius:8px;
+            padding:9px 16px;font-size:12px;font-weight:700;cursor:pointer;
+            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+          ">Cancel</button>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+
+      const panel = overlay.querySelector<HTMLElement>('#wp-as-panel')!;
+      const ring = overlay.querySelector<SVGCircleElement>('#wp-as-ring');
+      const num = overlay.querySelector<HTMLElement>('#wp-as-num');
+      const sub = overlay.querySelector<HTMLElement>('#wp-as-sub');
+
+      // Keep the panel pinned just above the Submit button (falling back to just below it when
+      // there isn't room), clamped inside the viewport, and re-anchored whenever the page scrolls
+      // or resizes so it tracks the real button no matter where it sits on the form.
+      const position = () => {
+        const r = submitBtn.getBoundingClientRect();
+        const p = panel.getBoundingClientRect();
+        let top = r.top - p.height - 12;
+        if (top < 8) top = Math.min(r.bottom + 12, window.innerHeight - p.height - 8);
+        let left = r.left + r.width / 2 - p.width / 2;
+        left = Math.max(8, Math.min(left, window.innerWidth - p.width - 8));
+        panel.style.top = `${Math.max(8, top)}px`;
+        panel.style.left = `${left}px`;
       };
-      render();
+      position();
+      // Bring the button into view so the countdown is actually on screen, then re-anchor once
+      // the smooth scroll settles.
+      submitBtn.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      setTimeout(position, 380);
+      const reposition = () => position();
+      window.addEventListener('scroll', reposition, true);
+      window.addEventListener('resize', reposition);
 
-      if (noBtn) {
-        noBtn.textContent = 'Cancel';
-        noBtn.onclick = () => {
-          cancelled = true;
-          clearInterval(interval);
-          if (statusEl) statusEl.textContent = 'Cancelled. Review, then continue yourself.';
-          submitBtn.style.outline = '3px solid #4f46e5';
-          submitBtn.style.outlineOffset = '2px';
-          reportEvent(false);
-          setTimeout(() => card.remove(), 4000);
-        };
+      const cleanupChrome = () => {
+        window.removeEventListener('scroll', reposition, true);
+        window.removeEventListener('resize', reposition);
+        window.removeEventListener('keydown', onKey);
+        overlay.remove();
+      };
+
+      const cancel = () => {
+        if (cancelled) return;
+        cancelled = true;
+        activeCountdownCancel = null;
+        clearInterval(interval);
+        cleanupChrome();
+        submitBtn.style.outline = '3px solid #4f46e5';
+        submitBtn.style.outlineOffset = '2px';
+        if (statusEl) statusEl.textContent = 'Cancelled. Review, then submit yourself.';
+        reportEvent(false);
+        setTimeout(() => card.remove(), 4000);
+      };
+      // Expose this countdown's cancel so the card's close button and SPA navigation can stop it.
+      activeCountdownCancel = cancel;
+
+      const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') cancel(); };
+      window.addEventListener('keydown', onKey);
+      overlay.querySelector('#wp-as-cancel')?.addEventListener('click', cancel);
+      if (noBtn) { noBtn.textContent = 'Cancel'; noBtn.onclick = cancel; }
+      if (statusEl) {
+        statusEl.textContent = `Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}. ${actionLabel} in ${remaining}s on the button - tap Cancel to review first.`;
       }
 
       const interval = setInterval(() => {
@@ -616,13 +762,30 @@ export default defineContentScript({
         if (cancelled) { clearInterval(interval); return; }
         if (remaining <= 0) {
           clearInterval(interval);
-          if (statusEl) statusEl.textContent = `${actionLabel}...`;
-          submitBtn.click();
-          reportEvent(true);
+          activeCountdownCancel = null;
+          if (num) num.textContent = '0';
+          if (ring) ring.style.strokeDashoffset = String(CIRC);
+          cleanupChrome();
+          submitBtn.style.outline = '';
+          submitBtn.style.outlineOffset = '';
+          // Click ONLY the exact button this countdown anchored and highlighted. Do NOT re-resolve
+          // to some other submit button: on a multi-step form - or after an SPA navigation the
+          // countdown didn't catch - that could submit a form the student never reviewed. If our
+          // button is gone, hand back rather than submit something else.
+          if (submitBtn.isConnected) {
+            if (statusEl) statusEl.textContent = `${actionLabel}...`;
+            submitBtn.click();
+            reportEvent(true);
+          } else {
+            if (statusEl) statusEl.textContent = 'The form changed before submitting. Review and submit it yourself.';
+            reportEvent(false);
+          }
           setTimeout(() => card.remove(), 2000);
           return;
         }
-        render();
+        if (num) num.textContent = String(remaining);
+        if (ring) ring.style.strokeDashoffset = String(CIRC * (1 - remaining / AUTO_SUBMIT_COUNTDOWN_SECONDS));
+        if (sub) sub.textContent = `${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'} filled. Auto-submits in ${remaining}s.`;
       }, 1000);
     }
 
@@ -878,6 +1041,9 @@ export default defineContentScript({
       const currentUrl = location.href;
       if (currentUrl !== lastUrl) {
         lastUrl = currentUrl;
+        // Stop any live auto-submit countdown BEFORE tearing down cards: the page context it
+        // anchored to is gone, so letting it fire could submit the newly-navigated form.
+        activeCountdownCancel?.();
         cardInjected = false;
         approved = false;
         document.getElementById('volley-action-card')?.remove();
@@ -896,7 +1062,18 @@ export default defineContentScript({
     // Volley's three Workday cards is currently showing, so a stage change gets picked up within
     // ~500ms instead of waiting for the next navigation event.
     if (isWorkdayHost) {
-      setInterval(() => {
+      // Poll for Workday's URL-less stage swaps, but not aggressively or forever: at 500ms this
+      // re-ran init() (and its JOB_DETECTED message + storage write + badge update) twice a
+      // second for the entire life of the tab. 1.5s is still well under human stage-change speed,
+      // and we stop after a bounded window so an idle Workday tab left open doesn't poll all day.
+      const WORKDAY_POLL_MS = 1500;
+      const WORKDAY_POLL_MAX_MS = 5 * 60 * 1000;
+      const startedAt = Date.now();
+      const workdayPoll = setInterval(() => {
+        if (Date.now() - startedAt > WORKDAY_POLL_MAX_MS) {
+          clearInterval(workdayPoll);
+          return;
+        }
         if (
           !document.getElementById('volley-account-card') &&
           !document.getElementById('volley-resume-card') &&
@@ -904,7 +1081,7 @@ export default defineContentScript({
         ) {
           init();
         }
-      }, 500);
+      }, WORKDAY_POLL_MS);
     }
   },
 });

@@ -11,6 +11,16 @@ async function getStoredToken(): Promise<string | null> {
   return (result[TOKEN_KEY] as string | undefined) ?? null;
 }
 
+// A hung backend must never leave the caller waiting forever - the resume-fill card awaits
+// these responses, so an unbounded fetch strands the student on "Tailoring your resume...".
+// Resume generation is a real LLM round trip (tens of seconds), so it gets a longer budget
+// than the plain JSON endpoints.
+const FETCH_TIMEOUT_MS = 20000;
+const RESUME_FETCH_TIMEOUT_MS = 60000;
+function timeoutFetch(input: string, init: RequestInit = {}, ms = FETCH_TIMEOUT_MS): Promise<Response> {
+  return fetch(input, { ...init, signal: AbortSignal.timeout(ms) });
+}
+
 // Shape returned by GET /profile (the resume-parsed JSON, sent unwrapped by the backend).
 // Must satisfy the /draft route's user_profile schema, so we fall back to a valid empty
 // profile when the user hasn't uploaded a resume yet (otherwise /draft 400s).
@@ -50,13 +60,13 @@ async function resolveAndDraft(title: string, company: string, url: string, toke
   // Fetch the user's profile first so we can (a) feed their school into contact
   // resolution for alumni matches and (b) ground the drafts. The backend returns the
   // parsed JSON unwrapped, and 404s when no resume has been uploaded yet.
-  const profileRes = await fetch(`${API_BASE}/profile`, {
+  const profileRes = await timeoutFetch(`${API_BASE}/profile`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const userProfile: UserProfile = profileRes.ok ? await profileRes.json() : EMPTY_PROFILE;
 
   // Resolve contacts
-  const resolveRes = await fetch(`${API_BASE}/resolve`, {
+  const resolveRes = await timeoutFetch(`${API_BASE}/resolve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({
@@ -91,7 +101,7 @@ async function resolveAndDraft(title: string, company: string, url: string, toke
   if (second) top.push(second);
 
   const drafts = await Promise.all(top.map(async ({ contact, email_resolution }) => {
-    const draftRes = await fetch(`${API_BASE}/draft`, {
+    const draftRes = await timeoutFetch(`${API_BASE}/draft`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({
@@ -147,17 +157,16 @@ async function generateResumeAndProfile(
   jdText: string,
   token: string,
 ) {
-  const profileRes = await fetch(`${API_BASE}/profile`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  // The two profile fetches are independent, so run them together instead of one-after-another -
+  // this is on the pre-warm critical path, so a saved round trip is a saved round trip.
+  const [profileRes, appProfileRes] = await Promise.all([
+    timeoutFetch(`${API_BASE}/profile`, { headers: { Authorization: `Bearer ${token}` } }),
+    timeoutFetch(`${API_BASE}/profile/application`, { headers: { Authorization: `Bearer ${token}` } }),
+  ]);
   const profile: UserProfile & { full_name?: string; email?: string } = profileRes.ok ? await profileRes.json() : EMPTY_PROFILE;
-
-  const appProfileRes = await fetch(`${API_BASE}/profile/application`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
   const applicationProfile: ApplicationProfileResponse = appProfileRes.ok ? await appProfileRes.json() : {};
 
-  const resumeRes = await fetch(`${API_BASE}/resume/generate`, {
+  const resumeRes = await timeoutFetch(`${API_BASE}/resume/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({
@@ -173,7 +182,7 @@ async function generateResumeAndProfile(
         phone: applicationProfile.phone,
       },
     }),
-  });
+  }, RESUME_FETCH_TIMEOUT_MS);
   if (!resumeRes.ok) {
     const body: { error?: string; detail?: string[] } | null = await resumeRes.json().catch(() => null);
     const message = body?.detail?.length ? `${body.error}: ${body.detail.join(', ')}` : body?.error;
@@ -199,7 +208,17 @@ export default defineBackground(() => {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     switch (message.type) {
       case 'JOB_DETECTED': {
-        lastDetectedJob = message.payload;
+        // Idempotent: content scripts (notably the Workday stage poll) can re-fire this for the
+        // same job repeatedly. Skip the storage write, badge update, and popup broadcast when the
+        // payload is unchanged, so a re-detect of the same posting isn't a write/message storm.
+        const p = message.payload as { title: string; company: string; url: string };
+        const unchanged =
+          lastDetectedJob &&
+          lastDetectedJob.title === p.title &&
+          lastDetectedJob.company === p.company &&
+          lastDetectedJob.url === p.url;
+        if (unchanged) return false;
+        lastDetectedJob = p;
         chrome.storage.session.set({ lastDetectedJob }).catch(() => {});
         chrome.action.setBadgeText({ text: '!' });
         chrome.action.setBadgeBackgroundColor({ color: '#4f46e5' });
@@ -280,11 +299,11 @@ export default defineBackground(() => {
             return;
           }
           try {
-            const res = await fetch(`${API_BASE}/application/answer`, {
+            const res = await timeoutFetch(`${API_BASE}/application/answer`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
               body: JSON.stringify({ company, role, jd_text, question }),
-            });
+            }, RESUME_FETCH_TIMEOUT_MS);
             if (!res.ok) {
               sendResponse({ error: `draft failed (${res.status})` });
               return;
@@ -310,7 +329,7 @@ export default defineBackground(() => {
             return;
           }
           try {
-            const profileRes = await fetch(`${API_BASE}/profile`, { headers: { Authorization: `Bearer ${token}` } });
+            const profileRes = await timeoutFetch(`${API_BASE}/profile`, { headers: { Authorization: `Bearer ${token}` } });
             const profile: { email?: string } = profileRes.ok ? await profileRes.json() : {};
             sendResponse({ email: profile.email });
           } catch (err) {
@@ -323,7 +342,7 @@ export default defineBackground(() => {
       case 'AUTOFILL_EVENT': {
         getStoredToken().then((token) => {
           if (!token) return;
-          fetch(`${API_BASE}/autofill/event`, {
+          timeoutFetch(`${API_BASE}/autofill/event`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify(message.payload),

@@ -1,4 +1,11 @@
 import type { ApplicationProfile, AutofillResult, Profile } from '../types';
+import {
+  commitChoice as checkChoice,
+  isComboboxControl,
+  openCombobox,
+  pickComboOption,
+  closeOpenCombobox,
+} from './shared/dom';
 
 // Generic adapter for companies that build their OWN application form on their own domain
 // against an ATS's API (live-tested targets 2026-07-04: vercel.com/careers - Greenhouse API
@@ -43,6 +50,28 @@ function isVisible(el: HTMLElement): boolean {
   const style = getComputedStyle(el);
   return style.display !== 'none' && style.visibility !== 'hidden';
 }
+
+function visibleLabelFor(el: HTMLInputElement): HTMLElement | null {
+  return (
+    (el.labels && el.labels[0]) ??
+    (el.id ? document.querySelector<HTMLElement>(`label[for="${CSS.escape(el.id)}"]`) : null) ??
+    el.closest('label')
+  );
+}
+
+// Native radios/checkboxes are routinely hidden (display:none / sr-only / 1px absolute)
+// behind a styled <label> that is the control the student actually sees, so the input's own
+// box says nothing about whether the question is on screen. Filtering groups by isVisible(el)
+// dropped those groups before matching even ran, with no skipped_reasons entry - the exact
+// silent non-fill reported for profile-driven radios / EEO-decline.
+function isInteractableChoice(el: HTMLInputElement): boolean {
+  if (isVisible(el)) return true;
+  const label = visibleLabelFor(el);
+  return !!label && isVisible(label);
+}
+
+// checkChoice is the shared commitChoice (imported above) - the click-first radio/checkbox
+// setter, kept in one place so this fix stays in sync across every adapter.
 
 // Strip zero-width and non-breaking characters, then collapse whitespace. Live-tested
 // 2026-07-04 on vercel.com: every radio option is prefixed with U+200B, which `\s` does NOT
@@ -120,8 +149,18 @@ function groupQuestionText(group: HTMLInputElement[], optionTexts: string[]): st
   return text || controlIdentity(group[0]);
 }
 
-function isAutocompleteWidget(el: HTMLElement): boolean {
-  return el.getAttribute('role') === 'combobox' || !!el.getAttribute('aria-autocomplete');
+// Drive a combobox / react-select control to the desired answer: open it, read its rendered
+// options, and click the match. Returns 'filled' on a confident selection, 'skipped' otherwise
+// (menu never opened, or no option matched - better to leave it for the student than guess).
+async function fillComboboxFor(trigger: HTMLElement, desired: Desired): Promise<'filled' | 'skipped'> {
+  if (!desired) return 'skipped';
+  const typeahead = desired.mode === 'value' ? desired.value : undefined;
+  const options = await openCombobox(trigger, typeahead);
+  if (options.length === 0) { closeOpenCombobox(); return 'skipped'; }
+  const match = matchOption(options, desired);
+  if (!match) { closeOpenCombobox(); return 'skipped'; }
+  await pickComboOption(match);
+  return 'filled';
 }
 
 function candidateInputs(): Array<HTMLInputElement | HTMLTextAreaElement> {
@@ -165,27 +204,48 @@ export function getGenericJobDetails(): { title: string; company: string } {
 // from the DOM so it stays pure and testable. 'yes'/'no' are matched against option text by
 // the option matcher; 'decline' matches an opt-out option; 'value' substring-matches.
 
-type Desired =
+export type Desired =
   | { mode: 'value'; value: string }
   | { mode: 'yes' }
   | { mode: 'no' }
   | { mode: 'decline' }
   | null;
 
-function eeoAnswer(pref: string | undefined): Desired {
+export function eeoAnswer(pref: string | undefined): Desired {
   return pref && pref.trim() ? { mode: 'value', value: pref.trim() } : { mode: 'decline' };
 }
 
-function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string, string>): Desired {
+// Work-authorization / sponsorship yes-no resolver, shared by desiredAnswer AND every ATS adapter
+// (they each need the raw wantYes boolean to drive site-specific radios/combos). Returns true if
+// the correct answer is "Yes", false if "No", or null if this isn't a work-auth/sponsor question
+// or the profile can't answer it. Crucially, it handles the INVERTING "without sponsorship"
+// phrasing: "authorized to work WITHOUT sponsorship?" / "able to work without requiring
+// sponsorship?" flip the plain sponsorship answer - the honest Yes there means the student does
+// NOT need sponsorship. Getting a visa question backwards is the worst wrong answer we can give,
+// so this is deliberately the first thing checked.
+export function workAuthWantYes(label: string, ap: ApplicationProfile): boolean | null {
+  const l = label.toLowerCase();
+  const mentionsSponsor = /sponsor/.test(l);
+  const isAuth = /authoriz(ed|ation)\s+to\s+work|legally\s+authorized|right\s+to\s+work|work\s+authoriz/.test(l);
+  const withoutSponsor =
+    mentionsSponsor &&
+    /\bwithout\b|\bno\s+sponsor|\b(do(es)?\s+not|not|don'?t|won'?t)\s+(require|need)/.test(l);
+
+  if (withoutSponsor && ap.needs_sponsorship !== undefined)
+    return !ap.needs_sponsorship && ap.work_authorized !== false;
+  if (isAuth && ap.work_authorized !== undefined) return ap.work_authorized;
+  if (mentionsSponsor && ap.needs_sponsorship !== undefined) return ap.needs_sponsorship;
+  return null;
+}
+
+export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string, string>): Desired {
   const l = label;
   if (NEVER_FILL_PATTERNS.some((re) => re.test(l))) return null;
 
-  // Eligibility yes/no.
-  if (/authoriz(ed|ation)\s+to\s+work|legally\s+authorized|right\s+to\s+work|work\s+authoriz/.test(l) && ap.work_authorized !== undefined)
-    return ap.work_authorized ? { mode: 'yes' } : { mode: 'no' };
-  if (/sponsor/.test(l) && ap.needs_sponsorship !== undefined)
-    return ap.needs_sponsorship ? { mode: 'yes' } : { mode: 'no' };
-  if (/(at least|over|older than)\s*(18|eighteen)|age of majority|18 years/.test(l))
+  // Eligibility yes/no (work authorization + sponsorship, incl. "without sponsorship" phrasing).
+  const wa = workAuthWantYes(l, ap);
+  if (wa !== null) return wa ? { mode: 'yes' } : { mode: 'no' };
+  if (/(at least|over|older than)\s*(18|eighteen)|age of majority|(?<!of )\b18\s+years?\s+(of age|old)/.test(l))
     return { mode: 'yes' };
 
   // EEO / demographics: real answer if the student provided one, else decline.
@@ -216,7 +276,7 @@ const DECLINE_RE = /decline|prefer not|don'?t wish|do not wish|not to (say|answe
 
 // Pick the option whose text best satisfies `desired`, or null if none is a confident match
 // (better to leave blank and report than to select the wrong answer).
-function matchOption<T extends { text: string }>(options: T[], desired: Desired): T | null {
+export function matchOption<T extends { text: string }>(options: T[], desired: Desired): T | null {
   if (!desired) return null;
   const norm = (s: string) => clean(s).toLowerCase();
   if (desired.mode === 'decline') {
@@ -233,14 +293,27 @@ function matchOption<T extends { text: string }>(options: T[], desired: Desired)
     const pick = wantYes ? pos : neg;
     return pick.length === 1 ? pick[0] : null; // ambiguous -> leave for the student
   }
-  // value: exact-ish then substring, both directions.
+  // value: exact match first, then substring in either direction - but only when the substring
+  // match is UNAMBIGUOUS. "Korea" against a country list holding "Korea, Republic of" and
+  // "Korea, Democratic People's Republic of" must not silently commit whichever comes first in
+  // DOM order; two candidates means we can't be sure, so leave it for the student.
   const v = norm(desired.value);
-  return (
-    options.find((o) => norm(o.text) === v) ??
-    options.find((o) => norm(o.text).includes(v)) ??
-    options.find((o) => v.includes(norm(o.text)) && norm(o.text).length > 2) ??
-    null
-  );
+  const exact = options.find((o) => norm(o.text) === v);
+  if (exact) return exact;
+  // Word-boundary substring, never a bare fragment. A plain `.includes` mis-selects on
+  // coincidental letter runs: "asian" is inside "cauc-asian" and "male" is inside "fe-male", so
+  // an Asian applicant against a [White/Caucasian, ...] taxonomy would silently get Caucasian.
+  // The boundary check still matches the legitimate cases ("Korea" -> "Korea, Republic of").
+  const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const vRe = new RegExp('\\b' + escapeRe(v) + '\\b');
+  const contains = options.filter((o) => vRe.test(norm(o.text)));
+  if (contains.length === 1) return contains[0];
+  if (contains.length > 1) return null; // ambiguous -> leave for the student
+  const reverse = options.filter((o) => {
+    const ot = norm(o.text);
+    return ot.length > 2 && new RegExp('\\b' + escapeRe(ot) + '\\b').test(v);
+  });
+  return reverse.length === 1 ? reverse[0] : null;
 }
 
 // ─── DOM fillers ────────────────────────────────────────────────────────────
@@ -333,12 +406,26 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
       value = value.replace(/\/+$/, '').split('/').pop() ?? value; // "linkedin.com/in/" + handle
     }
 
-    if (value) {
-      if (isAutocompleteWidget(el) && !/linkedin|github|portfolio|e-?mail/.test(id)) {
+    // Combobox / react-select (city, country, work-auth yes/no, EEO rendered as a styled
+    // dropdown rather than a native <select>): open it and click the matching option. Poking
+    // .value does nothing to these, so they were previously collected and skipped. Links and
+    // email stay plain text fields even if they carry a combobox role.
+    if (isComboboxControl(el) && !/linkedin|github|portfolio|e-?mail/.test(id)) {
+      const desired: Desired = value !== undefined ? { mode: 'value', value } : desiredAnswer(id, ap, eeo);
+      const res = await fillComboboxFor(el as HTMLElement, desired);
+      if (res === 'filled') {
+        fields_filled++;
+      } else if (desired) {
         fields_skipped++;
-        skipped_reasons.push(`autocomplete field left for manual selection: "${short(id)}"`);
-        continue;
+        skipped_reasons.push(`dropdown left for you: "${short(id)}"`);
+      } else if (id) {
+        fields_skipped++;
+        skipped_reasons.push(`unrecognized field left blank: "${short(id)}"`);
       }
+      continue;
+    }
+
+    if (value) {
       await fillTextField(el, value);
       fields_filled++;
       continue;
@@ -386,7 +473,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
 
   // ── Radio groups (grouped by name) ──
   const radios = [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')].filter(
-    (el) => !el.closest('[id*="volley"]') && !el.disabled && isVisible(el),
+    (el) => !el.closest('[id*="volley"]') && !el.disabled && isInteractableChoice(el),
   );
   const radioGroups = new Map<string, HTMLInputElement[]>();
   for (const r of radios) {
@@ -406,9 +493,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     const match = matchOption(options, desired);
     if (match) {
       await randomDelay();
-      match.el.checked = true;
-      match.el.dispatchEvent(new Event('input', { bubbles: true }));
-      match.el.dispatchEvent(new Event('change', { bubbles: true }));
+      checkChoice(match.el);
       fields_filled++;
     } else if (label) {
       fields_skipped++;
@@ -424,7 +509,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
   //    way as before. ──
   const checkboxGroups = new Map<string | HTMLInputElement, HTMLInputElement[]>();
   for (const cb of [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]) {
-    if (cb.closest('[id*="volley"]') || cb.disabled || cb.checked || !isVisible(cb)) continue;
+    if (cb.closest('[id*="volley"]') || cb.disabled || cb.checked || !isInteractableChoice(cb)) continue;
     const key = cb.name || cb; // unnamed checkboxes each form their own group of one
     (checkboxGroups.get(key) ?? checkboxGroups.set(key, []).get(key)!).push(cb);
   }
@@ -440,9 +525,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
       const match = matchOption(options, desired);
       if (match) {
         await randomDelay();
-        match.el.checked = true;
-        match.el.dispatchEvent(new Event('input', { bubbles: true }));
-        match.el.dispatchEvent(new Event('change', { bubbles: true }));
+        checkChoice(match.el);
         fields_filled++;
       } else if (label) {
         fields_skipped++;
@@ -457,9 +540,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     const desired = isAgreement ? null : desiredAnswer(id, ap, eeo);
     if (desired?.mode === 'yes') {
       await randomDelay();
-      cb.checked = true;
-      cb.dispatchEvent(new Event('input', { bubbles: true }));
-      cb.dispatchEvent(new Event('change', { bubbles: true }));
+      checkChoice(cb);
       fields_filled++;
     } else if (isAgreement) {
       fields_skipped++;
@@ -522,7 +603,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
   }
 
   if (ai_drafted > 0) {
-    skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted — review before submitting`);
+    skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
   return { ats_name: 'generic', fields_filled, fields_skipped, skipped_reasons };
@@ -533,7 +614,7 @@ function markForReview(el: HTMLElement) {
   el.style.outline = '2px solid #f59e0b';
   el.style.outlineOffset = '1px';
   const badge = document.createElement('div');
-  badge.textContent = '✎ AI draft — review before submitting';
+  badge.textContent = '✎ AI draft, review before submitting';
   badge.style.cssText =
     'font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;color:#b45309;margin-top:4px;';
   el.insertAdjacentElement('afterend', badge);

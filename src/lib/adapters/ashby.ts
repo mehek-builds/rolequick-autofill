@@ -30,12 +30,20 @@ import type { ApplicationProfile, AutofillResult, Profile } from '../types';
 // an await), and waitForStableDom() pauses between fields until mutations stop rather than
 // firing every field in one tight loop.
 
-const NEVER_FILL_LABEL_PATTERNS = [/social security/i, /ssn\b/i, /driver'?s?\s*licen[sc]e/i, /background check consent/i];
-
-function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
-  const ms = minMs + Math.random() * (maxMs - minMs);
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+import {
+  commitChoice,
+  NEVER_FILL_LABEL_PATTERNS,
+  randomDelay,
+  setNativeValue,
+  radioOptionsIn,
+  isComboboxControl,
+  openCombobox,
+  pickComboOption,
+  closeOpenCombobox,
+} from './shared/dom';
+// Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
+// the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
+import { desiredAnswer, matchOption, workAuthWantYes, type Desired } from './generic';
 
 // Resolves once the DOM has gone quiet for `quietMs`, or after `maxMs` regardless - Ashby's
 // React tree re-renders after most field changes, and firing the next fill mid-re-render risks
@@ -60,14 +68,6 @@ function waitForStableDom(quietMs = 200, maxMs = 1500): Promise<void> {
   });
 }
 
-function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
-  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-  setter?.call(el, value);
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-}
-
 // Verified live: `fieldset[class*="_fieldEntry_"]` is the per-question container for BOTH radio
 // groups and text inputs. A generic `[class*="_container_"]` ancestor is too broad - it can wrap
 // several unrelated questions together, mixing their radios in one lookup. Prefer <legend> (used
@@ -90,20 +90,76 @@ function isNeverFillField(el: Element): boolean {
   return NEVER_FILL_LABEL_PATTERNS.some((re) => re.test(label));
 }
 
-// Ashby radios carry no meaningful `value` (always "on"); the real option text lives in
-// `label[for=radio.id]`. Returns each radio paired with its label text, lowercased.
-function radioOptionsIn(block: Element): Array<{ radio: HTMLInputElement; text: string }> {
-  return [...block.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((radio) => ({
-    radio,
-    text: (document.querySelector(`label[for="${radio.id}"]`)?.textContent ?? '').trim().toLowerCase(),
-  }));
+// ─── Shared answer helpers (mirror generic.ts's engine) ───────────────────────
+
+// Drive a react-select / listbox combobox to the desired answer: open it, read the rendered
+// options, click the confident match. Returns false (never guesses) when the menu never opens or
+// no option matches, dismissing any open portal first.
+async function fillCombobox(trigger: HTMLElement, desired: Desired): Promise<boolean> {
+  if (!desired) return false;
+  const typeahead = desired.mode === 'value' ? desired.value : undefined;
+  const options = await openCombobox(trigger, typeahead);
+  if (options.length === 0) { closeOpenCombobox(); return false; }
+  const match = matchOption(options, desired);
+  if (!match) { closeOpenCombobox(); return false; }
+  await pickComboOption(match);
+  await waitForStableDom();
+  return true;
+}
+
+function comboControlIn(block: Element): HTMLElement | null {
+  return block.querySelector<HTMLElement>(
+    'input[role="combobox"], [role="combobox"], [aria-haspopup="listbox"], [class*="select__control"], [class*="Select-control"]',
+  );
+}
+
+// Answer a question block that resolved to a known desired value, across a native <select>,
+// native radios (value is always "on" on Ashby, so match by the associated <label>), or a
+// react-select combobox. Every path lets the React tree settle before returning.
+async function answerChoiceBlock(block: Element, desired: Desired): Promise<boolean> {
+  if (!desired) return false;
+
+  const select = block.querySelector<HTMLSelectElement>('select');
+  if (select) {
+    const options = [...select.options]
+      .filter((o) => o.value && !/^(select|choose|please|--)/i.test(o.text.trim()))
+      .map((o) => ({ text: o.text, value: o.value }));
+    const m = matchOption(options, desired);
+    if (m) {
+      select.value = m.value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await waitForStableDom();
+      return true;
+    }
+  }
+
+  const radios = radioOptionsIn(block).map((r) => ({ text: r.text, el: r.radio }));
+  if (radios.length > 0) {
+    const m = matchOption(radios, desired);
+    if (m) { await checkRadio(m.el); return true; }
+  }
+
+  const combo = comboControlIn(block);
+  if (combo && isComboboxControl(combo) && (await fillCombobox(combo, desired))) return true;
+
+  return false;
+}
+
+// Visually flag an AI-drafted field so the student can't miss that it needs review.
+function markForReview(el: HTMLElement): void {
+  el.style.outline = '2px solid #f59e0b';
+  el.style.outlineOffset = '1px';
+  const badge = document.createElement('div');
+  badge.textContent = 'AI draft: review before submitting';
+  badge.style.cssText = 'font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;color:#b45309;margin-top:4px;';
+  el.insertAdjacentElement('afterend', badge);
 }
 
 async function checkRadio(radio: HTMLInputElement): Promise<void> {
   await randomDelay();
-  radio.checked = true;
-  radio.dispatchEvent(new Event('input', { bubbles: true }));
-  radio.dispatchEvent(new Event('change', { bubbles: true }));
+  // Ashby is React-controlled (hence waitForStableDom below); commitChoice clicks rather than
+  // only poking .checked so the selection actually registers in component state.
+  commitChoice(radio);
   await waitForStableDom();
 }
 
@@ -142,6 +198,11 @@ export interface AshbyFillParams {
   applicationProfile: ApplicationProfile;
   resumeBlob?: Blob;
   resumeFileName?: string;
+  // Generic-adapter extras, now honored here too. eeo carries the student's demographic prefs for
+  // EEO questions; draftAnswer AI-drafts an open-ended textarea; onProgress streams counts.
+  eeo?: Record<string, string>;
+  draftAnswer?: (question: string) => Promise<string | null>;
+  onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
 }
 
 export function isAshbyApplicationPage(): boolean {
@@ -159,10 +220,13 @@ export function extractAshbyJdText(): string {
 }
 
 export async function fillAshbyApplication(params: AshbyFillParams): Promise<AutofillResult> {
-  const { fullName, email, applicationProfile, resumeBlob, resumeFileName } = params;
+  const { fullName, email, applicationProfile, resumeBlob, resumeFileName, draftAnswer, onProgress } = params;
+  const eeo = params.eeo ?? {};
   let fields_filled = 0;
   let fields_skipped = 0;
+  let ai_drafted = 0;
   const skipped_reasons: string[] = [];
+  const pendingDrafts: Array<{ el: HTMLTextAreaElement; question: string }> = [];
 
   if (fullName && (await fillBySelector('input[name="_systemfield_name"]', fullName))) fields_filled++;
   if (email && (await fillBySelector('input[name="_systemfield_email"]', email))) {
@@ -268,39 +332,35 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
         continue;
       }
       if (input && !input.value && isCombobox) {
-        fields_skipped++;
-        skipped_reasons.push(`${label.slice(0, 40)}: autocomplete field, left for manual selection`);
+        // Ashby's location field is a react-select combobox: drive it through the shared helpers
+        // rather than skipping it, since a typed value that never selects a suggestion doesn't
+        // register as an answer.
+        if (textTarget && (await fillCombobox(input, { mode: 'value', value: textTarget }))) {
+          fields_filled++;
+        } else {
+          fields_skipped++;
+          skipped_reasons.push(`${label.slice(0, 40)}: autocomplete field, left for manual selection`);
+        }
         continue;
       }
     }
 
     const isEeo = /gender|race|ethnicity|veteran|disability/i.test(label);
     if (isEeo) {
-      const select = block.querySelector<HTMLSelectElement>('select');
-      const declineOption = select ? [...select.options].find((o) => /decline/i.test(o.text)) : undefined;
-      if (select && declineOption) {
-        select.value = declineOption.value;
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-        await waitForStableDom();
-        fields_filled++;
-        continue;
-      }
-      // Native radios: value is always "on" on Ashby, so match by the associated <label> text.
-      const declineRadio = radioOptionsIn(block).find((o) => /decline|prefer not/i.test(o.text));
-      if (declineRadio) {
-        await checkRadio(declineRadio.radio);
+      // Real answer when the student stored one (eeo prefs), else decline. Works whether the
+      // control is a native select, native radios (value="on", matched by label), or a combobox.
+      const desired = desiredAnswer(label, applicationProfile, eeo);
+      if (await answerChoiceBlock(block, desired)) {
         fields_filled++;
       } else {
         fields_skipped++;
-        skipped_reasons.push('EEO field: no decline-to-answer option found, left blank');
+        skipped_reasons.push('EEO field: no matching option found, left blank');
       }
       continue;
     }
 
-    const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
-    const isSponsorQuestion = /sponsorship/i.test(label);
-    if ((isAuthQuestion || isSponsorQuestion) && (applicationProfile.work_authorized !== undefined || applicationProfile.needs_sponsorship !== undefined)) {
-      const wantYes = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
+    const wantYes = workAuthWantYes(label, applicationProfile);
+    if (wantYes !== null) {
       const select = block.querySelector<HTMLSelectElement>('select');
       if (select) {
         const opt = [...select.options].find((o) => new RegExp(wantYes ? '^yes' : '^no', 'i').test(o.text.trim()));
@@ -325,6 +385,12 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
         fields_filled++;
         continue;
       }
+      // Some boards render this question as a react-select combobox rather than native radios.
+      const combo = comboControlIn(block);
+      if (combo && (await fillCombobox(combo, wantYes ? { mode: 'yes' } : { mode: 'no' }))) {
+        fields_filled++;
+        continue;
+      }
       if (options.length > 0) {
         fields_skipped++;
         skipped_reasons.push(`${label.slice(0, 40)}: no unambiguous Yes/No option among [${options.map((o) => o.text).join(', ')}], left blank`);
@@ -332,11 +398,84 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
       }
     }
 
-    const textInput = block.querySelector('input[type="text"], textarea');
-    if (textInput && !(textInput as HTMLInputElement).value) {
+    // Other known-answer questions (age of majority, citizenship, availability, referral source,
+    // salary, DOB) resolved from the profile, across select / radio / combobox / free text.
+    const known = desiredAnswer(label, applicationProfile, eeo);
+    if (known) {
+      if (await answerChoiceBlock(block, known)) {
+        fields_filled++;
+        continue;
+      }
+      if (known.mode === 'value') {
+        const textEl = block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"], input[type="tel"]');
+        const isCombo = textEl ? textEl.getAttribute('role') === 'combobox' || !!textEl.getAttribute('aria-autocomplete') : false;
+        if (textEl && !textEl.value && !isCombo) {
+          await randomDelay();
+          textEl.focus();
+          setNativeValue(textEl, known.value);
+          textEl.blur();
+          await waitForStableDom();
+          fields_filled++;
+          continue;
+        }
+      }
+      fields_skipped++;
+      skipped_reasons.push(`${label.slice(0, 40)}: no matching control, left blank`);
+      continue;
+    }
+
+    // Open-ended screening questions: draft the textarea via the hook if available (flagged for
+    // review), else leave it blank. Short text inputs we couldn't map stay blank for the student.
+    const textarea = block.querySelector<HTMLTextAreaElement>('textarea');
+    if (textarea && !textarea.value) {
+      if (draftAnswer) {
+        pendingDrafts.push({ el: textarea, question: label.slice(0, 200) });
+      } else {
+        fields_skipped++;
+        skipped_reasons.push(`open-ended question left blank: "${label.slice(0, 60)}"`);
+      }
+      continue;
+    }
+    const textInput = block.querySelector<HTMLInputElement>('input[type="text"]');
+    if (textInput && !textInput.value) {
       fields_skipped++;
       skipped_reasons.push(`open-ended question left blank: "${label.slice(0, 60)}"`);
     }
+  }
+
+  // Draft every collected essay CONCURRENTLY (each is an independent LLM round trip), writing and
+  // flagging each as it resolves. A failed or empty draft falls back to leaving it blank, unchanged.
+  if (pendingDrafts.length > 0 && draftAnswer) {
+    let pendingEssays = pendingDrafts.length;
+    onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
+    await Promise.all(
+      pendingDrafts.map(async ({ el, question }) => {
+        let drafted: string | null = null;
+        try {
+          drafted = (await draftAnswer(question))?.trim() || null;
+        } catch {
+          drafted = null;
+        }
+        if (drafted) {
+          await randomDelay();
+          el.focus();
+          setNativeValue(el, drafted);
+          el.blur();
+          markForReview(el);
+          ai_drafted++;
+          fields_filled++;
+        } else {
+          fields_skipped++;
+          skipped_reasons.push(`open-ended question left blank: "${question.slice(0, 60)}"`);
+        }
+        pendingEssays--;
+        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
+      }),
+    );
+  }
+
+  if (ai_drafted > 0) {
+    skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
   return { ats_name: 'ashby', fields_filled, fields_skipped, skipped_reasons };

@@ -11,27 +11,15 @@ import type { ApplicationProfile, AutofillResult, Profile } from '../types';
 // id-based first. Custom questions get per-posting `#question_<id>` ids, so those are still
 // matched by label text like the Lever adapter.
 //
-// The biggest thing live testing caught: yes/no questions (work-authorization, sponsorship),
-// the EEO "decline to answer" options, and the city field are NOT plain inputs or native
-// <select> elements - they're react-select comboboxes (role="combobox", aria-autocomplete="list",
+// The other thing live testing caught: yes/no questions (work-authorization, sponsorship), the
+// EEO "decline to answer" options, and the city field are NOT plain inputs or native <select>
+// elements. They are react-select comboboxes (role="combobox", aria-autocomplete="list",
 // aria-controls="react-select-<id>-listbox" once open). Setting .value directly does nothing
 // real: react-select clears it back to empty on blur since no option was actually selected.
-//
-// selectReactSelectOption() below opens the menu and clicks the matching [role="option"] element
-// - but verified live (2026-07-01), that open step ONLY responds to a genuinely trusted click
-// event. Every synthetic variant tried (dispatchEvent(MouseEvent) on the input, on the
-// `.select__control` wrapper, focus(), a synthetic ArrowDown keydown) left aria-expanded="false";
-// a real click via Chrome's input-injection layer opened it instantly. Content scripts can only
-// ever dispatch untrusted events (isTrusted is always false for anything script-originated - this
-// isn't fixable with a different event type or target), so THIS WIDGET CLASS CANNOT BE FILLED by
-// any Manifest V3 content script, Volley's or anyone else's. selectReactSelectOption() is kept
-// because it's harmless when it fails (falls through to skip+flag, never fakes success, never
-// partially fills), and some other Greenhouse deployments may render a plain native <select> or a
-// less defended combobox that DOES respond to synthetic events - but on this template, expect
-// every combobox-shaped custom question to end up in `skipped_reasons` for the student to fill
-// by hand. Core identity fields (name/email/phone/resume) and genuinely-plain-text custom
-// questions (LinkedIn/GitHub/portfolio links, open-ended text) are real inputs, not comboboxes,
-// and fill normally - confirmed working live.
+// These are now driven through the shared combobox helpers (openCombobox / pickComboOption),
+// which open the menu with a real pointer sequence and click the matching option node the way a
+// user does. Where the menu never opens or no option matches, the field is left blank and
+// flagged rather than faked (closeOpenCombobox dismisses any lingering portal).
 //
 // Cross-origin iframe (Section 12.3's spike): some companies embed their Greenhouse board inside
 // an iframe on their own domain (e.g. company.com/careers embedding boards.greenhouse.io/company).
@@ -42,20 +30,21 @@ import type { ApplicationProfile, AutofillResult, Profile } from '../types';
 // embed that proxies the form through the parent's own origin instead of an iframe pointing at a
 // greenhouse.io URL; that case still isn't covered and is flagged below.
 
-const NEVER_FILL_LABEL_PATTERNS = [/social security/i, /ssn\b/i, /driver'?s?\s*licen[sc]e/i, /background check consent/i];
-
-function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
-  const ms = minMs + Math.random() * (maxMs - minMs);
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
-  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-  setter?.call(el, value);
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-}
+import {
+  commitChoice,
+  NEVER_FILL_LABEL_PATTERNS,
+  randomDelay,
+  fillField,
+  splitName,
+  isComboboxControl,
+  openCombobox,
+  pickComboOption,
+  closeOpenCombobox,
+} from './shared/dom';
+// Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
+// the same answer and picks the same option. These are pure (no DOM) and covered by
+// generic.answers.test.ts + ats-answer.test.ts.
+import { desiredAnswer, matchOption, workAuthWantYes, type Desired } from './generic';
 
 function labelTextFor(el: Element): string {
   const container = el.closest('.field-wrapper, .field, #custom_fields > div, li') ?? el.parentElement;
@@ -76,69 +65,72 @@ function isNeverFillField(el: Element): boolean {
   return NEVER_FILL_LABEL_PATTERNS.some((re) => re.test(label));
 }
 
-async function fillField(el: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
-  await randomDelay();
-  el.focus();
-  setNativeValue(el, value);
-  el.blur();
-}
+// ─── Shared answer helpers (mirror generic.ts's engine) ───────────────────────
 
-// aria-controls only exists once the menu is open (react-select adds it dynamically), so it
-// can't be used to detect a closed combobox - aria-autocomplete is present in both states.
-function isReactSelectCombobox(el: Element): el is HTMLInputElement {
-  return el.getAttribute('role') === 'combobox' && el.getAttribute('aria-autocomplete') === 'list';
-}
-
-async function waitFor(predicate: () => boolean, timeoutMs = 800, stepMs = 60): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (predicate()) return true;
-    await new Promise((r) => setTimeout(r, stepMs));
-  }
-  return predicate();
-}
-
-// Drives a react-select combobox by opening its menu and clicking a real option element - the
-// only way that actually registers a selection. `matchText` is matched case-insensitively; exact
-// match wins, otherwise the first option whose text contains it. Returns false (never guesses,
-// never fakes success) whenever the menu never opens or no matching option appears - which, per
-// the file header note, is the expected outcome on this Greenhouse template's react-select
-// widgets specifically, since their menu-open handler only responds to a trusted click.
-async function selectReactSelectOption(input: HTMLInputElement, matchText: string): Promise<boolean> {
-  await randomDelay();
-  const listboxId = input.getAttribute('aria-controls')!;
-  input.focus();
-  input.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-  await waitFor(() => input.getAttribute('aria-expanded') === 'true');
-
-  const findMatch = () => {
-    const listbox = document.getElementById(listboxId);
-    if (!listbox) return null;
-    const options = [...listbox.querySelectorAll<HTMLElement>(`[id^="${listboxId}-option-"]`)];
-    return (
-      options.find((o) => o.textContent?.trim().toLowerCase() === matchText.toLowerCase()) ??
-      options.find((o) => o.textContent?.toLowerCase().includes(matchText.toLowerCase())) ??
-      null
-    );
-  };
-
-  let match = findMatch();
-  if (!match) {
-    // Large/searchable option sets (e.g. city, university) need typing to filter down first.
-    setNativeValue(input, matchText);
-    await waitFor(() => findMatch() !== null, 1200);
-    match = findMatch();
-  }
-  if (!match) {
-    input.blur();
-    return false;
-  }
-
-  match.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-  match.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-  match.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-  await randomDelay();
+// Drive a react-select / listbox combobox to the desired answer: open it, read the rendered
+// options, click the confident match. Poking .value does nothing to these widgets, which is why
+// they were previously collected and skipped. Returns false (never guesses) when the menu never
+// opens or no option matches, dismissing any open portal first.
+async function fillCombobox(trigger: HTMLElement, desired: Desired): Promise<boolean> {
+  if (!desired) return false;
+  const typeahead = desired.mode === 'value' ? desired.value : undefined;
+  const options = await openCombobox(trigger, typeahead);
+  if (options.length === 0) { closeOpenCombobox(); return false; }
+  const match = matchOption(options, desired);
+  if (!match) { closeOpenCombobox(); return false; }
+  await pickComboOption(match);
   return true;
+}
+
+// The combobox trigger inside a question block, if the block renders one.
+function comboControlIn(block: Element): HTMLElement | null {
+  return block.querySelector<HTMLElement>(
+    'input[role="combobox"], [role="combobox"], [aria-haspopup="listbox"], [class*="select__control"], [class*="Select-control"]',
+  );
+}
+
+// Answer a question block that resolved to a known desired value, across the three shapes an ATS
+// renders a choice as: a native <select>, native radios, or a react-select combobox. Radio option
+// text prefers the associated <label>, falling back to the value attribute.
+async function answerChoiceBlock(block: Element, desired: Desired): Promise<boolean> {
+  if (!desired) return false;
+
+  const select = block.querySelector<HTMLSelectElement>('select');
+  if (select) {
+    const options = [...select.options]
+      .filter((o) => o.value && !/^(select|choose|please|--)/i.test(o.text.trim()))
+      .map((o) => ({ text: o.text, value: o.value }));
+    const m = matchOption(options, desired);
+    if (m) {
+      select.value = m.value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    }
+  }
+
+  const radios = [...block.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((r) => ({
+    text: (document.querySelector(`label[for="${r.id}"]`)?.textContent ?? r.closest('label')?.textContent ?? r.value ?? '').trim(),
+    el: r,
+  }));
+  if (radios.length > 0) {
+    const m = matchOption(radios, desired);
+    if (m) { commitChoice(m.el); return true; }
+  }
+
+  const combo = comboControlIn(block);
+  if (combo && isComboboxControl(combo) && (await fillCombobox(combo, desired))) return true;
+
+  return false;
+}
+
+// Visually flag an AI-drafted field so the student can't miss that it needs review.
+function markForReview(el: HTMLElement): void {
+  el.style.outline = '2px solid #f59e0b';
+  el.style.outlineOffset = '1px';
+  const badge = document.createElement('div');
+  badge.textContent = 'AI draft: review before submitting';
+  badge.style.cssText = 'font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;color:#b45309;margin-top:4px;';
+  el.insertAdjacentElement('afterend', badge);
 }
 
 // `<input type="file">` can't be set directly by script; construct a File/DataTransfer and
@@ -162,6 +154,11 @@ export interface GreenhouseFillParams {
   applicationProfile: ApplicationProfile;
   resumeBlob?: Blob;
   resumeFileName?: string;
+  // Generic-adapter extras, now honored here too. eeo carries the student's demographic prefs for
+  // EEO questions; draftAnswer AI-drafts an open-ended textarea; onProgress streams counts.
+  eeo?: Record<string, string>;
+  draftAnswer?: (question: string) => Promise<string | null>;
+  onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
 }
 
 export function isGreenhouseApplicationPage(): boolean {
@@ -180,16 +177,14 @@ export function extractGreenhouseJdText(): string {
   return (descText || document.body.innerText).trim().slice(0, 12000);
 }
 
-function splitName(fullName: string): { first: string; last: string } {
-  const parts = fullName.trim().split(/\s+/);
-  return { first: parts[0] ?? '', last: parts.slice(1).join(' ') };
-}
-
 export async function fillGreenhouseApplication(params: GreenhouseFillParams): Promise<AutofillResult> {
-  const { fullName, email, profile, applicationProfile, resumeBlob, resumeFileName } = params;
+  const { fullName, email, applicationProfile, resumeBlob, resumeFileName, draftAnswer, onProgress } = params;
+  const eeo = params.eeo ?? {};
   let fields_filled = 0;
   let fields_skipped = 0;
+  let ai_drafted = 0;
   const skipped_reasons: string[] = [];
+  const pendingDrafts: Array<{ el: HTMLTextAreaElement; question: string }> = [];
 
   const firstEl = firstMatch<HTMLInputElement>(['#first_name', 'input[name="job_application[first_name]"]']);
   const lastEl = firstMatch<HTMLInputElement>(['#last_name', 'input[name="job_application[last_name]"]']);
@@ -224,8 +219,8 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
     fields_filled++;
   }
   if (cityEl && !cityEl.value && applicationProfile.address_city) {
-    if (isReactSelectCombobox(cityEl)) {
-      if (await selectReactSelectOption(cityEl, applicationProfile.address_city)) {
+    if (isComboboxControl(cityEl)) {
+      if (await fillCombobox(cityEl, { mode: 'value', value: applicationProfile.address_city })) {
         fields_filled++;
       } else {
         fields_skipped++;
@@ -248,8 +243,8 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
     skipped_reasons.push('resume: no file input found in this frame (possible cross-origin embed without a same-frame uploader)');
   }
 
-  // Custom fields (links, work-auth, sponsorship, EEO) get dynamic per-posting IDs, so match by
-  // the surrounding label text instead of a selector - same approach as the Lever adapter.
+  // Custom fields (links, work-auth, sponsorship, EEO, screening) get dynamic per-posting IDs, so
+  // match by the surrounding label text instead of a selector - same approach as the Lever adapter.
   const questionBlocks = document.querySelectorAll(
     '.field-wrapper, #custom_fields .field, #custom_fields > div, .eeoc-container .field',
   );
@@ -283,50 +278,30 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
 
     const isEeo = /gender|race|ethnicity|veteran|disability/i.test(label);
     if (isEeo) {
-      // Never guess or default EEO fields (PRD-v2 non-goals). Only select "Decline to
-      // Self-Identify" where the option exists; otherwise leave untouched.
-      const select = block.querySelector<HTMLSelectElement>('select');
-      const declineOption = select
-        ? [...select.options].find((o) => /decline/i.test(o.text))
-        : undefined;
-      const comboboxInput = block.querySelector<HTMLInputElement>('input[role="combobox"]');
-      if (select && declineOption) {
-        select.value = declineOption.value;
-        select.dispatchEvent(new Event('change', { bubbles: true }));
+      // Real answer when the student stored one (eeo prefs), else decline. Works whether the
+      // control is a native select, native radios, or a react-select combobox.
+      const desired = desiredAnswer(label, applicationProfile, eeo);
+      if (await answerChoiceBlock(block, desired)) {
         fields_filled++;
-      } else if (comboboxInput && isReactSelectCombobox(comboboxInput)) {
-        if (await selectReactSelectOption(comboboxInput, 'Decline')) {
-          fields_filled++;
-        } else {
-          fields_skipped++;
-          skipped_reasons.push('EEO field: no decline-to-answer option found, left blank');
-        }
       } else {
-        const declineRadio = block.querySelector<HTMLInputElement>('input[type="radio"][value*="Decline" i]');
-        if (declineRadio) {
-          declineRadio.checked = true;
-          declineRadio.dispatchEvent(new Event('change', { bubbles: true }));
-          fields_filled++;
-        } else {
-          fields_skipped++;
-          skipped_reasons.push('EEO field: no decline-to-answer option found, left blank');
-        }
+        fields_skipped++;
+        skipped_reasons.push('EEO field: no matching option found, left blank');
       }
       continue;
     }
 
-    const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
-    const isSponsorQuestion = /sponsorship/i.test(label);
-    if ((isAuthQuestion || isSponsorQuestion) && (applicationProfile.work_authorized !== undefined || applicationProfile.needs_sponsorship !== undefined)) {
-      const wantYes = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
-      const select = block.querySelector<HTMLSelectElement>('select');
+    const wantYes = workAuthWantYes(label, applicationProfile);
+    if (wantYes !== null) {
+      const desired: Desired = wantYes ? { mode: 'yes' } : { mode: 'no' };
+
+      // Native radios carry real values on Greenhouse (value="Yes"/"No"); try those first.
       const radio = block.querySelector<HTMLInputElement>(`input[type="radio"][value="${wantYes ? 'Yes' : 'No'}" i]`);
       if (radio) {
-        radio.checked = true;
-        radio.dispatchEvent(new Event('change', { bubbles: true }));
+        commitChoice(radio);
         fields_filled++;
         continue;
       }
+      const select = block.querySelector<HTMLSelectElement>('select');
       if (select) {
         const opt = [...select.options].find((o) => new RegExp(wantYes ? '^yes' : '^no', 'i').test(o.text.trim()));
         if (opt) {
@@ -336,32 +311,90 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
           continue;
         }
       }
-      // Verified live (2026-07-01, Gemini's Greenhouse posting): these yes/no questions render
-      // as a react-select combobox far more often than a plain input - a bare setNativeValue
-      // gets silently cleared by react-select on blur since no option was actually selected.
-      const textYesNo = block.querySelector<HTMLInputElement>('input[type="text"]');
-      if (textYesNo && !textYesNo.value) {
-        if (isReactSelectCombobox(textYesNo)) {
-          if (await selectReactSelectOption(textYesNo, wantYes ? 'Yes' : 'No')) {
-            fields_filled++;
-          } else {
-            fields_skipped++;
-            skipped_reasons.push(`${label.slice(0, 40)}: no matching Yes/No option found, left blank`);
-          }
-        } else {
-          await fillField(textYesNo, wantYes ? 'Yes' : 'No');
-          fields_filled++;
-        }
+      // Verified live (2026-07-01, Gemini's Greenhouse posting): these yes/no questions render as
+      // a react-select combobox far more often than a plain input. Drive it through the shared
+      // combobox helpers, which open the menu and click the matching option.
+      const combo = comboControlIn(block);
+      if (combo && (await fillCombobox(combo, desired))) {
+        fields_filled++;
         continue;
       }
+      fields_skipped++;
+      skipped_reasons.push(`${label.slice(0, 40)}: no matching Yes/No control found, left blank`);
+      continue;
     }
 
-    // Open-ended screening questions are left blank rather than guessed (PRD-v2 Section 12.4).
-    const textInput = block.querySelector('input[type="text"], textarea');
-    if (textInput && !(textInput as HTMLInputElement).value) {
+    // Other known-answer questions (age of majority, citizenship, availability, referral source,
+    // salary, DOB) resolved from the profile, across select / radio / combobox / free text.
+    const known = desiredAnswer(label, applicationProfile, eeo);
+    if (known) {
+      if (await answerChoiceBlock(block, known)) {
+        fields_filled++;
+        continue;
+      }
+      if (known.mode === 'value') {
+        const textEl = block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"], input[type="tel"]');
+        if (textEl && !textEl.value && !isComboboxControl(textEl)) {
+          await fillField(textEl, known.value);
+          fields_filled++;
+          continue;
+        }
+      }
+      fields_skipped++;
+      skipped_reasons.push(`${label.slice(0, 40)}: no matching control, left blank`);
+      continue;
+    }
+
+    // Open-ended screening questions: draft the textarea via the hook if available (flagged for
+    // review), else leave it blank. Short text inputs we couldn't map stay blank for the student.
+    const textarea = block.querySelector<HTMLTextAreaElement>('textarea');
+    if (textarea && !textarea.value) {
+      if (draftAnswer) {
+        pendingDrafts.push({ el: textarea, question: (labelTextFor(block) || label).slice(0, 200) });
+      } else {
+        fields_skipped++;
+        skipped_reasons.push(`open-ended question left blank: "${label.slice(0, 60)}"`);
+      }
+      continue;
+    }
+    const textInput = block.querySelector<HTMLInputElement>('input[type="text"]');
+    if (textInput && !textInput.value) {
       fields_skipped++;
       skipped_reasons.push(`open-ended question left blank: "${label.slice(0, 60)}"`);
     }
+  }
+
+  // Draft every collected essay CONCURRENTLY (each is an independent LLM round trip), writing and
+  // flagging each as it resolves. If a draft fails or returns nothing, fall back to leaving it
+  // blank plus the skip reason, unchanged.
+  if (pendingDrafts.length > 0 && draftAnswer) {
+    let pendingEssays = pendingDrafts.length;
+    onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
+    await Promise.all(
+      pendingDrafts.map(async ({ el, question }) => {
+        let drafted: string | null = null;
+        try {
+          drafted = (await draftAnswer(question))?.trim() || null;
+        } catch {
+          drafted = null;
+        }
+        if (drafted) {
+          await fillField(el, drafted);
+          markForReview(el);
+          ai_drafted++;
+          fields_filled++;
+        } else {
+          fields_skipped++;
+          skipped_reasons.push(`open-ended question left blank: "${question.slice(0, 60)}"`);
+        }
+        pendingEssays--;
+        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
+      }),
+    );
+  }
+
+  if (ai_drafted > 0) {
+    skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
   return { ats_name: 'greenhouse', fields_filled, fields_skipped, skipped_reasons };

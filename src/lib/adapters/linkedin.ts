@@ -33,27 +33,21 @@ const EASY_APPLY_MODAL_SELECTORS = [
   '[class*="easy-apply-modal"]',
 ];
 
-const NEVER_FILL_LABEL_PATTERNS = [/social security/i, /ssn\b/i, /driver'?s?\s*licen[sc]e/i, /background check consent/i];
-
-function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
-  const ms = minMs + Math.random() * (maxMs - minMs);
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
-  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-  setter?.call(el, value);
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-}
-
-async function fillField(el: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
-  await randomDelay();
-  el.focus();
-  setNativeValue(el, value);
-  el.blur();
-}
+import {
+  commitChoice,
+  NEVER_FILL_LABEL_PATTERNS,
+  randomDelay,
+  setNativeValue,
+  fillField,
+  radioOptionsIn,
+  isComboboxControl,
+  openCombobox,
+  pickComboOption,
+  closeOpenCombobox,
+} from './shared/dom';
+// Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
+// the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
+import { desiredAnswer, matchOption, workAuthWantYes, type Desired } from './generic';
 
 function getModal(): Element | null {
   for (const sel of EASY_APPLY_MODAL_SELECTORS) {
@@ -99,28 +93,92 @@ function isNeverFillField(el: Element): boolean {
   return NEVER_FILL_LABEL_PATTERNS.some((re) => re.test(labelTextFor(el)));
 }
 
-// LinkedIn radios (like Ashby's) carry no meaningful `value` attribute - the real option
-// text lives in the associated `<label for=radio.id>`.
-function radioOptionsIn(block: Element): Array<{ radio: HTMLInputElement; text: string }> {
-  return [...block.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((radio) => ({
-    radio,
-    text: (document.querySelector(`label[for="${radio.id}"]`)?.textContent ?? '').trim().toLowerCase(),
-  }));
+// ─── Shared answer helpers (mirror generic.ts's engine) ───────────────────────
+
+// Drive a react-select / listbox combobox to the desired answer: open it, read the rendered
+// options, click the confident match. Returns false (never guesses) when the menu never opens or
+// no option matches, dismissing any open portal first.
+async function fillCombobox(trigger: HTMLElement, desired: Desired): Promise<boolean> {
+  if (!desired) return false;
+  const typeahead = desired.mode === 'value' ? desired.value : undefined;
+  const options = await openCombobox(trigger, typeahead);
+  if (options.length === 0) { closeOpenCombobox(); return false; }
+  const match = matchOption(options, desired);
+  if (!match) { closeOpenCombobox(); return false; }
+  await pickComboOption(match);
+  return true;
+}
+
+function comboControlIn(block: Element): HTMLElement | null {
+  return block.querySelector<HTMLElement>(
+    'input[role="combobox"], [role="combobox"], [aria-haspopup="listbox"], [class*="select__control"], [class*="Select-control"]',
+  );
+}
+
+// Answer a question block that resolved to a known desired value, across a native <select>,
+// native radios (LinkedIn radios carry value="on", so match by the associated <label>), or a
+// react-select combobox.
+async function answerChoiceBlock(block: Element, desired: Desired): Promise<boolean> {
+  if (!desired) return false;
+
+  const select = block.querySelector<HTMLSelectElement>('select');
+  if (select) {
+    const options = [...select.options]
+      .filter((o) => o.value && !/^(select|choose|please|--)/i.test(o.text.trim()))
+      .map((o) => ({ text: o.text, value: o.value }));
+    const m = matchOption(options, desired);
+    if (m) {
+      select.value = m.value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    }
+  }
+
+  const radios = radioOptionsIn(block).map((r) => ({ text: r.text, el: r.radio }));
+  if (radios.length > 0) {
+    const m = matchOption(radios, desired);
+    if (m) { await checkRadio(m.el); return true; }
+  }
+
+  const combo = comboControlIn(block);
+  if (combo && isComboboxControl(combo) && (await fillCombobox(combo, desired))) return true;
+
+  return false;
+}
+
+// Visually flag an AI-drafted field so the student can't miss that it needs review.
+function markForReview(el: HTMLElement): void {
+  el.style.outline = '2px solid #f59e0b';
+  el.style.outlineOffset = '1px';
+  const badge = document.createElement('div');
+  badge.textContent = 'AI draft: review before submitting';
+  badge.style.cssText = 'font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;color:#b45309;margin-top:4px;';
+  el.insertAdjacentElement('afterend', badge);
 }
 
 async function checkRadio(radio: HTMLInputElement): Promise<void> {
   await randomDelay();
-  radio.checked = true;
-  radio.dispatchEvent(new Event('click', { bubbles: true }));
-  radio.dispatchEvent(new Event('change', { bubbles: true }));
+  commitChoice(radio);
 }
 
 // `<input type="file">` can't be set directly by script; construct a File/DataTransfer and
 // dispatch it. LinkedIn's resume-upload card wraps a real file input in most postings.
 async function fillResumeFile(modal: Element, blob: Blob, fileName: string): Promise<boolean> {
-  const input = modal.querySelector<HTMLInputElement>(
-    '.jobs-document-upload-redesign-card__container input[type="file"], input[type="file"][name="file"], input[type="file"]',
-  );
+  // Don't just grab the first file input: an Easy Apply modal can also have a cover-letter or
+  // photo slot, and dropping the resume PDF into the wrong one is worse than skipping it. Prefer an
+  // input whose context names resume/CV, avoid ones naming cover-letter/photo, and only fall back
+  // to a lone input when there's exactly one.
+  const inputs = [...modal.querySelectorAll<HTMLInputElement>('input[type="file"]')];
+  if (inputs.length === 0) return false;
+  const contextOf = (el: HTMLInputElement) =>
+    `${el.getAttribute('name') ?? ''} ${el.getAttribute('id') ?? ''} ${el.getAttribute('aria-label') ?? ''} ${
+      el.closest('.jobs-document-upload-redesign-card__container, [class*="upload"], label, fieldset')?.textContent ?? ''
+    }`.toLowerCase();
+  const isOther = (el: HTMLInputElement) => /cover\s*letter|photo|headshot|portfolio/.test(contextOf(el));
+  const input =
+    inputs.find((el) => /resume|\bcv\b/.test(contextOf(el))) ??
+    (inputs.length === 1 ? inputs[0] : inputs.find((el) => !isOther(el))) ??
+    null;
   if (!input) return false;
   await randomDelay();
   const file = new File([blob], fileName, { type: 'application/pdf' });
@@ -138,13 +196,21 @@ export interface LinkedInFillParams {
   applicationProfile: ApplicationProfile;
   resumeBlob?: Blob;
   resumeFileName?: string;
+  // Generic-adapter extras, now honored here too. eeo carries the student's demographic prefs for
+  // EEO questions; draftAnswer AI-drafts an open-ended textarea; onProgress streams counts.
+  eeo?: Record<string, string>;
+  draftAnswer?: (question: string) => Promise<string | null>;
+  onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
 }
 
 export async function fillLinkedInApplication(params: LinkedInFillParams): Promise<AutofillResult> {
-  const { email, applicationProfile, resumeBlob, resumeFileName } = params;
+  const { email, applicationProfile, resumeBlob, resumeFileName, draftAnswer, onProgress } = params;
+  const eeo = params.eeo ?? {};
   let fields_filled = 0;
   let fields_skipped = 0;
+  let ai_drafted = 0;
   const skipped_reasons: string[] = [];
+  const pendingDrafts: Array<{ el: HTMLTextAreaElement; question: string }> = [];
 
   const modal = getModal();
   if (!modal) {
@@ -211,30 +277,20 @@ export async function fillLinkedInApplication(params: LinkedInFillParams): Promi
 
     const isEeo = /gender|race|ethnicity|veteran|disability/i.test(label);
     if (isEeo) {
-      // Never guess or default EEO/voluntary self-identification fields (PRD-v2 non-goals).
-      const select = block.querySelector<HTMLSelectElement>('select');
-      const declineOption = select ? [...select.options].find((o) => /decline/i.test(o.text)) : undefined;
-      if (select && declineOption) {
-        select.value = declineOption.value;
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-        fields_filled++;
-        continue;
-      }
-      const declineRadio = radioOptionsIn(block).find((o) => /decline|prefer not/i.test(o.text));
-      if (declineRadio) {
-        await checkRadio(declineRadio.radio);
+      // Real answer when the student stored one (eeo prefs), else decline. Works whether the
+      // control is a native select, native radios (value="on", matched by label), or a combobox.
+      const desired = desiredAnswer(label, applicationProfile, eeo);
+      if (await answerChoiceBlock(block, desired)) {
         fields_filled++;
       } else {
         fields_skipped++;
-        skipped_reasons.push('EEO field: no decline-to-answer option found, left blank');
+        skipped_reasons.push('EEO field: no matching option found, left blank');
       }
       continue;
     }
 
-    const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
-    const isSponsorQuestion = /sponsorship/i.test(label);
-    if ((isAuthQuestion || isSponsorQuestion) && (applicationProfile.work_authorized !== undefined || applicationProfile.needs_sponsorship !== undefined)) {
-      const wantYes = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
+    const wantYes = workAuthWantYes(label, applicationProfile);
+    if (wantYes !== null) {
       const select = block.querySelector<HTMLSelectElement>('select');
       if (select) {
         const opt = [...select.options].find((o) => new RegExp(wantYes ? '^yes' : '^no', 'i').test(o.text.trim()));
@@ -256,6 +312,12 @@ export async function fillLinkedInApplication(params: LinkedInFillParams): Promi
         fields_filled++;
         continue;
       }
+      // Some Easy Apply questions render as a react-select combobox rather than native radios.
+      const combo = comboControlIn(block);
+      if (combo && (await fillCombobox(combo, wantYes ? { mode: 'yes' } : { mode: 'no' }))) {
+        fields_filled++;
+        continue;
+      }
       if (options.length > 0) {
         fields_skipped++;
         skipped_reasons.push(`${label.slice(0, 40)}: no unambiguous Yes/No option among [${options.map((o) => o.text).join(', ')}], left blank`);
@@ -263,12 +325,76 @@ export async function fillLinkedInApplication(params: LinkedInFillParams): Promi
       }
     }
 
-    // Open-ended screening questions are left blank rather than guessed (PRD-v2 Section 12.4).
-    const textInput = block.querySelector('input[type="text"], textarea');
-    if (textInput && !(textInput as HTMLInputElement).value) {
+    // Other known-answer questions (age of majority, citizenship, availability, referral source,
+    // salary, DOB) resolved from the profile, across select / radio / combobox / free text.
+    const known = desiredAnswer(label, applicationProfile, eeo);
+    if (known) {
+      if (await answerChoiceBlock(block, known)) {
+        fields_filled++;
+        continue;
+      }
+      if (known.mode === 'value') {
+        const textEl = block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"], input[type="tel"]');
+        if (textEl && !textEl.value && !isComboboxControl(textEl)) {
+          await fillField(textEl, known.value);
+          fields_filled++;
+          continue;
+        }
+      }
+      fields_skipped++;
+      skipped_reasons.push(`${label.slice(0, 40)}: no matching control, left blank`);
+      continue;
+    }
+
+    // Open-ended screening questions: draft the textarea via the hook if available (flagged for
+    // review), else leave it blank. Short text inputs we couldn't map stay blank for the student.
+    const textarea = block.querySelector<HTMLTextAreaElement>('textarea');
+    if (textarea && !textarea.value) {
+      if (draftAnswer) {
+        pendingDrafts.push({ el: textarea, question: label.slice(0, 200) });
+      } else {
+        fields_skipped++;
+        skipped_reasons.push(`open-ended question left blank: "${label.slice(0, 60)}"`);
+      }
+      continue;
+    }
+    const textInput = block.querySelector<HTMLInputElement>('input[type="text"]');
+    if (textInput && !textInput.value) {
       fields_skipped++;
       skipped_reasons.push(`open-ended question left blank: "${label.slice(0, 60)}"`);
     }
+  }
+
+  // Draft every collected essay CONCURRENTLY (each is an independent LLM round trip), writing and
+  // flagging each as it resolves. A failed or empty draft falls back to leaving it blank, unchanged.
+  if (pendingDrafts.length > 0 && draftAnswer) {
+    let pendingEssays = pendingDrafts.length;
+    onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
+    await Promise.all(
+      pendingDrafts.map(async ({ el, question }) => {
+        let drafted: string | null = null;
+        try {
+          drafted = (await draftAnswer(question))?.trim() || null;
+        } catch {
+          drafted = null;
+        }
+        if (drafted) {
+          await fillField(el, drafted);
+          markForReview(el);
+          ai_drafted++;
+          fields_filled++;
+        } else {
+          fields_skipped++;
+          skipped_reasons.push(`open-ended question left blank: "${question.slice(0, 60)}"`);
+        }
+        pendingEssays--;
+        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
+      }),
+    );
+  }
+
+  if (ai_drafted > 0) {
+    skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
   return { ats_name: 'linkedin', fields_filled, fields_skipped, skipped_reasons };
