@@ -470,7 +470,7 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
     skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
-  return { ats_name: 'workday', fields_filled, fields_skipped, skipped_reasons };
+  return { ats_name: 'workday', fields_filled, fields_skipped, ai_drafted, skipped_reasons };
 }
 
 export interface WorkdayAccountCreationParams {
@@ -499,5 +499,5 @@ export async function fillWorkdayAccountCreation(params: WorkdayAccountCreationP
     }
   }
 
-  return { ats_name: 'workday', fields_filled, fields_skipped, skipped_reasons };
+  return { ats_name: 'workday', fields_filled, fields_skipped, ai_drafted: 0, skipped_reasons };
 }

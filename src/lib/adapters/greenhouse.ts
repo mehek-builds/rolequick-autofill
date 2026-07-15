@@ -403,5 +403,5 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
     skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
-  return { ats_name: 'greenhouse', fields_filled, fields_skipped, skipped_reasons };
+  return { ats_name: 'greenhouse', fields_filled, fields_skipped, ai_drafted, skipped_reasons };
 }

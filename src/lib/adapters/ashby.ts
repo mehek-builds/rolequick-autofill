@@ -573,5 +573,5 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
     skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
-  return { ats_name: 'ashby', fields_filled, fields_skipped, skipped_reasons };
+  return { ats_name: 'ashby', fields_filled, fields_skipped, ai_drafted, skipped_reasons };
 }

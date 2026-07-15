@@ -9,6 +9,7 @@ import {
 import { isLinkedInApplicationPage, extractLinkedInJdText, fillLinkedInApplication } from '../lib/adapters/linkedin';
 import { isLikelyApplicationForm, extractGenericJdText, getGenericJobDetails, fillGenericApplication } from '../lib/adapters/generic';
 import { getAutoSubmitEnabled } from '../lib/storage';
+import { skippedReasonsNeedReview } from '../lib/autosubmit-gate';
 import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
 
 export default defineContentScript({
@@ -642,7 +643,11 @@ export default defineContentScript({
       };
       card.addEventListener('mouseenter', () => void startResumeGen(), { once: true });
 
-      const dismiss = () => card.remove();
+      // If an auto-submit countdown is mid-flight, dismissing the card (the x or "No") must cancel
+      // it too: the countdown's overlay and ticking interval live on document.body, OUTSIDE this
+      // card, so just removing the card would leave them running and still fire ~15s later after the
+      // student thought they'd dismissed everything. No-op when no countdown is active.
+      const dismiss = () => { activeAutoSubmitCancel?.(); card.remove(); };
       card.querySelector('#wp-resume-close')?.addEventListener('click', dismiss);
       card.querySelector('#wp-resume-no')?.addEventListener('click', dismiss);
       card.querySelector('#wp-resume-yes')?.addEventListener('click', async () => {
@@ -729,11 +734,14 @@ export default defineContentScript({
         // Resume is "missing" if the blob never reached us (fetch failed upstream) or the adapter
         // reported it could not attach it. Never auto-submit an application with no resume.
         const resumeMissing = !resumeBlob || fillResult.skipped_reasons.some((r) => /^resume:/i.test(r));
-        // Items the adapter flagged as still needing the student: an AI-drafted open-ended answer
-        // ("review before submitting"), an agreement checkbox, or any question left for them. Never
-        // auto-submit while one is outstanding - above all an AI-drafted essay, which would otherwise
-        // go out in the student's name unreviewed.
-        const needsReview = fillResult.skipped_reasons.some((r) => /review before submitting|left for/i.test(r));
+        // Any answer the adapter AI-drafted must be read by the student before it goes out in their
+        // name, so gate on the count the adapter now returns, not just a text match on the reasons.
+        const aiDrafted = fillResult.ai_drafted > 0;
+        // Items the adapter flagged as still needing the student (agreements, questions it could not
+        // answer, never-fill/sensitive fields, dropdowns left for manual selection, answers left
+        // blank). Classified by the pure skippedReasonsNeedReview() so it stays unit-tested. If the
+        // fill flagged ANYTHING for review, hold auto-submit and hand back rather than submit unread.
+        const needsReview = skippedReasonsNeedReview(fillResult.skipped_reasons);
 
         const reportEvent = (autoSubmitted: boolean) => {
           chrome.runtime.sendMessage({
@@ -759,7 +767,7 @@ export default defineContentScript({
         // can't see the window to back out); going hidden mid-countdown is handled separately.
         const autoSubmitHeld =
           autoSubmitOn &&
-          (!finalSubmitBtn || resumeMissing || needsReview || hasEmptyRequiredFields() || document.hidden);
+          (!finalSubmitBtn || resumeMissing || aiDrafted || needsReview || hasEmptyRequiredFields() || document.hidden);
         if (autoSubmitOn && !autoSubmitHeld && finalSubmitBtn) {
           runAutoSubmitCountdown(
             card, statusEl,
@@ -810,6 +818,10 @@ export default defineContentScript({
       reportEvent: (autoSubmitted: boolean) => void,
       actionLabel: string,
     ) {
+      // Tear down any countdown already running before standing up a new one. Combined with the SPA
+      // navigation handler (which also calls this), there is never an orphaned interval/overlay or a
+      // duplicate countdown firing behind this one. No-op the first time (handle starts null).
+      activeAutoSubmitCancel?.();
       if (yesBtn) yesBtn.style.display = 'none';
 
       let remaining = AUTO_SUBMIT_COUNTDOWN_SECONDS;
@@ -916,8 +928,11 @@ export default defineContentScript({
       const isOurNode = (t: EventTarget | null) =>
         t instanceof Element && !!t.closest('#volley-autosubmit-overlay, [id*="volley"]');
       const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') cancel(); };
+      // Going hidden does NOT cancel: the interval tick below freezes while document.hidden (it
+      // never decrements or fires the click), so the countdown simply pauses and resumes when the
+      // student returns. On return, re-anchor the panel since the layout may have shifted while away.
       const onVisibility = () => {
-        if (document.hidden) cancel('Tab hidden, so auto-submit was cancelled. Come back and submit it yourself.');
+        if (!document.hidden) position();
       };
       const onPageHide = () => cancel();
       const onUserInteract = (e: Event) => {
@@ -947,8 +962,12 @@ export default defineContentScript({
       }
 
       const interval = setInterval(() => {
-        remaining -= 1;
         if (cancelled) { clearInterval(interval); return; }
+        // Freeze while the tab is hidden: never progress toward - or fire - a submit the student
+        // can't see (no window in front of them to back out of). Resumes on the next tick once the
+        // tab is visible again, so the countdown pauses rather than racing on in the background.
+        if (document.hidden) return;
+        remaining -= 1;
         if (remaining <= 0) {
           clearInterval(interval);
           if (num) num.textContent = '0';
@@ -964,15 +983,27 @@ export default defineContentScript({
           // step container via an ancestor display:none without detaching the button); otherwise
           // re-resolve (findFinalSubmitButton already returns only visible controls).
           const target = submitBtn.isConnected && isElementVisible(submitBtn) ? submitBtn : findFinalSubmitButton();
-          // Re-validate at the instant of click: 15s is long enough for the form to change under us.
-          // Only submit when the target is still live AND no required field is now empty; otherwise
-          // hand back rather than fire on a changed or incomplete form.
-          if (target instanceof HTMLElement && target.isConnected && !hasEmptyRequiredFields()) {
+          // Re-validate at the instant of click: 15s is long enough for the form - or the tab - to
+          // change under us. Fire ONLY when the target is still live AND visible, the tab is visible
+          // AND focused (never submit into a background or blurred tab), and no required field is now
+          // empty. Anything else hands back to the student instead of clicking.
+          const tabActive = !document.hidden && document.hasFocus();
+          if (
+            target instanceof HTMLElement &&
+            target.isConnected &&
+            isElementVisible(target) &&
+            tabActive &&
+            !hasEmptyRequiredFields()
+          ) {
             if (statusEl) statusEl.textContent = `${actionLabel}...`;
             target.click();
             reportEvent(true);
           } else {
-            if (statusEl) statusEl.textContent = 'The form changed before submitting. Review and submit it yourself.';
+            if (statusEl) {
+              statusEl.textContent = tabActive
+                ? 'The form changed before submitting. Review and submit it yourself.'
+                : 'The tab was not in focus, so auto-submit was held. Come back and submit it yourself.';
+            }
             reportEvent(false);
           }
           setTimeout(() => card.remove(), 2000);

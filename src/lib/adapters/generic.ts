@@ -196,7 +196,10 @@ export function getGenericJobDetails(): { title: string; company: string } {
     document.querySelector<HTMLMetaElement>(`meta[property="${name}"], meta[name="${name}"]`)?.content?.trim();
   let title = meta('og:title') || document.title || '';
   const site = meta('og:site_name');
-  if (site && title.endsWith(site)) title = title.slice(0, title.length - site.length).replace(/[\s|–-]+$/, '');
+  // Strip a trailing separator run (whitespace, pipe, en-dash, or hyphen) left after the site
+  // suffix is removed. The en-dash is matched via a Unicode escape (not a literal glyph) so the
+  // source stays free of em/en dash characters while still stripping a real en-dash separator.
+  if (site && title.endsWith(site)) title = title.slice(0, title.length - site.length).replace(/[\s|\u2013-]+$/, '');
   else if (title.includes(' | ')) title = title.split(' | ')[0].trim();
   const host = location.hostname.replace(/^www\./, '');
   const company = site || host.split('.')[0];
@@ -669,7 +672,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
-  return { ats_name: 'generic', fields_filled, fields_skipped, skipped_reasons };
+  return { ats_name: 'generic', fields_filled, fields_skipped, ai_drafted, skipped_reasons };
 }
 
 // Visually mark an AI-drafted field so the student can't miss that it needs review.

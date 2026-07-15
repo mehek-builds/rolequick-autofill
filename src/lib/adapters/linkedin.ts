@@ -202,7 +202,7 @@ export async function fillLinkedInApplication(params: LinkedInFillParams): Promi
 
   const modal = getModal();
   if (!modal) {
-    return { ats_name: 'linkedin', fields_filled: 0, fields_skipped: 0, skipped_reasons: ['Easy Apply modal not found - it may have closed'] };
+    return { ats_name: 'linkedin', fields_filled: 0, fields_skipped: 0, ai_drafted: 0, skipped_reasons: ['Easy Apply modal not found - it may have closed'] };
   }
 
   if (resumeBlob && resumeFileName) {
@@ -391,5 +391,5 @@ export async function fillLinkedInApplication(params: LinkedInFillParams): Promi
     skipped_reasons.unshift(`${ai_drafted} open-ended answer${ai_drafted === 1 ? '' : 's'} AI-drafted, review before submitting`);
   }
 
-  return { ats_name: 'linkedin', fields_filled, fields_skipped, skipped_reasons };
+  return { ats_name: 'linkedin', fields_filled, fields_skipped, ai_drafted, skipped_reasons };
 }
