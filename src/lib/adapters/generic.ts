@@ -245,6 +245,9 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   if (/hispanic|latino/.test(l)) return { mode: 'decline' };
   if (/veteran|military|protected\s+veteran/.test(l)) return eeoAnswer(eeo.veteran);
   if (/disab/.test(l)) return eeoAnswer(eeo.disability);
+  // Age as a demographic (a diversity-survey "what is your current age" bucket) is decline-only -
+  // distinct from the "are you at least 18" eligibility check handled above, which stays a Yes.
+  if (/current age|what is your age|age range|how old are you|\bage group\b/.test(l)) return { mode: 'decline' };
 
   // Factual profile values.
   if (/citizenship|country of citizenship|which country|country of residence/.test(l) && ap.citizenship)
@@ -281,6 +284,16 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
 // would block submission).
 const DECLINE_RE = /decline|prefer not|don'?t wish|do not wish|wish not|rather not|choose not|not to (say|answer|disclose|identify|self.?identify)|not wish to (disclose|identify)/i;
 
+// Common nationality adjective -> country name, so a citizenship stored as "Indian" can still
+// answer a country dropdown that lists "India". Keys/values are lowercased to match `norm()`.
+const NATIONALITY_TO_COUNTRY: Record<string, string> = {
+  indian: 'india', american: 'united states', emirati: 'united arab emirates',
+  british: 'united kingdom', canadian: 'canada', chinese: 'china', pakistani: 'pakistan',
+  filipino: 'philippines', nigerian: 'nigeria', german: 'germany', french: 'france',
+  singaporean: 'singapore', australian: 'australia', mexican: 'mexico', brazilian: 'brazil',
+  japanese: 'japan', korean: 'south korea', irish: 'ireland', spanish: 'spain', italian: 'italy',
+};
+
 // Pick the option whose text best satisfies `desired`, or null if none is a confident match
 // (better to leave blank and report than to select the wrong answer).
 export function matchOption<T extends { text: string }>(options: T[], desired: Desired): T | null {
@@ -316,15 +329,22 @@ export function matchOption<T extends { text: string }>(options: T[], desired: D
   // against a list holding "Korea, Republic of" and "Korea, Democratic People's Republic of" must
   // not silently commit whichever comes first; two candidates means leave it for the student.
   const matchValue = (raw: string): T | null => {
-    const v = norm(raw);
-    if (!v) return null;
-    const exact = options.find((o) => norm(o.text) === v);
-    if (exact) return exact;
-    const contains = options.filter((o) => norm(o.text).includes(v));
-    if (contains.length === 1) return contains[0];
-    if (contains.length > 1) return null; // ambiguous -> leave for the student
-    const reverse = options.filter((o) => v.includes(norm(o.text)) && norm(o.text).length > 2);
-    return reverse.length === 1 ? reverse[0] : null;
+    const base = norm(raw);
+    if (!base) return null;
+    // A citizenship stored as a nationality adjective ("Indian") will never match a country
+    // option ("India"), so also try the mapped country name - lets country / "which country do
+    // you intend to work from" questions fill from a nationality-valued citizenship field.
+    const candidates = NATIONALITY_TO_COUNTRY[base] ? [base, NATIONALITY_TO_COUNTRY[base]] : [base];
+    for (const v of candidates) {
+      const exact = options.find((o) => norm(o.text) === v);
+      if (exact) return exact;
+      const contains = options.filter((o) => norm(o.text).includes(v));
+      if (contains.length === 1) return contains[0];
+      if (contains.length > 1) return null; // ambiguous -> leave for the student
+      const reverse = options.filter((o) => v.includes(norm(o.text)) && norm(o.text).length > 2);
+      if (reverse.length === 1) return reverse[0];
+    }
+    return null;
   };
   if (desired.mode === 'oneof') {
     for (const val of desired.values) {
