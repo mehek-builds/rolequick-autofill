@@ -193,6 +193,16 @@ export default defineBackground(() => {
   // published update never orphans an existing user's saved token/profile/settings.
   void migrateLegacyStorage();
 
+  // QA/dev bootstrap: when built with VITE_QA_TOKEN, seed chrome.storage.local so the extension
+  // is signed in without driving the popup UI (which automation can't reach). Never present in a
+  // store build - VITE_QA_TOKEN is unset there, so this whole block is dead. Local QA only.
+  if (import.meta.env.VITE_QA_TOKEN) {
+    chrome.storage.local.set({
+      volley_token: import.meta.env.VITE_QA_TOKEN,
+      volley_auto_submit_enabled: import.meta.env.VITE_QA_AUTOSUBMIT === '1',
+    }).catch(() => {});
+  }
+
   let lastDetectedJob: { title: string; company: string; url: string } | null = null;
 
   chrome.storage.session.get('lastDetectedJob').then((result) => {

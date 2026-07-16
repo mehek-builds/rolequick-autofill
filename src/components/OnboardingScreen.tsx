@@ -3,6 +3,7 @@ import { createSession, requestCode, verifyCode, uploadProfile } from '../lib/ap
 import { setToken, setProfile } from '../lib/storage';
 import type { Profile } from '../lib/types';
 import WarningBanner from './WarningBanner';
+import BrandMark from './BrandMark';
 
 interface OnboardingScreenProps {
   onComplete: (profile: Profile, token: string) => void;
@@ -116,8 +117,8 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
           {/* Logo with a breathing glow ring */}
           <div className="relative mx-auto mb-3 h-12 w-12">
             <div className="absolute inset-0 rounded-2xl bg-white/40 blur-md animate-glow" />
-            <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-white/20 text-xl font-bold text-white ring-1 ring-white/30 backdrop-blur animate-float">
-              V
+            <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-white/20 text-white ring-1 ring-white/30 backdrop-blur animate-float">
+              <BrandMark className="h-7 w-7" />
             </div>
           </div>
           <h1 className="text-xl font-bold tracking-tight text-white">RoleQuick</h1>
