@@ -47,7 +47,7 @@ import {
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { desiredAnswer, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 function getModal(): Element | null {
   for (const sel of EASY_APPLY_MODAL_SELECTORS) {
@@ -244,20 +244,23 @@ export async function fillLinkedInApplication(params: LinkedInFillParams): Promi
       }
     }
 
-    const linkTarget =
-      /linkedin/i.test(label) ? undefined : // never overwrite the student's own LinkedIn profile URL field with itself
-      /github/i.test(label) ? applicationProfile.github_url :
-      /portfolio|website/i.test(label) ? applicationProfile.portfolio_url :
-      undefined;
-    if (linkTarget !== undefined) {
-      const input = block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"]');
-      if (input && !input.value) {
-        if (linkTarget) {
-          await fillField(input, linkTarget);
+    // Link questions, via the one shared classifier (see linkQuestion in generic.ts). Replaces an
+    // inline version that let an unset URL fall through to the AI drafter and never looked at a
+    // textarea - the two holes behind the Lever prose-in-a-link-field bug. The `field !== 'linkedin'`
+    // guard preserves this adapter's original carve-out: on LinkedIn itself, a LinkedIn-labelled
+    // field is the student's own profile URL, which LinkedIn already owns - never write it back.
+    const link = linkQuestion(label, applicationProfile);
+    if (link && link.field !== 'linkedin') {
+      const linkEl: HTMLInputElement | HTMLTextAreaElement | null =
+        block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"]') ??
+        (link.asksForLink ? block.querySelector<HTMLTextAreaElement>('textarea') : null);
+      if (linkEl && !linkEl.value && !isComboboxControl(linkEl)) {
+        if (link.url) {
+          await fillField(linkEl, link.url);
           fields_filled++;
         } else {
           fields_skipped++;
-          skipped_reasons.push(`${label.slice(0, 40)}: no value in application profile`);
+          skipped_reasons.push(linkSkipReason(label));
         }
         continue;
       }

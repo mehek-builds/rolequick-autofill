@@ -242,6 +242,41 @@ export function workEligibilitySkipReason(label: string): string {
   return `work-eligibility question left for you: "${label.slice(0, 60)}"`;
 }
 
+// A question asking for a profile LINK ("Please provide a link to your GitHub") must never reach
+// the open-ended AI drafter, which answers it with a prose paragraph instead of a URL (live QA
+// 2026-07-16, Xsolla/Lever). Two properties make that safe, and the adapters' old inline
+// `linkTarget !== undefined` checks had neither:
+//   1. The QUESTION is classified independently of whether a URL is stored. An unset github_url
+//      must still terminate the block (blank + flagged), not fall through to the drafter - which
+//      is precisely what `?: undefined` did, since "no URL" and "not a link question" collapsed
+//      into the same value.
+//   2. Callers must query textarea too. A link question rendered as a textarea is the ONLY way it
+//      reaches the drafter at all, so an input-only selector cannot fix this bug.
+// Returns the resolved url (possibly undefined) so the caller can fill it or flag it, or null when
+// this is not a link question at all.
+// `asksForLink` exists because a textarea is ambiguous in a way an input is not. "Please provide a
+// link to your GitHub" rendered as a textarea is a URL field (fill it). "Tell us about your
+// portfolio" rendered as a textarea is an ESSAY (leave it for the drafter). Naming the platform is
+// not enough to tell those apart; asking for a link/URL/profile is. Callers therefore accept a
+// textarea ONLY when asksForLink is true, while a plain text input stays unconditional (an input
+// cannot hold an essay, so a field merely labelled "GitHub" is still a URL field).
+export type LinkQuestion = { field: 'linkedin' | 'github' | 'portfolio'; url?: string; asksForLink: boolean };
+
+export function linkQuestion(label: string, ap: ApplicationProfile): LinkQuestion | null {
+  const asksForLink = /\b(link|links|url|urls|profile|handle|username)\b/i.test(label);
+  if (/linkedin/i.test(label)) return { field: 'linkedin', url: ap.linkedin_url, asksForLink };
+  if (/github/i.test(label)) return { field: 'github', url: ap.github_url, asksForLink };
+  if (/portfolio|personal\s+(?:web)?site|\bwebsite\b/i.test(label))
+    return { field: 'portfolio', url: ap.portfolio_url, asksForLink };
+  return null;
+}
+
+// "left for" is load-bearing here too: it is what the auto-submit gate's REVIEW_FLAG matches, so a
+// link question we could not fill HOLDS the countdown rather than submitting an empty field.
+export function linkSkipReason(label: string): string {
+  return `link question left for you (no URL in your profile): "${label.slice(0, 60)}"`;
+}
+
 export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string, string>): Desired {
   const l = label;
   if (NEVER_FILL_PATTERNS.some((re) => re.test(l))) return null;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { desiredAnswer, matchOption, eeoAnswer, type Desired } from './generic';
+import { desiredAnswer, linkQuestion, matchOption, eeoAnswer, type Desired } from './generic';
 // desiredAnswer/matchOption/eeoAnswer remain exported from generic; commitChoice (the shared
 // radio/checkbox commit that every adapter now routes through) lives in ./shared/dom.
 import type { ApplicationProfile } from '../types';
@@ -199,5 +199,44 @@ describe('desiredAnswer: citizenship and residence country are never conflated (
       .toEqual({ mode: 'value', value: 'United States' });
     expect(desiredAnswer('country', ap({ citizenship: 'India', address_country: 'United States' }), {}))
       .toEqual({ mode: 'value', value: 'United States' });
+  });
+});
+
+// Live QA 2026-07-16 (Xsolla/Lever): a "provide a LINK to your GitHub" question was answered with
+// an AI-drafted prose paragraph. The resolver has to classify the QUESTION independently of
+// whether a URL is stored, or "no URL" and "not a link question" collapse into the same value and
+// the question falls through to the drafter, which is the bug.
+describe('linkQuestion', () => {
+  it('resolves the platform link questions to the stored url', () => {
+    const p = ap({ linkedin_url: 'https://linkedin.com/in/mehek', github_url: 'https://github.com/mehek-builds', portfolio_url: 'https://mehek.dev' });
+    expect(linkQuestion('linkedin profile', p)).toMatchObject({ field: 'linkedin', url: 'https://linkedin.com/in/mehek' });
+    expect(linkQuestion('github link', p)).toMatchObject({ field: 'github', url: 'https://github.com/mehek-builds' });
+    expect(linkQuestion('portfolio url', p)).toMatchObject({ field: 'portfolio', url: 'https://mehek.dev' });
+  });
+
+  it('still classifies a link question when NO url is stored (the drafter must never see it)', () => {
+    // The old inline `linkTarget !== undefined` check returned undefined here, which fell through
+    // to the AI-draft path and produced a prose paragraph in a URL field.
+    const got = linkQuestion('please provide a link to your github', ap({}));
+    expect(got).not.toBeNull();
+    expect(got).toMatchObject({ field: 'github', url: undefined });
+  });
+
+  it('flags link-asking wording so a textarea can be filled, via asksForLink', () => {
+    expect(linkQuestion('please provide a link to your github', ap({}))?.asksForLink).toBe(true);
+    expect(linkQuestion('github url', ap({}))?.asksForLink).toBe(true);
+    expect(linkQuestion('linkedin profile', ap({}))?.asksForLink).toBe(true);
+  });
+
+  it('does NOT flag an essay that merely mentions the platform, so it still reaches the drafter', () => {
+    // "Tell us about your portfolio" is a real essay question. asksForLink=false keeps callers from
+    // accepting its textarea, so it is drafted rather than answered with a bare URL.
+    expect(linkQuestion('tell us about your portfolio', ap({}))?.asksForLink).toBe(false);
+    expect(linkQuestion('what are you most proud of on your github?', ap({}))?.asksForLink).toBe(false);
+  });
+
+  it('is not a link question at all when no platform is named', () => {
+    expect(linkQuestion('why do you want to work here?', ap({}))).toBeNull();
+    expect(linkQuestion('what is your phone number?', ap({}))).toBeNull();
   });
 });

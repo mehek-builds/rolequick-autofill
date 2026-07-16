@@ -18,7 +18,7 @@ import {
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { desiredAnswer, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 function labelTextFor(el: Element): string {
   const container = el.closest('.application-question, .card, li') ?? el.parentElement;
@@ -253,6 +253,32 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
       fields_skipped++;
       skipped_reasons.push(`${label.slice(0, 40)}: no matching control, left blank`);
       continue;
+    }
+
+    // Link questions ("provide a link to your GitHub"). Lever has no stable name attribute for
+    // these custom questions - the urls[LinkedIn]/urls[GitHub] selectors above only cover Lever's
+    // OWN standard link fields - so a custom link question used to fall straight through to the
+    // AI drafter and come back as a prose paragraph (live QA 2026-07-16, Xsolla's GitHub field).
+    // Placed AFTER the known-answer branch so a referral question whose options mention LinkedIn
+    // resolves as referral, and BEFORE the open-ended branch so the drafter can never see it.
+    const link = linkQuestion(label, applicationProfile);
+    if (link) {
+      // The textarea is the control that reached the drafter, so it must be reachable here - but
+      // only when the label asks for a link, or "tell us about your portfolio" would get answered
+      // with a bare URL instead of the essay it wants.
+      const linkEl: HTMLInputElement | HTMLTextAreaElement | null =
+        block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"]') ??
+        (link.asksForLink ? block.querySelector<HTMLTextAreaElement>('textarea') : null);
+      if (linkEl && !linkEl.value && !isComboboxControl(linkEl)) {
+        if (link.url) {
+          await fillField(linkEl, link.url);
+          fields_filled++;
+        } else {
+          fields_skipped++;
+          skipped_reasons.push(linkSkipReason(label));
+        }
+        continue;
+      }
     }
 
     // Open-ended screening questions: draft the textarea via the hook if available (flagged for

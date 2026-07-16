@@ -37,7 +37,7 @@ import {
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { desiredAnswer, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 // ─── Shared answer helpers (mirror generic.ts's engine) ───────────────────────
 
@@ -329,20 +329,21 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
 
     const label = labelTextFor(block);
 
-    const linkTarget =
-      /linkedin/i.test(label) ? applicationProfile.linkedin_url :
-      /github/i.test(label) ? applicationProfile.github_url :
-      /portfolio|website/i.test(label) ? applicationProfile.portfolio_url :
-      undefined;
-    if (linkTarget !== undefined) {
-      const input = block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"]');
-      if (input && !input.value) {
-        if (linkTarget) {
-          await fillField(input, linkTarget);
+    // Link questions, via the one shared classifier (see linkQuestion in generic.ts). Replaces an
+    // inline version that let an unset URL fall through to the AI drafter and never looked at a
+    // textarea - the two holes behind the Lever prose-in-a-link-field bug.
+    const link = linkQuestion(label, applicationProfile);
+    if (link) {
+      const linkEl: HTMLInputElement | HTMLTextAreaElement | null =
+        block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"]') ??
+        (link.asksForLink ? block.querySelector<HTMLTextAreaElement>('textarea') : null);
+      if (linkEl && !linkEl.value && !isComboboxControl(linkEl)) {
+        if (link.url) {
+          await fillField(linkEl, link.url);
           fields_filled++;
         } else {
           fields_skipped++;
-          skipped_reasons.push(`${label.slice(0, 40)}: no value in application profile`);
+          skipped_reasons.push(linkSkipReason(label));
         }
         continue;
       }
