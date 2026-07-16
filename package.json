@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "wxt",
-    "build": "wxt build",
-    "build:firefox": "wxt build -b firefox",
+    "build": "node scripts/ensure-no-qa-token.mjs && wxt build",
+    "build:firefox": "node scripts/ensure-no-qa-token.mjs && wxt build -b firefox",
+    "build:qa": "wxt build",
     "zip": "node scripts/ensure-no-qa-token.mjs && wxt zip",
     "zip:firefox": "node scripts/ensure-no-qa-token.mjs && wxt zip -b firefox",
     "postinstall": "wxt prepare",

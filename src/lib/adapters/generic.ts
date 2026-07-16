@@ -232,8 +232,14 @@ export function eeoAnswer(pref: string | undefined): Desired {
 // gate HOLD (autosubmit-gate.ts REVIEW_FLAG) while it sits unanswered. This is the ONE classifier
 // every adapter must use: whitespace-tolerant (\s+, labels keep raw internal whitespace from
 // textContent), both spellings (authorized/authorised), case-insensitive.
+//
+// The sponsorship half must stay tied to sponsorship-OF-WORK wording (require/need/visa/
+// immigration/without/employment near "sponsor", or "sponsorship required"). A bare `sponsor`
+// alternative matched any label merely containing the word, and adapters pass whole-container
+// text as the label, so "How did you hear about us? [LinkedIn, Sponsored ad, ...]" was classified
+// as a work-eligibility question: skipped, flagged "left for you", and holding auto-submit.
 export const WORK_ELIGIBILITY_QUESTION =
-  /authori[sz](?:ed|ation)\s+to\s+work|legally\s+authori[sz]ed|right\s+to\s+work|work\s+authori[sz]|sponsor/i;
+  /authori[sz](?:ed|ation)\s+to\s+work|legally\s+authori[sz]ed|right\s+to\s+work|work\s+authori[sz]|(?:requir\w*|need\w*|visa|immigration|without|employment)\s+(?:\w+\s+){0,3}sponsor|sponsor\w*\s+(?:\w+\s+){0,3}(?:requir\w*|need\w*)/i;
 
 // The one skip-reason builder for work-eligibility questions. "left for" is load-bearing: it is
 // what the auto-submit gate's REVIEW_FLAG matches, so every adapter must use this instead of
@@ -262,7 +268,19 @@ export function workEligibilitySkipReason(label: string): string {
 // cannot hold an essay, so a field merely labelled "GitHub" is still a URL field).
 export type LinkQuestion = { field: 'linkedin' | 'github' | 'portfolio'; url?: string; asksForLink: boolean };
 
+// "How did you hear about us?" and friends. Shared by linkQuestion (to refuse them) and
+// desiredAnswer (to answer them), so the two can never drift apart on what counts as a referral.
+export const REFERRAL_QUESTION = /how did you hear|referral source|hear about (this|us|the)|source of/i;
+
 export function linkQuestion(label: string, ap: ApplicationProfile): LinkQuestion | null {
+  // A referral question is NOT a link question, even though it routinely names LinkedIn or the
+  // company website among its OPTIONS - and adapters pass whole-container text as the label, so
+  // those option words land here. Without this guard, "How did you hear about us? (e.g. LinkedIn,
+  // referral, job board)" classified as a linkedin link question and, on the four adapters that
+  // resolve links before known answers, wrote the student's LinkedIn URL into the referral box.
+  // lever.ts dodged this by ordering its link branch after the known-answer branch; guarding the
+  // classifier itself makes every adapter safe regardless of branch order.
+  if (REFERRAL_QUESTION.test(label)) return null;
   const asksForLink = /\b(link|links|url|urls|profile|handle|username)\b/i.test(label);
   if (/linkedin/i.test(label)) return { field: 'linkedin', url: ap.linkedin_url, asksForLink };
   if (/github/i.test(label)) return { field: 'github', url: ap.github_url, asksForLink };
@@ -285,10 +303,17 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   // above). needs_sponsorship and work_authorized stay on the profile for the student's own
   // reference but are never written into a form.
   if (WORK_ELIGIBILITY_QUESTION.test(l)) return null;
-  // Affirmative age-of-majority only. Exclude negated phrasings ("are you UNDER 18?", "younger
-  // than 18 years") - the old bare "18 years" alternative matched those and answered "Yes" to
-  // being a minor.
-  if (/(at least|over|older than)\s*(18|eighteen)|age of majority|18\s*\+|\b18\s+years?\b/.test(l) && !/\bunder\b|younger than|below|less than/.test(l))
+  // Affirmative age-of-majority only. Two classes of false Yes are excluded:
+  //   - negated phrasings ("are you UNDER 18?", "younger than 18 years"), which would answer Yes
+  //     to being a minor;
+  //   - the number 18 used for TENURE rather than age. "Do you have 18+ months of experience?" and
+  //     "at least 18 years of experience" both satisfied the alternatives above, so RoleQuick
+  //     claimed experience the student never stated - the same class of false declaration the
+  //     always-ask work-eligibility rule exists to prevent.
+  if (
+    /(at least|over|older than)\s*(18|eighteen)|age of majority|18\s*\+|\b18\s+years?\b/.test(l) &&
+    !/\bunder\b|younger than|below|less than|experience|\bmonths?\b|tenure/.test(l)
+  )
     return { mode: 'yes' };
 
   // EEO / demographics: real answer if the student provided one, else decline.
@@ -332,7 +357,7 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   // website, Job board, Other, ...), so a single value rarely matches. Try the student's own
   // answer first, then common near-synonyms, then "Other" as the safe catch-all - one of these
   // almost always exists, so the question gets answered instead of left blank.
-  if (/how did you hear|referral source|hear about (this|us|the)|source of/.test(l))
+  if (REFERRAL_QUESTION.test(l))
     return {
       mode: 'oneof',
       values: [
@@ -375,6 +400,9 @@ const NATIONALITY_TO_COUNTRY: Record<string, string> = {
 export function matchOption<T extends { text: string }>(options: T[], desired: Desired): T | null {
   if (!desired) return null;
   const norm = (s: string) => clean(s).toLowerCase();
+  // Option text is page-authored, so a value like "Korea, Republic of" must not be spliced into a
+  // RegExp as syntax.
+  const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   if (desired.mode === 'decline') {
     return options.find((o) => DECLINE_RE.test(clean(o.text))) ?? null;
   }
@@ -411,10 +439,20 @@ export function matchOption<T extends { text: string }>(options: T[], desired: D
     for (const v of candidates) {
       const exact = options.find((o) => norm(o.text) === v);
       if (exact) return exact;
-      const contains = options.filter((o) => norm(o.text).includes(v));
+      // Word-boundary substring, NEVER a bare fragment. A plain .includes() mis-selects on a
+      // coincidental letter run: "asian" sits inside "cauc-asian" and "male" inside "fe-male", so
+      // an Asian applicant against a [White/Caucasian, ...] taxonomy silently got Caucasian ticked,
+      // and a male applicant got Female - with contains.length === 1 it committed confidently
+      // rather than leaving it for the student. The boundary still matches the legitimate widening
+      // case ("Korea" -> "Korea, Republic of").
+      const vRe = new RegExp(`\\b${escapeRe(v)}\\b`);
+      const contains = options.filter((o) => vRe.test(norm(o.text)));
       if (contains.length === 1) return contains[0];
       if (contains.length > 1) return null; // ambiguous -> leave for the student
-      const reverse = options.filter((o) => v.includes(norm(o.text)) && norm(o.text).length > 2);
+      const reverse = options.filter((o) => {
+        const ot = norm(o.text);
+        return ot.length > 2 && new RegExp(`\\b${escapeRe(ot)}\\b`).test(v);
+      });
       if (reverse.length === 1) return reverse[0];
     }
     return null;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { desiredAnswer, linkQuestion, matchOption, eeoAnswer, type Desired } from './generic';
+import { desiredAnswer, linkQuestion, matchOption, eeoAnswer, WORK_ELIGIBILITY_QUESTION, type Desired } from './generic';
 // desiredAnswer/matchOption/eeoAnswer remain exported from generic; commitChoice (the shared
 // radio/checkbox commit that every adapter now routes through) lives in ./shared/dom.
 import type { ApplicationProfile } from '../types';
@@ -113,6 +113,26 @@ describe('matchOption', () => {
     expect(matchOption(opts('India', 'United States'), { mode: 'value', value: 'India' })?.text).toBe('India');
     expect(matchOption(opts('United States of America'), { mode: 'value', value: 'United States' })?.text)
       .toBe('United States of America');
+  });
+
+  it('does not mis-select on a coincidental letter run (word boundary, not bare substring)', () => {
+    // RESTORED after a code review found it had been deleted while the guard it pinned was also
+    // dropped, leaving the bug live in 0.3.6. "asian" is inside "Caucasian" and "male" is inside
+    // "Female": a bare .includes() matched exactly one option and committed it confidently, so an
+    // Asian applicant got "White/Caucasian" ticked on a real EEO form and a male applicant got
+    // "Female". Never delete this without restoring the boundary check in matchOption.
+    expect(matchOption(opts('White/Caucasian', 'Black or African American', 'Hispanic'),
+      { mode: 'value', value: 'Asian' })).toBeNull();
+    expect(matchOption(opts('Female', 'Non-binary'), { mode: 'value', value: 'Male' })).toBeNull();
+    // ...but a real exact/word-boundary match still works.
+    expect(matchOption(opts('White/Caucasian', 'Asian', 'Hispanic'), { mode: 'value', value: 'Asian' })?.text).toBe('Asian');
+    expect(matchOption(opts('Korea, Republic of', 'Japan'), { mode: 'value', value: 'Korea' })?.text)
+      .toBe('Korea, Republic of');
+  });
+
+  it('leaves an ambiguous widening match for the student', () => {
+    expect(matchOption(opts("Korea, Republic of", "Korea, Democratic People's Republic of"),
+      { mode: 'value', value: 'Korea' })).toBeNull();
   });
 
   it('returns null for a null desired or empty options', () => {
@@ -238,5 +258,61 @@ describe('linkQuestion', () => {
   it('is not a link question at all when no platform is named', () => {
     expect(linkQuestion('why do you want to work here?', ap({}))).toBeNull();
     expect(linkQuestion('what is your phone number?', ap({}))).toBeNull();
+  });
+
+  it('never claims a referral question, which names platforms among its OPTIONS', () => {
+    // Adapters pass whole-container text as the label, so a referral question's option list lands
+    // here. Four of the five adapters resolve links BEFORE known answers, so without this the
+    // student's LinkedIn URL was written into "How did you hear about us?" instead of a referral.
+    const p = ap({ linkedin_url: 'https://linkedin.com/in/mehek', portfolio_url: 'https://mehek.dev' });
+    expect(linkQuestion('how did you hear about us? (e.g. linkedin, referral, job board)', p)).toBeNull();
+    expect(linkQuestion('how did you hear about us? (e.g. company website, job board)', p)).toBeNull();
+    expect(linkQuestion('referral source: linkedin / company website / other', p)).toBeNull();
+    // ...and the referral question still resolves as a referral.
+    expect(desiredAnswer('how did you hear about us? (e.g. linkedin, referral, job board)',
+      ap({ referral_source_default: 'LinkedIn' }), {})).toMatchObject({ mode: 'oneof' });
+  });
+});
+
+describe('WORK_ELIGIBILITY_QUESTION does not swallow a merely "sponsored" label', () => {
+  it('leaves a referral question with a sponsored option answerable', () => {
+    const label = 'how did you hear about this role? linkedin sponsored ad company website other';
+    expect(WORK_ELIGIBILITY_QUESTION.test(label)).toBe(false);
+    expect(desiredAnswer(label, ap({ referral_source_default: 'LinkedIn' }), {})).not.toBeNull();
+  });
+
+  it('ignores an unrelated sponsor mention', () => {
+    expect(WORK_ELIGIBILITY_QUESTION.test('have you attended a sponsored event?')).toBe(false);
+    expect(WORK_ELIGIBILITY_QUESTION.test('we are proud of our sponsorship of local charities')).toBe(false);
+  });
+
+  it('still catches every real sponsorship-of-work phrasing', () => {
+    for (const l of [
+      'will you now or in the future require immigration sponsorship?',
+      'will you now or in the future require sponsorship?',
+      'do you require visa sponsorship?',
+      'do you need sponsor support to work in germany?',
+      'are you able to work without sponsorship?',
+      'are you authorized to work without requiring sponsorship?',
+      'is sponsorship required for you to work here?',
+    ]) {
+      expect(WORK_ELIGIBILITY_QUESTION.test(l), l).toBe(true);
+      expect(desiredAnswer(l, ap({ needs_sponsorship: false, work_authorized: true }), {}), l).toBeNull();
+    }
+  });
+});
+
+describe('desiredAnswer: "18" used for tenure is not an age-of-majority yes', () => {
+  it('does not claim experience the student never stated', () => {
+    expect(desiredAnswer('do you have 18 years of experience?', ap(), {})).toBeNull();
+    expect(desiredAnswer('do you have 18+ months of experience?', ap(), {})).toBeNull();
+    expect(desiredAnswer('do you have at least 18 months of relevant experience?', ap(), {})).toBeNull();
+  });
+
+  it('still answers a real age-of-majority question yes', () => {
+    expect(desiredAnswer('are you at least 18 years of age?', ap(), {})).toEqual({ mode: 'yes' });
+    expect(desiredAnswer('are you over 18?', ap(), {})).toEqual({ mode: 'yes' });
+    expect(desiredAnswer('are you 18 years or older?', ap(), {})).toEqual({ mode: 'yes' });
+    expect(desiredAnswer('you must be 18 years of age or older to apply', ap(), {})).toEqual({ mode: 'yes' });
   });
 });
