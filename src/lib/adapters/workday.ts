@@ -34,6 +34,7 @@ import {
   openCombobox,
   pickComboOption,
   closeOpenCombobox,
+  unattachableDocumentReasons,
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
@@ -312,6 +313,13 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
     fields_skipped++;
     skipped_reasons.push('resume: no generated resume file available');
   }
+
+  // Documents this form requires that RoleQuick cannot produce (R-010). Reported at fill time, in
+  // the card, so the student learns the form wants a transcript NOW rather than at submit; the
+  // "left for" wording holds auto-submit while it sits unattached.
+  const documentReasons = unattachableDocumentReasons();
+  fields_skipped += documentReasons.length;
+  skipped_reasons.push(...documentReasons);
 
   // Everything else (links, work-auth, sponsorship, EEO, screening questions) is
   // tenant-specific with no stable automation-id, so match by label text - same

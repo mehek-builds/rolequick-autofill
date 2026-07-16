@@ -294,6 +294,90 @@ export function radioOptionsIn(block: Element): Array<{ radio: HTMLInputElement;
   });
 }
 
+// ─── Documents RoleQuick cannot attach (R-010) ───────────────────────────────
+// RoleQuick generates exactly ONE artifact: the tailored resume. A form that also demands a
+// transcript, cover letter, or portfolio therefore cannot be finished, and the student has to take
+// over. That limit is a product decision, not a bug. The BUG was that RoleQuick said nothing about
+// it: the card reported a successful fill, and the student met the empty required upload at submit.
+//
+// This is squarely the target market rather than an edge case - co-op and internship applications
+// routinely demand transcripts (live QA 2026-07-16, Global Relay: "In order to be considered for
+// this role, you must include post-secondary transcripts", with a second Attach input RoleQuick
+// left as "(no file)").
+//
+// Why this does NOT simply flag every extra file input: Ashby renders its own "autofill from
+// resume" PARSER widget as a second `input[type=file]` (see the header of ashby.ts - it is the trap
+// that once made the resume attach to the wrong control). Flagging that would fire a false "this
+// form needs a document I don't have" on every single Ashby form, and a warning that cries wolf on
+// every form is worse than no warning at all: the student learns to scroll past the one form where
+// it was true. So an input only counts on a POSITIVE signal - explicitly required, or a label that
+// names a document we know we cannot produce.
+const DOCUMENT_LABELS =
+  /transcript|cover.?letter|portfolio|writing sample|reference letter|letter of recommendation|certificate|diploma|proof of|work sample/i;
+
+// Wording that identifies an ATS's own resume-parsing helper rather than a document slot.
+const PARSER_WIDGET_LABELS = /autofill|auto-fill|parse|import your|upload your resume to/i;
+
+// The resume slot itself. Every adapter already reports its own resume outcome ("resume: no file
+// input found" / "no generated resume file available"), so this must never double-report it.
+// Both e's are optionally accented: a form labelled "Résumé" is common, and `\bresum` cannot match
+// "résum" (é is not e). Note there is no trailing \b - JS word boundaries are ASCII-based, so é is
+// a NON-word character and \b after it would never match "résumé" at end of string.
+const RESUME_LABELS = /\br[eé]sum|\bcv\b/i;
+
+// `||` not `??`, for the reason radioOptionsIn documents above: a source that EXISTS but renders no
+// text yields "", which is non-null, so `??` would stop there and never reach the next source.
+function fileInputLabelText(el: HTMLInputElement): string {
+  const byFor = el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.textContent : '';
+  const container = el.closest('.field-wrapper, .field, fieldset, [class*="_fieldEntry_"], li, div');
+  const text =
+    byFor ||
+    el.getAttribute('aria-label') ||
+    el.closest('label')?.textContent ||
+    container?.textContent?.slice(0, 300) ||
+    '';
+  return text.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+// Every non-resume document slot this form needs that RoleQuick cannot fill, as ready-to-push skip
+// reasons. "left for" is load-bearing, same as the other reason builders: it makes the auto-submit
+// gate HOLD and puts the item in the card's flagged list, which is the entire point - the student
+// learns at fill time, not at submit time.
+//
+// `resumeEl` is optional because only some adapters hold the element (the others resolve it inside
+// their own fillResumeFile). It is not load-bearing: called AFTER the resume is attached, the slot
+// excludes itself, since a just-attached input has files. RESUME_LABELS covers the case where the
+// attach failed and the input is still empty.
+// The DECISION, split out from the DOM walk below so it can be unit-tested: this repo has no DOM
+// test environment (every existing test is pure), and adding one would mean touching package.json.
+// The guards are where the real risk lives, so they are the part that must be covered.
+export function documentSlotReason(label: string, required: boolean): string | null {
+  if (PARSER_WIDGET_LABELS.test(label)) return null; // the ATS's own resume parser, not a document
+  if (RESUME_LABELS.test(label)) return null; // the resume slot, reported by the adapter itself
+  const named = DOCUMENT_LABELS.test(label);
+  if (!required && !named) return null; // no positive signal: stay quiet rather than cry wolf
+  const what = label.match(DOCUMENT_LABELS)?.[0] ?? 'a document';
+  return `${what} left for you: RoleQuick only generates a resume, so attach this one yourself`;
+}
+
+export function unattachableDocumentReasons(resumeEl?: HTMLInputElement | null): string[] {
+  const reasons: string[] = [];
+  const seen = new Set<string>();
+  for (const el of document.querySelectorAll<HTMLInputElement>('input[type="file"]')) {
+    if (el === resumeEl) continue;
+    if (el.closest('[id*="rolequick"]')) continue; // our own card
+    if (el.files?.length) continue; // already attached (this is how the resume slot excludes itself)
+    const reason = documentSlotReason(
+      fileInputLabelText(el),
+      el.required || el.getAttribute('aria-required') === 'true',
+    );
+    if (!reason || seen.has(reason)) continue; // one dropzone can back several inputs; say it once
+    seen.add(reason);
+    reasons.push(reason);
+  }
+  return reasons;
+}
+
 // ─── Combobox / react-select filling ────────────────────────────────────────
 // Modern ATS forms (Greenhouse's current template, Workday, Ashby's location field) render
 // their city / yes-no / EEO / country questions as react-select comboboxes: a styled <div>

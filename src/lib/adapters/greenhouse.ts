@@ -40,6 +40,7 @@ import {
   openCombobox,
   pickComboOption,
   closeOpenCombobox,
+  unattachableDocumentReasons,
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. These are pure (no DOM) and covered by
@@ -242,6 +243,13 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
     fields_skipped++;
     skipped_reasons.push('resume: no file input found in this frame (possible cross-origin embed without a same-frame uploader)');
   }
+
+  // Documents this form requires that RoleQuick cannot produce (R-010). Reported at fill time, in
+  // the card, so the student learns the form wants a transcript NOW rather than at submit; the
+  // "left for" wording holds auto-submit while it sits unattached.
+  const documentReasons = unattachableDocumentReasons(resumeEl);
+  fields_skipped += documentReasons.length;
+  skipped_reasons.push(...documentReasons);
 
   // Custom fields (links, work-auth, sponsorship, EEO, screening) get dynamic per-posting IDs, so
   // match by the surrounding label text instead of a selector - same approach as the Lever adapter.
