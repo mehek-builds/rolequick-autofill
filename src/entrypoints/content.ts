@@ -604,10 +604,17 @@ export default defineContentScript({
       let jdCache: string | null = null;
       const getJd = (): string => (jdCache ??= extractJdText());
 
-      // Slightly longer than the background's own resume-fetch budget (60s) so its descriptive
-      // error surfaces first; this is the backstop for the worse case where the service worker
-      // is torn down and the callback never fires at all.
-      const RESUME_GEN_TIMEOUT_MS = 65000;
+      // Must stay longer than the background's WHOLE budget so its descriptive error surfaces
+      // first; this is only the backstop for the worse case where the service worker is torn down
+      // and the callback never fires at all.
+      // This was 65s, sized against a single 60s resume fetch. That cap is now load-bearing in a
+      // way it wasn't: the background retries a transient model overload for up to 150s across
+      // fresh requests (R-003, live QA 2026-07-16 - the backend can't retry past Vercel's 60s
+      // function ceiling, so only the client can outlive an incident). Leaving this at 65s would
+      // have made that retry unreachable - the card would declare a timeout while the retry that
+      // was about to succeed was still in flight, which is just the old hard failure with extra
+      // steps. So: the background's 150s budget + one final 60s fetch + slack.
+      const RESUME_GEN_TIMEOUT_MS = 215000;
       const jobKey = `${company}\u0000${title}`;
       const startResumeGen = (): Promise<ResumeGenResult> => {
         const cached = resumeGenByJob.get(jobKey);
@@ -644,11 +651,34 @@ export default defineContentScript({
       };
       card.addEventListener('mouseenter', () => void startResumeGen(), { once: true });
 
+      // Tell the student when generation is waiting on model capacity rather than hung. Without
+      // this the card sits on "Tailoring your resume..." for up to two minutes, which reads
+      // exactly like a freeze - and a student who thinks it froze fills the form by hand or
+      // re-clicks, which is what the live incident actually produced (6+ re-clicks). The card
+      // stays dismissable throughout, so this is information, not a trap.
+      // Scoped to THIS card's job: a background retry for another tab's posting must not repaint
+      // this one's status.
+      const onRetryPing = (msg: { type?: string; payload?: { company?: string; role?: string; attempt?: number } }) => {
+        if (msg?.type !== 'RESUME_GEN_RETRYING') return;
+        if (msg.payload?.company !== company || msg.payload?.role !== title) return;
+        const statusEl = card.querySelector<HTMLElement>('#wp-resume-status');
+        if (!statusEl || statusEl.style.display === 'none') return;
+        const attempt = msg.payload?.attempt ?? 1;
+        statusEl.textContent = `The AI is busy right now. Retrying... (attempt ${attempt + 1})`;
+      };
+      chrome.runtime.onMessage.addListener(onRetryPing);
+
       // If an auto-submit countdown is mid-flight, dismissing the card (the x or "No") must cancel
       // it too: the countdown's overlay and ticking interval live on document.body, OUTSIDE this
       // card, so just removing the card would leave them running and still fire ~15s later after the
       // student thought they'd dismissed everything. No-op when no countdown is active.
-      const dismiss = () => { activeAutoSubmitCancel?.(); card.remove(); };
+      // The retry listener is torn down here for the same reason it is registered at all: a
+      // dismissed card must stop reacting to a generation that is still running in the background.
+      const dismiss = () => {
+        activeAutoSubmitCancel?.();
+        chrome.runtime.onMessage.removeListener(onRetryPing);
+        card.remove();
+      };
       card.querySelector('#wp-resume-close')?.addEventListener('click', dismiss);
       card.querySelector('#wp-resume-no')?.addEventListener('click', dismiss);
       card.querySelector('#wp-resume-yes')?.addEventListener('click', async () => {
