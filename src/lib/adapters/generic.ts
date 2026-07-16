@@ -296,7 +296,12 @@ export function linkSkipReason(label: string): string {
 }
 
 export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string, string>): Desired {
-  const l = label;
+  // Lowercase here rather than trust the caller. Most rules below are case-SENSITIVE (no /i),
+  // unlike the /i siblings linkQuestion and WORK_ELIGIBILITY_QUESTION, so they only worked because
+  // all five adapters happen to pre-lowercase in labelTextFor. A future caller passing a raw label
+  // would silently skip every EEO / citizenship / age rule and return null: a blank field with no
+  // skip reason, which is the exact silent-blank class the location and link fixes exist to kill.
+  const l = label.toLowerCase();
   if (NEVER_FILL_PATTERNS.some((re) => re.test(l))) return null;
 
   // Never answer work-authorization or sponsorship questions (see WORK_ELIGIBILITY_QUESTION

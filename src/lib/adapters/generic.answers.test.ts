@@ -135,6 +135,43 @@ describe('matchOption', () => {
       { mode: 'value', value: 'Korea' })).toBeNull();
   });
 
+  // The boundary guard above only changes behaviour in ONE shape: exact option ABSENT while a
+  // single superstring option is present. These pin the full matrix so the next person can see
+  // which outcomes are intended and which were previously safe only by accident.
+  it('pins the full value-matching matrix around the boundary guard', () => {
+    // exact present -> exact wins, boundary never consulted.
+    expect(matchOption(opts('White/Caucasian', 'Asian', 'Hispanic'), { mode: 'value', value: 'Asian' })?.text).toBe('Asian');
+    expect(matchOption(opts('Male', 'Female', 'Non-binary'), { mode: 'value', value: 'Male' })?.text).toBe('Male');
+    // exact absent, superstring present but NOT on a word boundary -> null. This is the fix: it
+    // used to return White/Caucasian.
+    expect(matchOption(opts('White/Caucasian', 'Black or African American', 'Hispanic'),
+      { mode: 'value', value: 'Asian' })).toBeNull();
+    // two boundary hits -> ambiguous -> null. A trans-inclusive gender list lands here.
+    expect(matchOption(opts('Female', 'Male (cisgender)', 'Male (transgender)'),
+      { mode: 'value', value: 'Male' })).toBeNull();
+    // taxonomy mismatch -> null rather than a guess.
+    expect(matchOption(opts('Man', 'Woman', 'Decline to self-identify'), { mode: 'value', value: 'Male' })).toBeNull();
+    // Single boundary hit -> commits. This is the intended widening, and it is what makes country
+    // dropdowns work ("Korea" -> "Korea, Republic of", "United States" -> "United States of America").
+    expect(matchOption(opts('Korea, Republic of', 'Japan'), { mode: 'value', value: 'Korea' })?.text)
+      .toBe('Korea, Republic of');
+    // KNOWN JUDGEMENT CALL, flagged in review: the same single-hit widening also commits here, so a
+    // student whose stored gender is "Male" is answered "Male (cisgender)" on a form that offers no
+    // plain "Male". Before the boundary guard this returned null, but only by accident: "female"
+    // happens to contain "male", which made it look ambiguous. That accident is the very bug being
+    // fixed, so it cannot be preserved on purpose without also re-breaking the Asian/Caucasian case.
+    // Left committing to match the country behaviour above; revisit if EEO should be exact-only.
+    expect(matchOption(opts('Female', 'Male (cisgender)'), { mode: 'value', value: 'Male' })?.text)
+      .toBe('Male (cisgender)');
+  });
+
+  it('applies the answer rules regardless of label case (callers are not trusted to lowercase)', () => {
+    expect(desiredAnswer('What Is Your Gender?', ap(), {})).toEqual({ mode: 'decline' });
+    expect(desiredAnswer('Country Of Citizenship', ap({ citizenship: 'India' }), {}))
+      .toEqual({ mode: 'value', value: 'India' });
+    expect(desiredAnswer('Are You At Least 18 Years Of Age?', ap(), {})).toEqual({ mode: 'yes' });
+  });
+
   it('returns null for a null desired or empty options', () => {
     expect(matchOption(opts('Yes', 'No'), null)).toBeNull();
     expect(matchOption([], { mode: 'yes' })).toBeNull();
