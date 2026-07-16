@@ -21,6 +21,25 @@ export function commitChoice(el: HTMLInputElement): void {
   }
 }
 
+// Pick the first candidate with real text, lowercased for the label matchers. Trivial-looking, and
+// it exists for a specific reason: `??` does NOT do this. An element that EXISTS but renders no
+// text yields "", which is non-null, so `a?.textContent ?? b?.textContent` returns the empty string
+// and never reaches the fallback. radioOptionsIn already carries this warning ("`||` not `??`") -
+// it was the canonical radio non-fill - but the same bug outlived that fix in the adapters' own
+// question-label readers, which is R-006: an entry whose <legend> exists but is empty resolved the
+// whole question to "". An empty question is not a harmless miss. It makes every classifier miss
+// (work-eligibility, EEO, location all key off this string), and it reaches the essay drafter as
+// `question: ""`, which the backend rejects outright (z.string().min(1) -> 400), so the draft comes
+// back null and a REQUIRED essay is left blank. That is exactly "Why Abound?" going undrafted on
+// one Ashby form while "Why Cohere?" drafted fine on another (live QA 2026-07-16).
+export function firstNonEmptyText(...candidates: Array<string | null | undefined>): string {
+  for (const candidate of candidates) {
+    const text = candidate?.replace(/\s+/g, ' ').trim();
+    if (text) return text.toLowerCase();
+  }
+  return '';
+}
+
 // Fields we never fill regardless of what the form asks, matched against a control's label text.
 // (generic.ts keeps its own shorter NEVER_FILL_PATTERNS keyed on the control identity string;
 // the ATS adapters all shared this label-based list verbatim.)

@@ -440,6 +440,33 @@ export function linkSkipReason(label: string): string {
   return `link question left for you (no URL in your profile): "${label.slice(0, 60)}"`;
 }
 
+// The essay drafter must never be handed a question it cannot answer. This is the second half of
+// R-006 (live QA 2026-07-16: a required "Why Abound?" left undrafted while "Why Cohere?" drafted
+// fine on another Ashby form), and the whole chain is worth stating, because every link failed
+// quietly:
+//   labelTextFor returned "" (an existing-but-empty <legend> short-circuited the fall-through)
+//     -> desiredAnswer("") matched no rule, so the block fell through to the drafter
+//       -> the drafter was asked to answer ""
+//         -> the backend rejects it outright (question: z.string().min(1) -> 400)
+//           -> drafted = null -> a REQUIRED essay left blank.
+// The label fall-through is fixed at the source (shared/dom.ts firstNonEmptyText). This guard is
+// the backstop for any OTHER way a label can come back unreadable: never spend a round trip on a
+// question we cannot state, and flag it so the student is told in the card instead of meeting an
+// empty required essay at submit.
+// 3 chars, because no real question is shorter and the cost of being wrong is asymmetric: flagging
+// a legitimate question merely asks for a human, while drafting an unreadable one burns a metered
+// LLM call to answer nothing.
+const MIN_DRAFTABLE_QUESTION_CHARS = 3;
+
+export function isDraftableQuestion(label: string): boolean {
+  return label.trim().length >= MIN_DRAFTABLE_QUESTION_CHARS;
+}
+
+// "left for" again: an essay we declined to draft must hold auto-submit, not sail through blank.
+export function unreadableQuestionSkipReason(): string {
+  return "open-ended question left for you: RoleQuick could not read this question's label";
+}
+
 export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string, string>): Desired {
   // Lowercase here rather than trust the caller. Most rules below are case-SENSITIVE (no /i),
   // unlike the /i siblings linkQuestion and WORK_ELIGIBILITY_QUESTION, so they only worked because

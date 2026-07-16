@@ -41,10 +41,11 @@ import {
   openCombobox,
   pickComboOption,
   closeOpenCombobox,
+  firstNonEmptyText,
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { dateSkipReason, desiredAnswer, fillDateField, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { dateSkipReason, desiredAnswer, fillDateField, isDraftableQuestion, linkQuestion, linkSkipReason, matchOption, unreadableQuestionSkipReason, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 import { isDateControl } from './shared/dates';
 import { htmlToPlainText, JD_UNREADABLE, looksLikeJobDescription } from './shared/jd';
 
@@ -78,14 +79,16 @@ function waitForStableDom(quietMs = 200, maxMs = 1500): Promise<void> {
 // label text glued onto the question text.
 function labelTextFor(el: Element): string {
   const entry = el.closest('fieldset[class*="_fieldEntry_"], div[class*="_fieldEntry_"]');
-  const legend = entry?.querySelector('legend');
-  if (legend) return legend.textContent?.trim().toLowerCase() ?? '';
-  // div-based entries (text questions) carry a real <label>; fall back to full text only when
-  // neither a legend nor a label exists.
-  const label = entry?.querySelector('label');
-  if (label) return label.textContent?.trim().toLowerCase() ?? '';
   const container = entry ?? el.closest('[class*="_container_"], li') ?? el.parentElement;
-  return (container?.textContent ?? '').trim().toLowerCase();
+  // Prefer a discrete <legend> (radio-group fieldsets), then a real <label> (div-based text
+  // entries), then the container's full text. Each source now falls through when it renders EMPTY,
+  // not only when it is absent: an entry whose <legend> exists but is blank used to resolve the
+  // whole question to "" and never look at the <label> beneath it (R-006, live QA 2026-07-16).
+  return firstNonEmptyText(
+    entry?.querySelector('legend')?.textContent,
+    entry?.querySelector('label')?.textContent,
+    container?.textContent,
+  );
 }
 
 function isNeverFillField(el: Element): boolean {
@@ -636,7 +639,13 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
     // review), else leave it blank. Short text inputs we couldn't map stay blank for the student.
     const textarea = block.querySelector<HTMLTextAreaElement>('textarea');
     if (textarea && !textarea.value) {
-      if (draftAnswer) {
+      if (!isDraftableQuestion(label)) {
+        // An unreadable label must never reach the drafter: the backend requires a non-empty
+        // question (z.string().min(1)), so "" is a guaranteed 400, a null draft, and a REQUIRED
+        // essay left blank with nobody told. Flag it so auto-submit holds (R-006).
+        fields_skipped++;
+        skipped_reasons.push(unreadableQuestionSkipReason());
+      } else if (draftAnswer) {
         pendingDrafts.push({ el: textarea, question: label.slice(0, 200) });
       } else {
         fields_skipped++;

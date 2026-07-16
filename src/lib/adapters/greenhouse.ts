@@ -40,16 +40,18 @@ import {
   openCombobox,
   pickComboOption,
   closeOpenCombobox,
+  firstNonEmptyText,
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. These are pure (no DOM) and covered by
 // generic.answers.test.ts + ats-answer.test.ts.
-import { desiredAnswer, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { desiredAnswer, isDraftableQuestion, linkQuestion, linkSkipReason, unreadableQuestionSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 function labelTextFor(el: Element): string {
   const container = el.closest('.field-wrapper, .field, #custom_fields > div, li') ?? el.parentElement;
-  const label = container?.querySelector('label');
-  return (label?.textContent ?? container?.textContent ?? '').trim().toLowerCase();
+  // Falls through when the <label> exists but renders empty, instead of resolving the question to
+  // "" (R-006). `??` could not do this: "" is non-null, so it never reached the container fallback.
+  return firstNonEmptyText(container?.querySelector('label')?.textContent, container?.textContent);
 }
 
 function firstMatch<T extends Element>(selectors: string[]): T | null {
@@ -327,7 +329,13 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
     // review), else leave it blank. Short text inputs we couldn't map stay blank for the student.
     const textarea = block.querySelector<HTMLTextAreaElement>('textarea');
     if (textarea && !textarea.value) {
-      if (draftAnswer) {
+      if (!isDraftableQuestion(label)) {
+        // An unreadable label must never reach the drafter: the backend requires a non-empty
+        // question (z.string().min(1)), so "" is a guaranteed 400, a null draft, and a REQUIRED
+        // essay left blank with nobody told. Flag it so auto-submit holds (R-006).
+        fields_skipped++;
+        skipped_reasons.push(unreadableQuestionSkipReason());
+      } else if (draftAnswer) {
         pendingDrafts.push({ el: textarea, question: (labelTextFor(block) || label).slice(0, 200) });
       } else {
         fields_skipped++;

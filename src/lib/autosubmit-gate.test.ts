@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { skippedReasonsNeedReview } from './autosubmit-gate';
-import { linkSkipReason, workEligibilitySkipReason } from './adapters/generic';
+import { linkSkipReason, unreadableQuestionSkipReason, workEligibilitySkipReason } from './adapters/generic';
 
 // Fix 5 of the completion audit: auto-submit must be HELD (hand back, do not start the countdown)
 // whenever the adapter left a review-required item behind. These strings are the exact
@@ -66,6 +66,12 @@ describe('skippedReasonsNeedReview', () => {
 
   it('holds on any open-ended question left blank', () => {
     expect(skippedReasonsNeedReview(['open-ended question left blank: "Why do you want to work here?"'])).toBe(true);
+  });
+
+  it('pins the shared reason builder to the gate: an undraftable question must always hold (R-006)', () => {
+    // Built from the real builder rather than hand-typed, so rewording it without checking
+    // REVIEW_FLAG fails HERE instead of letting a form auto-submit with a required essay blank.
+    expect(skippedReasonsNeedReview([unreadableQuestionSkipReason()])).toBe(true);
   });
 
   it('does not hold on benign info skips or a clean fill', () => {

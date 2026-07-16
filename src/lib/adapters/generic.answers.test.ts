@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { desiredAnswer, linkQuestion, matchOption, eeoAnswer, WORK_ELIGIBILITY_QUESTION, type Desired } from './generic';
+import { desiredAnswer, isDraftableQuestion, linkQuestion, matchOption, eeoAnswer, unreadableQuestionSkipReason, WORK_ELIGIBILITY_QUESTION, type Desired } from './generic';
+import { firstNonEmptyText } from './shared/dom';
 // desiredAnswer/matchOption/eeoAnswer remain exported from generic; commitChoice (the shared
 // radio/checkbox commit that every adapter now routes through) lives in ./shared/dom.
 import type { ApplicationProfile } from '../types';
@@ -383,5 +384,59 @@ describe('desiredAnswer: "18" used for tenure is not an age-of-majority yes', ()
     expect(desiredAnswer('are you over 18?', ap(), {})).toEqual({ mode: 'yes' });
     expect(desiredAnswer('are you 18 years or older?', ap(), {})).toEqual({ mode: 'yes' });
     expect(desiredAnswer('you must be 18 years of age or older to apply', ap(), {})).toEqual({ mode: 'yes' });
+  });
+});
+
+describe('firstNonEmptyText (R-006 label fall-through)', () => {
+  // The bug this kills: `??` treats an existing-but-empty source as a real answer, because "" is
+  // non-null. shared/dom already warned about this form on radioOptionsIn ("`||` not `??`") after
+  // it caused the canonical radio non-fill, but it survived in three adapters' question readers.
+  it('falls through a source that exists but renders empty', () => {
+    expect(firstNonEmptyText('', 'Why Abound?')).toBe('why abound?');
+    expect(firstNonEmptyText('   ', '\n\t ', 'Why Abound?')).toBe('why abound?');
+  });
+
+  it('is the difference between reading the question and reading nothing', () => {
+    // Verbatim shape of the live failure: an Ashby entry whose <legend> exists but renders blank,
+    // with the real question in the <label> beneath it. The old `if (legend) return ... ?? ''`
+    // resolved to "" here and never looked at the label.
+    const emptyLegend = '';
+    const realLabel = 'Why Abound?';
+    expect(firstNonEmptyText(emptyLegend, realLabel)).toBe('why abound?');
+    // What `??` did instead, spelled out so the regression is unmistakable.
+    expect(emptyLegend ?? realLabel).toBe('');
+  });
+
+  it('prefers the first source that has real text', () => {
+    expect(firstNonEmptyText('Why Cohere?', 'ignored')).toBe('why cohere?');
+  });
+
+  it('normalizes whitespace and lowercases, so a wrapped label still matches the label regexes', () => {
+    expect(firstNonEmptyText('  Location\n  (City)  ')).toBe('location (city)');
+  });
+
+  it('returns empty only when every source is genuinely empty', () => {
+    expect(firstNonEmptyText(undefined, null, '', '   ')).toBe('');
+  });
+});
+
+describe('isDraftableQuestion (R-006 drafter guard)', () => {
+  it('refuses an unreadable label, so the drafter is never asked to answer nothing', () => {
+    // The backend requires question: z.string().min(1), so "" is a guaranteed 400 -> null draft ->
+    // a REQUIRED essay left blank. That is the last link in R-006's chain.
+    expect(isDraftableQuestion('')).toBe(false);
+    expect(isDraftableQuestion('   ')).toBe(false);
+    expect(isDraftableQuestion('?')).toBe(false);
+  });
+
+  it('allows a real question', () => {
+    expect(isDraftableQuestion('why abound?')).toBe(true);
+    expect(isDraftableQuestion('what makes you a good fit?')).toBe(true);
+  });
+
+  it('holds auto-submit when it declines to draft', () => {
+    // "left for" is the contract with the gate: an essay we would not draft must hand back rather
+    // than let a blank required field auto-submit.
+    expect(unreadableQuestionSkipReason()).toContain('left for');
   });
 });
