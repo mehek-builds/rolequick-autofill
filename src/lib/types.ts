@@ -118,6 +118,13 @@ export interface ApplicationProfile {
   date_of_birth?: string;
   eeo_prefs?: Record<string, string> | null;
   referral_source_default?: string;
+  // Academic record (R-005). gpa and gpa_scale are SEPARATE deliberately: "3.89" is meaningless
+  // without "4.0", and a form asking for a UK percentage cannot be answered honestly without
+  // knowing the scale the number was earned on. Never store a pre-converted value here - the
+  // conversion belongs to the form being filled, not to the profile.
+  gpa?: string; // as earned, e.g. "3.89"
+  gpa_scale?: string; // e.g. "4.0"
+  major?: string; // e.g. "Computer Science"
 }
 
 export interface ResumeContact {
