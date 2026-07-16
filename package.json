@@ -1,14 +1,14 @@
 {
   "name": "rolequick-extension",
-  "version": "0.1.0",
+  "version": "0.3.3",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "wxt",
     "build": "wxt build",
     "build:firefox": "wxt build -b firefox",
-    "zip": "wxt zip",
-    "zip:firefox": "wxt zip -b firefox",
+    "zip": "node scripts/ensure-no-qa-token.mjs && wxt zip",
+    "zip:firefox": "node scripts/ensure-no-qa-token.mjs && wxt zip -b firefox",
     "postinstall": "wxt prepare",
     "compile": "tsc --noEmit",
     "preview": "node preview/mock-server.mjs & VITE_API_BASE=http://localhost:3001 vite --port 4700",
