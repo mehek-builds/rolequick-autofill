@@ -374,8 +374,20 @@ export function classifyField(label: string, type?: string): ProfileKey | null {
   if (/\bmajor\b|field of study|course of study|degree subject/i.test(l)) return 'major';
 
   if (/phone|mobile/i.test(l)) return 'phone';
-  if (/\bcity\b|\blocation\b/i.test(l)) return 'address_city';
-  if (/\bstate\b|province/i.test(l)) return 'address_state';
+  // State before city, because the shapes overlap and the MOST specific unit wins: a bare
+  // "Location" only means city when no more specific unit is named, so "Location / State /
+  // Province" must land on state, not on the \blocation\b alternative below. Same doctrine as
+  // country before state (RESIDENCE_QUESTION runs well above) and citizenship before residence.
+  // The lookahead keeps "state" the NOUN: "please state your current location" is a city question
+  // that merely uses the verb, and without the guard it would classify as address_state. No
+  // plural: "are you located in the United States?" names a country, not a state field.
+  if (/\b(state|province|prefecture)\b(?!\s+(?:your|the|you|it|why|how|what|when|where))|state\s*\/\s*province/i.test(l))
+    return 'address_state';
+  // The phrase alternatives are R-002's: live misses were question-shaped labels ("where are you
+  // currently living?") that a bare \bcity\b never matched. "where are you based" classifies as
+  // address_country first (RESIDENCE_QUESTION), which is also the order the R-002 branch chose.
+  if (/\b(city|town)\b|\blocation\b|where are you (currently )?(located|living|based)|current location|where do you live/i.test(l))
+    return 'address_city';
   if (/zip|postal/i.test(l)) return 'address_zip';
 
   return null;
@@ -414,8 +426,12 @@ export const START_DATE_QUESTION =
 const SALARY_QUESTION = /salary|compensation|desired pay|expected pay|pay expectation/i;
 const DOB_QUESTION = /date of birth|birth\s*date|\bdob\b/i;
 const CITIZENSHIP_QUESTION = /citizen|nationalit/i;
+// The gap is {0,20} and the verb stem is `resid`, both for ElevenLabs' live "Country you're
+// currently residing in" family: the contraction plus an adverb eats most of a 15-char gap, and
+// "residing"/"residence" share no full word with "reside". The bare `country.{0,20}(residing|
+// residence)` alternative catches the same phrasing with the pronoun dropped (R-002).
 const RESIDENCE_QUESTION =
-  /country of residence|which country|country you.{0,15}(based|reside|work from|located)|where are you based|based in which country|current country|\bcountry\b/i;
+  /country of residence|which country|country you.{0,20}(based|resid|work from|located)|where are you based|based in which country|current country|country.{0,20}(residing|residence)|\bcountry\b/i;
 
 export function linkQuestion(label: string, ap: ApplicationProfile): LinkQuestion | null {
   // A referral question is NOT a link question, even though it routinely names LinkedIn or the
@@ -438,6 +454,65 @@ export function linkQuestion(label: string, ap: ApplicationProfile): LinkQuestio
 // link question we could not fill HOLDS the countdown rather than submitting an empty field.
 export function linkSkipReason(label: string): string {
   return `link question left for you (no URL in your profile): "${label.slice(0, 60)}"`;
+}
+
+// A question asking WHERE the student lives (city / state / country of residence). Live QA
+// 2026-07-16 left a required location field blank on 3 of 12 real forms (Monzo "Location (City)*",
+// ElevenLabs "Location* / Country you're currently residing in", Global Relay "Country*") while
+// filling it on Abound - so the misses were about label and control SHAPE, not a missing profile.
+// The same two holes that produced the link bug (R-008) produced this one, which is why this
+// classifier is shaped exactly like linkQuestion:
+//   1. The QUESTION is classified independently of whether a value is stored. An unset
+//      address_country must still terminate the block (blank + flagged), not fall through - the
+//      old inline rules required `ap.address_country` to even recognise a country question, so an
+//      unset value looked identical to "not a location question" and the field was left blank
+//      SILENTLY, with no skip reason. That silence is the actual defect: with nothing flagged the
+//      auto-submit gate does not hold, and the student first learns of the empty required field
+//      when the form bounces at submit.
+//   2. Callers must handle the combobox shape. Every one of the three live misses was a
+//      react-select / autocomplete control, and the old label rules were anchored to plain inputs
+//      (Ashby's `/^(location|city)\b/` could not even match a label that opens with "Country").
+// Returns the resolved value (possibly undefined) so the caller can fill it or flag it, or null
+// when this is not a location question at all.
+export type LocationQuestion = { field: 'city' | 'state' | 'country'; value?: string };
+
+export function locationQuestion(label: string, ap: ApplicationProfile): LocationQuestion | null {
+  // Citizenship is a DIFFERENT question with a different answer, and desiredAnswer already owns it
+  // (a student whose citizenship differs from where she lives is the whole reason that split
+  // exists). Guard first so "what country are you a citizen of?" can never resolve to residence.
+  if (/citizen|nationalit/i.test(label)) return null;
+  // A location-scoped work-eligibility question ("which country are you authorized to work in?")
+  // names a country but is an always-ask LEGAL question, not a location field. Answering it from
+  // address_country is precisely the R-004 CRITICAL failure (a global profile flag mapped onto a
+  // location-scoped legal question, shipping a false declaration). It must fall through to
+  // WORK_ELIGIBILITY_QUESTION and be left for the student.
+  if (WORK_ELIGIBILITY_QUESTION.test(label)) return null;
+  // Field identity is delegated to classifyField, the same classifier harvest reads with, so a
+  // label RoleQuick fills as a city can never be harvested back as a country. classifyField
+  // re-checks the two refusals above internally (plus EEO and never-fill), so the delegation
+  // cannot weaken them; they stay spelled out here, first, because this ordering is the R-004
+  // lock and must survive any future classifyField edit.
+  switch (classifyField(label.toLowerCase())) {
+    case 'address_country':
+      return { field: 'country', value: ap.address_country };
+    case 'address_state':
+      return { field: 'state', value: ap.address_state };
+    case 'address_city':
+      return { field: 'city', value: ap.address_city };
+    default:
+      return null;
+  }
+}
+
+// "left for" is load-bearing (auto-submit gate REVIEW_FLAG), same as the other two builders. Two
+// distinct reasons, because they are two distinct user actions: we have no value to fill vs. we
+// have one but the picker would not take it and a human must select the option.
+export function locationSkipReason(field: LocationQuestion['field'], label: string, reason: 'no-value' | 'no-option'): string {
+  const detail =
+    reason === 'no-value'
+      ? `no ${field} in your profile`
+      : `couldn't select it in this picker`;
+  return `location question left for you (${detail}): "${label.slice(0, 60)}"`;
 }
 
 export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string, string>): Desired {
@@ -484,9 +559,12 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   // one. From here desiredAnswer's only job is shaping a stored value for the option matcher.
   //
   // Only the keys that were already answered here are handled. classifyField recognises more
-  // (phone, city, links, gpa, major), but those are filled by the identity-first chain in
+  // (phone, links, gpa, major), but those are filled by the identity-first chain in
   // fillGenericApplication, and returning them here would start answering selects/radios that
-  // previously fell through. `default: null` keeps that behaviour exactly as it was.
+  // previously fell through. `default: null` keeps that behaviour exactly as it was - EXCEPT for
+  // address_state/address_city, which now answer deliberately (R-002): a location question
+  // rendered as a select/radio/combobox previously fell through and was left silently blank, and
+  // three of twelve live forms bounced at submit on exactly that.
   switch (classifyField(l)) {
     // Citizenship is often stored as a nationality adjective ("Indian") while a country dropdown
     // lists the country ("India"), and a combobox typeahead filters by what is typed - so map the
@@ -504,9 +582,18 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
     }
 
     // Where the student LIVES, not their nationality. "Which country do you intend to work from"
-    // asks about location; the two differ and the split lives in classifyField now.
+    // asks about location; the two differ and the split lives in classifyField now. These three
+    // cases mirror locationQuestion exactly (both funnel through classifyField for identity), so
+    // an adapter that resolves the question via locationQuestion and one that resolves it here
+    // cannot disagree on which stored value answers it. Only a RESOLVED value answers; an unset
+    // field returns null and falls through. Adapters that call locationQuestion directly get the
+    // stronger guarantee - an unset value is flagged rather than left silently blank (R-002).
     case 'address_country':
       return ap.address_country ? { mode: 'value', value: ap.address_country } : null;
+    case 'address_state':
+      return ap.address_state ? { mode: 'value', value: ap.address_state } : null;
+    case 'address_city':
+      return ap.address_city ? { mode: 'value', value: ap.address_city } : null;
 
     // The option set varies wildly per form (LinkedIn, Company website, Job board, Other, ...), so
     // a single value rarely matches. Try the student's own answer, then near-synonyms, then

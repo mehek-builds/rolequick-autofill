@@ -294,6 +294,25 @@ export function radioOptionsIn(block: Element): Array<{ radio: HTMLInputElement;
   });
 }
 
+// Does this question block already carry an answer? The location branch (R-002) needs this because
+// a block loop and an earlier selector-based pass can both reach the same field: Greenhouse fills
+// #candidate-location before the loop runs, and that input sits inside a .field-wrapper the loop
+// then visits. Without this guard the loop would re-open an already-answered combobox and, failing
+// to re-select, flag a field that is in fact correctly filled.
+// Covers the four shapes an answered control takes. The react-select case is the subtle one: its
+// inner input keeps an EMPTY value after a selection (the chosen option renders as a separate
+// singleValue node), so a value check alone reads an answered picker as blank.
+export function blockAlreadyAnswered(block: Element): boolean {
+  const text = block.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+    'input[type="text"], input[type="tel"], input[type="url"], input[type="email"], textarea',
+  );
+  if (text?.value.trim()) return true;
+  if (block.querySelector('input[type="radio"]:checked, input[type="checkbox"]:checked')) return true;
+  const select = block.querySelector<HTMLSelectElement>('select');
+  if (select?.value) return true;
+  return !!block.querySelector('[class*="singleValue"], [class*="multiValue"]');
+}
+
 // ─── Combobox / react-select filling ────────────────────────────────────────
 // Modern ATS forms (Greenhouse's current template, Workday, Ashby's location field) render
 // their city / yes-no / EEO / country questions as react-select comboboxes: a styled <div>

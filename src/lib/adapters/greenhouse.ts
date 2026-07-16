@@ -40,11 +40,12 @@ import {
   openCombobox,
   pickComboOption,
   closeOpenCombobox,
+  blockAlreadyAnswered,
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. These are pure (no DOM) and covered by
 // generic.answers.test.ts + ats-answer.test.ts.
-import { desiredAnswer, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { desiredAnswer, linkQuestion, linkSkipReason, locationQuestion, locationSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 function labelTextFor(el: Element): string {
   const container = el.closest('.field-wrapper, .field, #custom_fields > div, li') ?? el.parentElement;
@@ -190,7 +191,17 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
   const lastEl = firstMatch<HTMLInputElement>(['#last_name', 'input[name="job_application[last_name]"]']);
   const emailEl = firstMatch<HTMLInputElement>(['#email', 'input[name="job_application[email]"]']);
   const phoneEl = firstMatch<HTMLInputElement>(['#phone', 'input[name="job_application[phone]"]']);
-  const cityEl = firstMatch<HTMLInputElement>(['#candidate-location']);
+  // #candidate-location is the current template's id, but a Greenhouse EMBED on a company's own
+  // careers page renders its own markup - live QA 2026-07-16 (Monzo, Global Relay) hit forms where
+  // this single id matched nothing, so the field was skipped with no fill AND no skip reason. The
+  // label-driven location branch in the block loop below is the real backstop; these extra
+  // selectors just catch the common named shapes before it.
+  const cityEl = firstMatch<HTMLInputElement>([
+    '#candidate-location',
+    '#job_application_location',
+    'input[name="job_application[location]"]',
+    'input[autocomplete="address-level2"]',
+  ]);
   const resumeEl = firstMatch<HTMLInputElement>([
     '#resume',
     'input[type="file"][name="job_application[resume]"]',
@@ -288,6 +299,37 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
       skipped_reasons.push(workEligibilitySkipReason(label));
       continue;
     }
+
+    // Location of residence (city/state/country), via the one shared classifier (see
+    // locationQuestion in generic.ts). Placed AFTER the work-eligibility branch so a legal
+    // "authorized to work in X?" question is already gone by the time we look for a country -
+    // locationQuestion guards that internally too, but the ordering means a regression in either
+    // one alone cannot resurrect the R-004 false declaration.
+    // ALWAYS terminates the block, which is the fix: a location question we cannot answer now
+    // leaves a "left for you" reason that HOLDS auto-submit and shows in the card, instead of
+    // falling through to be left blank silently and bounce at submit (R-002, 3/12 live forms).
+    const loc = locationQuestion(label, applicationProfile);
+    if (loc && !blockAlreadyAnswered(block)) {
+      if (!loc.value) {
+        fields_skipped++;
+        skipped_reasons.push(locationSkipReason(loc.field, label, 'no-value'));
+        continue;
+      }
+      if (await answerChoiceBlock(block, { mode: 'value', value: loc.value })) {
+        fields_filled++;
+        continue;
+      }
+      const textEl = block.querySelector<HTMLInputElement>('input[type="text"]');
+      if (textEl && !isComboboxControl(textEl)) {
+        await fillField(textEl, loc.value);
+        fields_filled++;
+        continue;
+      }
+      fields_skipped++;
+      skipped_reasons.push(locationSkipReason(loc.field, label, 'no-option'));
+      continue;
+    }
+
     const isEeo = /gender|race|ethnicity|veteran|disability/i.test(label);
     if (isEeo) {
       // Real answer when the student stored one (eeo prefs), else decline. Works whether the
