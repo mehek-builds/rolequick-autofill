@@ -24,11 +24,11 @@ describe('desiredAnswer', () => {
       .toBeNull();
   });
 
-  it('maps sponsorship yes/no from the profile', () => {
+  it('never answers sponsorship from the profile (always-ask since 2026-07-16)', () => {
     expect(desiredAnswer('will you now or in the future require sponsorship?', ap({ needs_sponsorship: true }), {}))
-      .toEqual({ mode: 'yes' });
+      .toBeNull();
     expect(desiredAnswer('do you require visa sponsorship?', ap({ needs_sponsorship: false }), {}))
-      .toEqual({ mode: 'no' });
+      .toBeNull();
   });
 
   it('answers an age-of-majority question yes', () => {
@@ -136,11 +136,11 @@ describe('desiredAnswer: unset eligibility is left blank, never answered "No" (f
   it('leaves sponsorship blank when the field is null', () => {
     expect(desiredAnswer('do you require visa sponsorship?', ap({ needs_sponsorship: null as unknown as boolean }), {})).toBeNull();
   });
-  it('still answers a set sponsorship boolean, never work authorization', () => {
+  it('answers neither eligibility boolean, no matter what is stored', () => {
     // Work authorization became always-ask after live QA 2026-07-16 shipped a false declaration;
-    // sponsorship remains answerable because its stored value is what the student chose to state.
+    // sponsorship followed the same day on Mehek's decision (same location-scoped mismatch).
     expect(desiredAnswer('legally authorized to work', ap({ work_authorized: true }), {})).toBeNull();
-    expect(desiredAnswer('do you require visa sponsorship?', ap({ needs_sponsorship: false }), {})).toEqual({ mode: 'no' });
+    expect(desiredAnswer('do you require visa sponsorship?', ap({ needs_sponsorship: false }), {})).toBeNull();
   });
 });
 

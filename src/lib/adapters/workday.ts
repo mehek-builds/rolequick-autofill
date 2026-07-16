@@ -37,7 +37,7 @@ import {
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, matchOption, WORK_AUTH_QUESTION, workAuthSkipReason, type Desired } from './generic';
+import { desiredAnswer, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 // ─── Shared answer helpers (mirror generic.ts's engine) ───────────────────────
 
@@ -348,13 +348,14 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
       }
     }
 
-    // Never answer work-authorization questions, on any control type: one shared classifier and
-    // reason builder for every adapter (see WORK_AUTH_QUESTION in generic.ts for the full story).
-    // Checked BEFORE the EEO branch so a block that also carries an EEO keyword cannot be routed
-    // to a decline answer or a mislabeled skip reason.
-    if (WORK_AUTH_QUESTION.test(label)) {
+    // Never answer work-eligibility questions (work authorization AND sponsorship), on any
+    // control type: one shared classifier and reason builder for every adapter (see
+    // WORK_ELIGIBILITY_QUESTION in generic.ts for the full story). Checked BEFORE the EEO branch
+    // so a block that also carries an EEO keyword cannot be routed to a decline answer or a
+    // mislabeled skip reason.
+    if (WORK_ELIGIBILITY_QUESTION.test(label)) {
       fields_skipped++;
-      skipped_reasons.push(workAuthSkipReason(label));
+      skipped_reasons.push(workEligibilitySkipReason(label));
       continue;
     }
     const isEeo = /gender|race|ethnicity|veteran|disability/i.test(label);
@@ -368,40 +369,6 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
         fields_skipped++;
         skipped_reasons.push('EEO field: no matching option found, left blank');
       }
-      continue;
-    }
-
-    // Sponsorship stays answerable from the student's stored choice; work-auth questions were
-    // intercepted at the top of this loop and never reach here. `!= null`: an unset boolean
-    // arrives as `null` (not undefined) and must leave the question blank, not answer "No".
-    const eligibilityAnswer = applicationProfile.needs_sponsorship;
-    if (/sponsorship/i.test(label) && eligibilityAnswer != null) {
-      const wantYes = eligibilityAnswer;
-      const desired: Desired = wantYes ? { mode: 'yes' } : { mode: 'no' };
-      const radio = block.querySelector<HTMLInputElement>(`input[type="radio"][value="${wantYes ? 'Yes' : 'No'}" i]`);
-      if (radio) {
-        commitChoice(radio);
-        fields_filled++;
-        continue;
-      }
-      const select = block.querySelector<HTMLSelectElement>('select');
-      if (select) {
-        const opt = [...select.options].find((o) => new RegExp(wantYes ? '^yes' : '^no', 'i').test(o.text.trim()));
-        if (opt) {
-          select.value = opt.value;
-          select.dispatchEvent(new Event('change', { bubbles: true }));
-          fields_filled++;
-          continue;
-        }
-      }
-      // Workday commonly renders this as a prompt/listbox rather than a native control.
-      const combo = comboControlIn(block);
-      if (combo && (await fillCombobox(combo, desired))) {
-        fields_filled++;
-        continue;
-      }
-      fields_skipped++;
-      skipped_reasons.push(`${label.slice(0, 40)}: no clean Yes/No control found, left blank`);
       continue;
     }
 

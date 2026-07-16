@@ -223,36 +223,33 @@ export function eeoAnswer(pref: string | undefined): Desired {
   return pref && pref.trim() ? { mode: 'value', value: pref.trim() } : { mode: 'decline' };
 }
 
-// Work-authorization questions are location-scoped ("legally authorized to work in the location
-// where this role is based?") but work_authorized is one global flag, so deriving Yes/No shipped
-// a false declaration on non-local roles (live QA 2026-07-16, Lever/Xsolla). RoleQuick NEVER
-// answers them: the adapters skip the question with workAuthSkipReason(), whose "left for" wording
-// makes the auto-submit gate HOLD (autosubmit-gate.ts REVIEW_FLAG) while it sits unanswered.
-// This is the ONE classifier every adapter must use: whitespace-tolerant (\s+, labels keep raw
-// internal whitespace from textContent), both spellings (authorized/authorised), case-insensitive.
-export const WORK_AUTH_QUESTION =
-  /authori[sz](?:ed|ation)\s+to\s+work|legally\s+authori[sz]ed|right\s+to\s+work|work\s+authori[sz]/i;
+// Work-eligibility questions (work authorization AND visa sponsorship) are location-scoped
+// ("legally authorized to work in the location where this role is based?", "require sponsorship
+// to work in the US?") but the profile stores single global flags, so deriving Yes/No shipped a
+// false declaration on non-local roles (live QA 2026-07-16, Lever/Xsolla; sponsorship extended to
+// always-ask on Mehek's 2026-07-16 decision). RoleQuick NEVER answers either: the adapters skip
+// the question with workEligibilitySkipReason(), whose "left for" wording makes the auto-submit
+// gate HOLD (autosubmit-gate.ts REVIEW_FLAG) while it sits unanswered. This is the ONE classifier
+// every adapter must use: whitespace-tolerant (\s+, labels keep raw internal whitespace from
+// textContent), both spellings (authorized/authorised), case-insensitive.
+export const WORK_ELIGIBILITY_QUESTION =
+  /authori[sz](?:ed|ation)\s+to\s+work|legally\s+authori[sz]ed|right\s+to\s+work|work\s+authori[sz]|sponsor/i;
 
-// The one skip-reason builder for work-auth questions. "left for" is load-bearing: it is what the
-// auto-submit gate's REVIEW_FLAG matches, so every adapter must use this instead of hand-typing.
-export function workAuthSkipReason(label: string): string {
-  return `work-authorization question left for you: "${label.slice(0, 60)}"`;
+// The one skip-reason builder for work-eligibility questions. "left for" is load-bearing: it is
+// what the auto-submit gate's REVIEW_FLAG matches, so every adapter must use this instead of
+// hand-typing.
+export function workEligibilitySkipReason(label: string): string {
+  return `work-eligibility question left for you: "${label.slice(0, 60)}"`;
 }
 
 export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string, string>): Desired {
   const l = label;
   if (NEVER_FILL_PATTERNS.some((re) => re.test(l))) return null;
 
-  // Never answer work-auth questions (see WORK_AUTH_QUESTION above). This branch must stay ABOVE
-  // the sponsorship one so "authorized to work without sponsorship" phrasings are never answered
-  // from needs_sponsorship either.
-  if (WORK_AUTH_QUESTION.test(l)) return null;
-  // Sponsorship yes/no. Use `!= null`, NOT `!== undefined`: GET /profile/application returns
-  // `null` (not undefined) for a boolean the student never set, and `null !== undefined` is true,
-  // so an undefined-only guard would actively answer "No" for an unset field. `!= null` leaves it
-  // blank instead.
-  if (/sponsor/.test(l) && ap.needs_sponsorship != null)
-    return ap.needs_sponsorship ? { mode: 'yes' } : { mode: 'no' };
+  // Never answer work-authorization or sponsorship questions (see WORK_ELIGIBILITY_QUESTION
+  // above). needs_sponsorship and work_authorized stay on the profile for the student's own
+  // reference but are never written into a form.
+  if (WORK_ELIGIBILITY_QUESTION.test(l)) return null;
   // Affirmative age-of-majority only. Exclude negated phrasings ("are you UNDER 18?", "younger
   // than 18 years") - the old bare "18 years" alternative matched those and answered "Yes" to
   // being a minor.
@@ -462,14 +459,15 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
       continue;
     }
 
-    // Work-auth questions are always-ask on every control type (see WORK_AUTH_QUESTION). Checked
+    // Work-eligibility questions (auth + sponsorship) are always-ask on every control type (see
+    // WORK_ELIGIBILITY_QUESTION). Checked
     // BEFORE the identity mapping: "authorized to work in the location where this role is based"
     // contains "location", which would otherwise fill the student's city into the box; and a
     // work-auth textarea must never reach the AI-draft path (a drafted legal claim would land in
     // the field even though the draft-review hold stops auto-submit).
-    if (WORK_AUTH_QUESTION.test(id) || (isTextarea && WORK_AUTH_QUESTION.test(questionLabel(el)))) {
+    if (WORK_ELIGIBILITY_QUESTION.test(id) || (isTextarea && WORK_ELIGIBILITY_QUESTION.test(questionLabel(el)))) {
       fields_skipped++;
-      skipped_reasons.push(workAuthSkipReason(questionLabel(el) || id));
+      skipped_reasons.push(workEligibilitySkipReason(questionLabel(el) || id));
       continue;
     }
 
@@ -639,12 +637,12 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     } else if (isAgreement) {
       fields_skipped++;
       skipped_reasons.push(`agreement checkbox left for you to confirm: "${short(id)}"`);
-    } else if (WORK_AUTH_QUESTION.test(id)) {
+    } else if (WORK_ELIGIBILITY_QUESTION.test(id)) {
       // A standalone "I am legally authorized to work in ..." checkbox: desiredAnswer returns null
       // for work-auth labels, and without this branch the loop fell through with NO skip reason,
       // so the auto-submit gate never held on the unanswered declaration (review 2026-07-16).
       fields_skipped++;
-      skipped_reasons.push(workAuthSkipReason(id));
+      skipped_reasons.push(workEligibilitySkipReason(id));
     }
   }
 

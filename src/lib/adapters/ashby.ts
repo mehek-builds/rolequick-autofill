@@ -43,7 +43,7 @@ import {
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, matchOption, WORK_AUTH_QUESTION, workAuthSkipReason, type Desired } from './generic';
+import { desiredAnswer, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 // Resolves once the DOM has gone quiet for `quietMs`, or after `maxMs` regardless - Ashby's
 // React tree re-renders after most field changes, and firing the next fill mid-re-render risks
@@ -425,13 +425,14 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
       }
     }
 
-    // Never answer work-authorization questions, on any control type: one shared classifier and
-    // reason builder for every adapter (see WORK_AUTH_QUESTION in generic.ts for the full story).
-    // Checked BEFORE the EEO branch so a block that also carries an EEO keyword cannot be routed
-    // to a decline answer or a mislabeled skip reason.
-    if (WORK_AUTH_QUESTION.test(label)) {
+    // Never answer work-eligibility questions (work authorization AND sponsorship), on any
+    // control type: one shared classifier and reason builder for every adapter (see
+    // WORK_ELIGIBILITY_QUESTION in generic.ts for the full story). Checked BEFORE the EEO branch
+    // so a block that also carries an EEO keyword cannot be routed to a decline answer or a
+    // mislabeled skip reason.
+    if (WORK_ELIGIBILITY_QUESTION.test(label)) {
       fields_skipped++;
-      skipped_reasons.push(workAuthSkipReason(label));
+      skipped_reasons.push(workEligibilitySkipReason(label));
       continue;
     }
     const isEeo = /gender|race|ethnicit|veteran|disab|current age|sexual orientation|communities|identify with/i.test(label);
@@ -449,55 +450,6 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
         skipped_reasons.push('EEO field: no matching option found, left blank');
       }
       continue;
-    }
-
-    // Sponsorship stays answerable from the student's stored choice; work-auth questions were
-    // intercepted at the top of this loop and never reach here. `!= null`: an unset boolean
-    // arrives as `null` (not undefined) and must leave the question blank, not answer "No".
-    const eligibilityAnswer = applicationProfile.needs_sponsorship;
-    if (/sponsorship/i.test(label) && eligibilityAnswer != null) {
-      const wantYes = eligibilityAnswer;
-      const select = block.querySelector<HTMLSelectElement>('select');
-      if (select) {
-        const opt = [...select.options].find((o) => new RegExp(wantYes ? '^yes' : '^no', 'i').test(o.text.trim()));
-        if (opt) {
-          select.value = opt.value;
-          select.dispatchEvent(new Event('change', { bubbles: true }));
-          await waitForStableDom();
-          fields_filled++;
-          continue;
-        }
-      }
-      // Not every question here is a clean Yes/No (e.g. a sponsorship-type question rendered as
-      // J1/F1/None/Other) - applicationProfile only has a boolean, so only fill when exactly one
-      // option's label unambiguously means yes/no/none; otherwise skip rather than guess a
-      // specific visa type or similar.
-      const options = radioOptionsIn(block);
-      const yesLike = options.filter((o) => /^yes\b/.test(o.text));
-      const noLike = options.filter((o) => /^(no|none|not required|no sponsorship)\b/.test(o.text));
-      const match = wantYes ? (yesLike.length === 1 ? yesLike[0] : undefined) : (noLike.length === 1 ? noLike[0] : undefined);
-      if (match) {
-        await checkRadio(match.radio);
-        fields_filled++;
-        continue;
-      }
-      // Some boards render this question as a react-select combobox rather than native radios.
-      const combo = comboControlIn(block);
-      if (combo && (await fillCombobox(combo, wantYes ? { mode: 'yes' } : { mode: 'no' }))) {
-        fields_filled++;
-        continue;
-      }
-      // Ashby renders this Yes/No as <button> pills on some boards (no radios, no select, no
-      // combo). answerChoiceBlock now matches button pills too, so it is the catch-all.
-      if (await answerChoiceBlock(block, wantYes ? { mode: 'yes' } : { mode: 'no' })) {
-        fields_filled++;
-        continue;
-      }
-      if (options.length > 0) {
-        fields_skipped++;
-        skipped_reasons.push(`${label.slice(0, 40)}: no unambiguous Yes/No option among [${options.map((o) => o.text).join(', ')}], left blank`);
-        continue;
-      }
     }
 
     // Other known-answer questions (age of majority, citizenship, availability, referral source,

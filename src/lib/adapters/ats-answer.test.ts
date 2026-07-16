@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { desiredAnswer, matchOption, WORK_AUTH_QUESTION } from './generic';
+import { desiredAnswer, matchOption, WORK_ELIGIBILITY_QUESTION } from './generic';
 import type { ApplicationProfile } from '../types';
 
 // The ATS adapters (lever/greenhouse/ashby/workday/linkedin) now route their EEO, work-auth,
@@ -35,14 +35,14 @@ describe('desiredAnswer on ATS full-block label text', () => {
     ).toBeNull();
   });
 
-  it('classifies sponsorship inside a longer container string', () => {
+  it('never answers sponsorship either (always-ask since 2026-07-16, Mehek decision)', () => {
     expect(
       desiredAnswer(
         'will you now or in the future require immigration sponsorship? yes no',
         ap({ needs_sponsorship: false }),
         {},
       ),
-    ).toEqual({ mode: 'no' });
+    ).toBeNull();
   });
 
   it('declines EEO wrapped in a survey block, values it when a preference exists', () => {
@@ -58,21 +58,27 @@ describe('desiredAnswer on ATS full-block label text', () => {
   });
 });
 
-describe('WORK_AUTH_QUESTION classifier (the one shared by every adapter)', () => {
+describe('WORK_ELIGIBILITY_QUESTION classifier (the one shared by every adapter)', () => {
   it('matches labels whose phrases wrap across lines (raw textContent keeps internal whitespace)', () => {
-    expect(WORK_AUTH_QUESTION.test('are you legally\n  authorised to\n  work without sponsorship?')).toBe(true);
-    expect(WORK_AUTH_QUESTION.test('legally  authorized\tto work')).toBe(true);
+    expect(WORK_ELIGIBILITY_QUESTION.test('are you legally\n  authorised to\n  work without sponsorship?')).toBe(true);
+    expect(WORK_ELIGIBILITY_QUESTION.test('legally  authorized\tto work')).toBe(true);
   });
 
   it('matches both spellings and the common phrasings', () => {
-    expect(WORK_AUTH_QUESTION.test('are you authorised to work in the united kingdom?')).toBe(true);
-    expect(WORK_AUTH_QUESTION.test('work authorisation status')).toBe(true);
-    expect(WORK_AUTH_QUESTION.test('do you have the right to work in ireland?')).toBe(true);
-    expect(WORK_AUTH_QUESTION.test('Are You Legally Authorized To Work In The US?')).toBe(true);
+    expect(WORK_ELIGIBILITY_QUESTION.test('are you authorised to work in the united kingdom?')).toBe(true);
+    expect(WORK_ELIGIBILITY_QUESTION.test('work authorisation status')).toBe(true);
+    expect(WORK_ELIGIBILITY_QUESTION.test('do you have the right to work in ireland?')).toBe(true);
+    expect(WORK_ELIGIBILITY_QUESTION.test('Are You Legally Authorized To Work In The US?')).toBe(true);
   });
 
-  it('does not swallow plain sponsorship questions', () => {
-    expect(WORK_AUTH_QUESTION.test('will you now or in the future require visa sponsorship?')).toBe(false);
+  it('matches plain sponsorship questions too (always-ask since 2026-07-16)', () => {
+    expect(WORK_ELIGIBILITY_QUESTION.test('will you now or in the future require visa sponsorship?')).toBe(true);
+    expect(WORK_ELIGIBILITY_QUESTION.test('do you need sponsor support to work in germany?')).toBe(true);
+  });
+
+  it('does not swallow unrelated questions', () => {
+    expect(WORK_ELIGIBILITY_QUESTION.test('what is your desired salary?')).toBe(false);
+    expect(WORK_ELIGIBILITY_QUESTION.test('are you at least 18 years of age?')).toBe(false);
   });
 });
 

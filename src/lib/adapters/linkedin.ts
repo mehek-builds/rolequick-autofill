@@ -47,7 +47,7 @@ import {
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, matchOption, WORK_AUTH_QUESTION, workAuthSkipReason, type Desired } from './generic';
+import { desiredAnswer, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 function getModal(): Element | null {
   for (const sel of EASY_APPLY_MODAL_SELECTORS) {
@@ -263,13 +263,14 @@ export async function fillLinkedInApplication(params: LinkedInFillParams): Promi
       }
     }
 
-    // Never answer work-authorization questions, on any control type: one shared classifier and
-    // reason builder for every adapter (see WORK_AUTH_QUESTION in generic.ts for the full story).
-    // Checked BEFORE the EEO branch so a block that also carries an EEO keyword cannot be routed
-    // to a decline answer or a mislabeled skip reason.
-    if (WORK_AUTH_QUESTION.test(label)) {
+    // Never answer work-eligibility questions (work authorization AND sponsorship), on any
+    // control type: one shared classifier and reason builder for every adapter (see
+    // WORK_ELIGIBILITY_QUESTION in generic.ts for the full story). Checked BEFORE the EEO branch
+    // so a block that also carries an EEO keyword cannot be routed to a decline answer or a
+    // mislabeled skip reason.
+    if (WORK_ELIGIBILITY_QUESTION.test(label)) {
       fields_skipped++;
-      skipped_reasons.push(workAuthSkipReason(label));
+      skipped_reasons.push(workEligibilitySkipReason(label));
       continue;
     }
     const isEeo = /gender|race|ethnicity|veteran|disability/i.test(label);
@@ -284,46 +285,6 @@ export async function fillLinkedInApplication(params: LinkedInFillParams): Promi
         skipped_reasons.push('EEO field: no matching option found, left blank');
       }
       continue;
-    }
-
-    // Sponsorship stays answerable from the student's stored choice; work-auth questions were
-    // intercepted at the top of this loop and never reach here. `!= null`: an unset boolean
-    // arrives as `null` (not undefined) and must leave the question blank, not answer "No".
-    const eligibilityAnswer = applicationProfile.needs_sponsorship;
-    if (/sponsorship/i.test(label) && eligibilityAnswer != null) {
-      const wantYes = eligibilityAnswer;
-      const select = block.querySelector<HTMLSelectElement>('select');
-      if (select) {
-        const opt = [...select.options].find((o) => new RegExp(wantYes ? '^yes' : '^no', 'i').test(o.text.trim()));
-        if (opt) {
-          select.value = opt.value;
-          select.dispatchEvent(new Event('change', { bubbles: true }));
-          fields_filled++;
-          continue;
-        }
-      }
-      // Same principle as Ashby: only fill when exactly one radio option unambiguously
-      // means yes/no - never guess a specific visa type or similar multi-option answer.
-      const options = radioOptionsIn(block);
-      const yesLike = options.filter((o) => /^yes\b/.test(o.text));
-      const noLike = options.filter((o) => /^(no|none|not required|no sponsorship)\b/.test(o.text));
-      const match = wantYes ? (yesLike.length === 1 ? yesLike[0] : undefined) : (noLike.length === 1 ? noLike[0] : undefined);
-      if (match) {
-        await checkRadio(match.radio);
-        fields_filled++;
-        continue;
-      }
-      // Some Easy Apply questions render as a react-select combobox rather than native radios.
-      const combo = comboControlIn(block);
-      if (combo && (await fillCombobox(combo, wantYes ? { mode: 'yes' } : { mode: 'no' }))) {
-        fields_filled++;
-        continue;
-      }
-      if (options.length > 0) {
-        fields_skipped++;
-        skipped_reasons.push(`${label.slice(0, 40)}: no unambiguous Yes/No option among [${options.map((o) => o.text).join(', ')}], left blank`);
-        continue;
-      }
     }
 
     // Other known-answer questions (age of majority, citizenship, availability, referral source,
