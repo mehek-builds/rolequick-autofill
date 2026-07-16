@@ -18,7 +18,7 @@ import {
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, matchOption, type Desired } from './generic';
+import { desiredAnswer, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 function labelTextFor(el: Element): string {
   const container = el.closest('.application-question, .card, li') ?? el.parentElement;
@@ -197,9 +197,10 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
     skipped_reasons.push('resume: no generated resume file available');
   }
 
-  // Work authorization / sponsorship - the two questions that appear on nearly every US ATS
-  // form (PRD-v2 Section 4B). Lever renders these as custom "additional questions" with no
-  // stable name attribute, so match on label text rather than a selector.
+  // Eligibility and screening questions (PRD-v2 Section 4B). Work authorization AND sponsorship
+  // are deliberately NEVER answered and hold auto-submit (see WORK_ELIGIBILITY_QUESTION in
+  // generic.ts). Lever renders these as custom "additional questions" with no stable name
+  // attribute, so match on label text.
   const questionBlocks = document.querySelectorAll('.application-question, .card');
   for (const block of questionBlocks) {
     if (isNeverFillField(block)) {
@@ -209,6 +210,16 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
     }
 
     const label = labelTextFor(block);
+    // Never answer work-eligibility questions (work authorization AND sponsorship), on any
+    // control type: one shared classifier and reason builder for every adapter (see
+    // WORK_ELIGIBILITY_QUESTION in generic.ts for the full story). Checked BEFORE the EEO branch
+    // so a block that also carries an EEO keyword cannot be routed to a decline answer or a
+    // mislabeled skip reason.
+    if (WORK_ELIGIBILITY_QUESTION.test(label)) {
+      fields_skipped++;
+      skipped_reasons.push(workEligibilitySkipReason(label));
+      continue;
+    }
     const isEeo = /gender|race|ethnicity|veteran|disability/i.test(label);
     if (isEeo) {
       // Real answer when the student stored one (eeo prefs), else decline. Works whether the
@@ -220,34 +231,6 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
         fields_skipped++;
         skipped_reasons.push('EEO field: no matching option found, left blank');
       }
-      continue;
-    }
-
-    const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
-    const isSponsorQuestion = /sponsorship/i.test(label);
-    const eligibilityAnswer = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
-    // `!= null` and keyed to the RELEVANT field: an unset boolean arrives as `null` (not undefined),
-    // and an auth question must not read a null work_authorized just because sponsorship is set.
-    // Either slip previously answered "No" and could auto-reject an authorized student.
-    if ((isAuthQuestion || isSponsorQuestion) && eligibilityAnswer != null) {
-      const wantYes = eligibilityAnswer;
-      const desired: Desired = wantYes ? { mode: 'yes' } : { mode: 'no' };
-      // Lever's yes/no radios carry real values; try the live-tested selector first.
-      const target = block.querySelector<HTMLInputElement>(
-        `input[type="radio"][value="${wantYes ? 'Yes' : 'No'}" i]`,
-      );
-      if (target) {
-        commitChoice(target);
-        fields_filled++;
-        continue;
-      }
-      // Fallback for boards that render the question as a native select or a react-select combobox.
-      if (await answerChoiceBlock(block, desired)) {
-        fields_filled++;
-        continue;
-      }
-      fields_skipped++;
-      skipped_reasons.push(`${label.slice(0, 40)}: no matching Yes/No control found, left blank`);
       continue;
     }
 
@@ -270,6 +253,32 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
       fields_skipped++;
       skipped_reasons.push(`${label.slice(0, 40)}: no matching control, left blank`);
       continue;
+    }
+
+    // Link questions ("provide a link to your GitHub"). Lever has no stable name attribute for
+    // these custom questions - the urls[LinkedIn]/urls[GitHub] selectors above only cover Lever's
+    // OWN standard link fields - so a custom link question used to fall straight through to the
+    // AI drafter and come back as a prose paragraph (live QA 2026-07-16, Xsolla's GitHub field).
+    // Placed AFTER the known-answer branch so a referral question whose options mention LinkedIn
+    // resolves as referral, and BEFORE the open-ended branch so the drafter can never see it.
+    const link = linkQuestion(label, applicationProfile);
+    if (link) {
+      // The textarea is the control that reached the drafter, so it must be reachable here - but
+      // only when the label asks for a link, or "tell us about your portfolio" would get answered
+      // with a bare URL instead of the essay it wants.
+      const linkEl: HTMLInputElement | HTMLTextAreaElement | null =
+        block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"]') ??
+        (link.asksForLink ? block.querySelector<HTMLTextAreaElement>('textarea') : null);
+      if (linkEl && !linkEl.value && !isComboboxControl(linkEl)) {
+        if (link.url) {
+          await fillField(linkEl, link.url);
+          fields_filled++;
+        } else {
+          fields_skipped++;
+          skipped_reasons.push(linkSkipReason(label));
+        }
+        continue;
+      }
     }
 
     // Open-ended screening questions: draft the textarea via the hook if available (flagged for

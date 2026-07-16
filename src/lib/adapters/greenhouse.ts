@@ -44,7 +44,7 @@ import {
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. These are pure (no DOM) and covered by
 // generic.answers.test.ts + ats-answer.test.ts.
-import { desiredAnswer, matchOption, type Desired } from './generic';
+import { desiredAnswer, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 function labelTextFor(el: Element): string {
   const container = el.closest('.field-wrapper, .field, #custom_fields > div, li') ?? el.parentElement;
@@ -257,25 +257,37 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
 
     const label = labelTextFor(block);
 
-    const linkTarget =
-      /linkedin/i.test(label) ? applicationProfile.linkedin_url :
-      /github/i.test(label) ? applicationProfile.github_url :
-      /portfolio|website/i.test(label) ? applicationProfile.portfolio_url :
-      undefined;
-    if (linkTarget !== undefined) {
-      const input = block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"]');
-      if (input && !input.value) {
-        if (linkTarget) {
-          await fillField(input, linkTarget);
+    // Link questions, via the one shared classifier (see linkQuestion in generic.ts). The old
+    // inline version here had the same two holes that let Lever answer a GitHub-link field with a
+    // prose paragraph: an unset URL collapsed to `undefined` and fell through to the AI drafter,
+    // and the selector never looked at a textarea, which is the only control that reaches it.
+    const link = linkQuestion(label, applicationProfile);
+    if (link) {
+      const linkEl: HTMLInputElement | HTMLTextAreaElement | null =
+        block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"]') ??
+        (link.asksForLink ? block.querySelector<HTMLTextAreaElement>('textarea') : null);
+      if (linkEl && !linkEl.value && !isComboboxControl(linkEl)) {
+        if (link.url) {
+          await fillField(linkEl, link.url);
           fields_filled++;
         } else {
           fields_skipped++;
-          skipped_reasons.push(`${label.slice(0, 40)}: no value in application profile`);
+          skipped_reasons.push(linkSkipReason(label));
         }
         continue;
       }
     }
 
+    // Never answer work-eligibility questions (work authorization AND sponsorship), on any
+    // control type: one shared classifier and reason builder for every adapter (see
+    // WORK_ELIGIBILITY_QUESTION in generic.ts for the full story). Checked BEFORE the EEO branch
+    // so a block that also carries an EEO keyword cannot be routed to a decline answer or a
+    // mislabeled skip reason.
+    if (WORK_ELIGIBILITY_QUESTION.test(label)) {
+      fields_skipped++;
+      skipped_reasons.push(workEligibilitySkipReason(label));
+      continue;
+    }
     const isEeo = /gender|race|ethnicity|veteran|disability/i.test(label);
     if (isEeo) {
       // Real answer when the student stored one (eeo prefs), else decline. Works whether the
@@ -287,46 +299,6 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
         fields_skipped++;
         skipped_reasons.push('EEO field: no matching option found, left blank');
       }
-      continue;
-    }
-
-    const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
-    const isSponsorQuestion = /sponsorship/i.test(label);
-    const eligibilityAnswer = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
-    // `!= null` and keyed to the RELEVANT field: an unset boolean arrives as `null` (not undefined),
-    // and an auth question must not read a null work_authorized just because sponsorship is set.
-    // Either slip previously answered "No" and could auto-reject an authorized student.
-    if ((isAuthQuestion || isSponsorQuestion) && eligibilityAnswer != null) {
-      const wantYes = eligibilityAnswer;
-      const desired: Desired = wantYes ? { mode: 'yes' } : { mode: 'no' };
-
-      // Native radios carry real values on Greenhouse (value="Yes"/"No"); try those first.
-      const radio = block.querySelector<HTMLInputElement>(`input[type="radio"][value="${wantYes ? 'Yes' : 'No'}" i]`);
-      if (radio) {
-        commitChoice(radio);
-        fields_filled++;
-        continue;
-      }
-      const select = block.querySelector<HTMLSelectElement>('select');
-      if (select) {
-        const opt = [...select.options].find((o) => new RegExp(wantYes ? '^yes' : '^no', 'i').test(o.text.trim()));
-        if (opt) {
-          select.value = opt.value;
-          select.dispatchEvent(new Event('change', { bubbles: true }));
-          fields_filled++;
-          continue;
-        }
-      }
-      // Verified live (2026-07-01, Gemini's Greenhouse posting): these yes/no questions render as
-      // a react-select combobox far more often than a plain input. Drive it through the shared
-      // combobox helpers, which open the menu and click the matching option.
-      const combo = comboControlIn(block);
-      if (combo && (await fillCombobox(combo, desired))) {
-        fields_filled++;
-        continue;
-      }
-      fields_skipped++;
-      skipped_reasons.push(`${label.slice(0, 40)}: no matching Yes/No control found, left blank`);
       continue;
     }
 

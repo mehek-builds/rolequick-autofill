@@ -223,22 +223,102 @@ export function eeoAnswer(pref: string | undefined): Desired {
   return pref && pref.trim() ? { mode: 'value', value: pref.trim() } : { mode: 'decline' };
 }
 
+// Work-eligibility questions (work authorization AND visa sponsorship) are location-scoped
+// ("legally authorized to work in the location where this role is based?", "require sponsorship
+// to work in the US?") but the profile stores single global flags, so deriving Yes/No shipped a
+// false declaration on non-local roles (live QA 2026-07-16, Lever/Xsolla; sponsorship extended to
+// always-ask on Mehek's 2026-07-16 decision). RoleQuick NEVER answers either: the adapters skip
+// the question with workEligibilitySkipReason(), whose "left for" wording makes the auto-submit
+// gate HOLD (autosubmit-gate.ts REVIEW_FLAG) while it sits unanswered. This is the ONE classifier
+// every adapter must use: whitespace-tolerant (\s+, labels keep raw internal whitespace from
+// textContent), both spellings (authorized/authorised), case-insensitive.
+//
+// The sponsorship half must stay tied to sponsorship-OF-WORK wording (require/need/visa/
+// immigration/without/employment near "sponsor", or "sponsorship required"). A bare `sponsor`
+// alternative matched any label merely containing the word, and adapters pass whole-container
+// text as the label, so "How did you hear about us? [LinkedIn, Sponsored ad, ...]" was classified
+// as a work-eligibility question: skipped, flagged "left for you", and holding auto-submit.
+export const WORK_ELIGIBILITY_QUESTION =
+  /authori[sz](?:ed|ation)\s+to\s+work|legally\s+authori[sz]ed|right\s+to\s+work|work\s+authori[sz]|(?:requir\w*|need\w*|visa|immigration|without|employment)\s+(?:\w+\s+){0,3}sponsor|sponsor\w*\s+(?:\w+\s+){0,3}(?:requir\w*|need\w*)/i;
+
+// The one skip-reason builder for work-eligibility questions. "left for" is load-bearing: it is
+// what the auto-submit gate's REVIEW_FLAG matches, so every adapter must use this instead of
+// hand-typing.
+export function workEligibilitySkipReason(label: string): string {
+  return `work-eligibility question left for you: "${label.slice(0, 60)}"`;
+}
+
+// A question asking for a profile LINK ("Please provide a link to your GitHub") must never reach
+// the open-ended AI drafter, which answers it with a prose paragraph instead of a URL (live QA
+// 2026-07-16, Xsolla/Lever). Two properties make that safe, and the adapters' old inline
+// `linkTarget !== undefined` checks had neither:
+//   1. The QUESTION is classified independently of whether a URL is stored. An unset github_url
+//      must still terminate the block (blank + flagged), not fall through to the drafter - which
+//      is precisely what `?: undefined` did, since "no URL" and "not a link question" collapsed
+//      into the same value.
+//   2. Callers must query textarea too. A link question rendered as a textarea is the ONLY way it
+//      reaches the drafter at all, so an input-only selector cannot fix this bug.
+// Returns the resolved url (possibly undefined) so the caller can fill it or flag it, or null when
+// this is not a link question at all.
+// `asksForLink` exists because a textarea is ambiguous in a way an input is not. "Please provide a
+// link to your GitHub" rendered as a textarea is a URL field (fill it). "Tell us about your
+// portfolio" rendered as a textarea is an ESSAY (leave it for the drafter). Naming the platform is
+// not enough to tell those apart; asking for a link/URL/profile is. Callers therefore accept a
+// textarea ONLY when asksForLink is true, while a plain text input stays unconditional (an input
+// cannot hold an essay, so a field merely labelled "GitHub" is still a URL field).
+export type LinkQuestion = { field: 'linkedin' | 'github' | 'portfolio'; url?: string; asksForLink: boolean };
+
+// "How did you hear about us?" and friends. Shared by linkQuestion (to refuse them) and
+// desiredAnswer (to answer them), so the two can never drift apart on what counts as a referral.
+export const REFERRAL_QUESTION = /how did you hear|referral source|hear about (this|us|the)|source of/i;
+
+export function linkQuestion(label: string, ap: ApplicationProfile): LinkQuestion | null {
+  // A referral question is NOT a link question, even though it routinely names LinkedIn or the
+  // company website among its OPTIONS - and adapters pass whole-container text as the label, so
+  // those option words land here. Without this guard, "How did you hear about us? (e.g. LinkedIn,
+  // referral, job board)" classified as a linkedin link question and, on the four adapters that
+  // resolve links before known answers, wrote the student's LinkedIn URL into the referral box.
+  // lever.ts dodged this by ordering its link branch after the known-answer branch; guarding the
+  // classifier itself makes every adapter safe regardless of branch order.
+  if (REFERRAL_QUESTION.test(label)) return null;
+  const asksForLink = /\b(link|links|url|urls|profile|handle|username)\b/i.test(label);
+  if (/linkedin/i.test(label)) return { field: 'linkedin', url: ap.linkedin_url, asksForLink };
+  if (/github/i.test(label)) return { field: 'github', url: ap.github_url, asksForLink };
+  if (/portfolio|personal\s+(?:web)?site|\bwebsite\b/i.test(label))
+    return { field: 'portfolio', url: ap.portfolio_url, asksForLink };
+  return null;
+}
+
+// "left for" is load-bearing here too: it is what the auto-submit gate's REVIEW_FLAG matches, so a
+// link question we could not fill HOLDS the countdown rather than submitting an empty field.
+export function linkSkipReason(label: string): string {
+  return `link question left for you (no URL in your profile): "${label.slice(0, 60)}"`;
+}
+
 export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string, string>): Desired {
-  const l = label;
+  // Lowercase here rather than trust the caller. Most rules below are case-SENSITIVE (no /i),
+  // unlike the /i siblings linkQuestion and WORK_ELIGIBILITY_QUESTION, so they only worked because
+  // all five adapters happen to pre-lowercase in labelTextFor. A future caller passing a raw label
+  // would silently skip every EEO / citizenship / age rule and return null: a blank field with no
+  // skip reason, which is the exact silent-blank class the location and link fixes exist to kill.
+  const l = label.toLowerCase();
   if (NEVER_FILL_PATTERNS.some((re) => re.test(l))) return null;
 
-  // Eligibility yes/no. Use `!= null`, NOT `!== undefined`: GET /profile/application returns
-  // `null` (not undefined) for a boolean the student never set, and `null !== undefined` is true,
-  // so the old guard let an unset field through and, because `null` is falsy, actively answered
-  // "No" - marking a work-authorized student as NOT authorized. `!= null` leaves it blank instead.
-  if (/authoriz(ed|ation)\s+to\s+work|legally\s+authorized|right\s+to\s+work|work\s+authoriz/.test(l) && ap.work_authorized != null)
-    return ap.work_authorized ? { mode: 'yes' } : { mode: 'no' };
-  if (/sponsor/.test(l) && ap.needs_sponsorship != null)
-    return ap.needs_sponsorship ? { mode: 'yes' } : { mode: 'no' };
-  // Affirmative age-of-majority only. Exclude negated phrasings ("are you UNDER 18?", "younger
-  // than 18 years") - the old bare "18 years" alternative matched those and answered "Yes" to
-  // being a minor.
-  if (/(at least|over|older than)\s*(18|eighteen)|age of majority|18\s*\+|\b18\s+years?\b/.test(l) && !/\bunder\b|younger than|below|less than/.test(l))
+  // Never answer work-authorization or sponsorship questions (see WORK_ELIGIBILITY_QUESTION
+  // above). needs_sponsorship and work_authorized stay on the profile for the student's own
+  // reference but are never written into a form.
+  if (WORK_ELIGIBILITY_QUESTION.test(l)) return null;
+  // Affirmative age-of-majority only. Two classes of false Yes are excluded:
+  //   - negated phrasings ("are you UNDER 18?", "younger than 18 years"), which would answer Yes
+  //     to being a minor;
+  //   - the number 18 used for TENURE rather than age. "Do you have 18+ months of experience?" and
+  //     "at least 18 years of experience" both satisfied the alternatives above, so RoleQuick
+  //     claimed experience the student never stated - the same class of false declaration the
+  //     always-ask work-eligibility rule exists to prevent.
+  if (
+    /(at least|over|older than)\s*(18|eighteen)|age of majority|18\s*\+|\b18\s+years?\b/.test(l) &&
+    !/\bunder\b|younger than|below|less than|experience|\bmonths?\b|tenure/.test(l)
+  )
     return { mode: 'yes' };
 
   // EEO / demographics: real answer if the student provided one, else decline.
@@ -282,7 +362,7 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   // website, Job board, Other, ...), so a single value rarely matches. Try the student's own
   // answer first, then common near-synonyms, then "Other" as the safe catch-all - one of these
   // almost always exists, so the question gets answered instead of left blank.
-  if (/how did you hear|referral source|hear about (this|us|the)|source of/.test(l))
+  if (REFERRAL_QUESTION.test(l))
     return {
       mode: 'oneof',
       values: [
@@ -325,6 +405,9 @@ const NATIONALITY_TO_COUNTRY: Record<string, string> = {
 export function matchOption<T extends { text: string }>(options: T[], desired: Desired): T | null {
   if (!desired) return null;
   const norm = (s: string) => clean(s).toLowerCase();
+  // Option text is page-authored, so a value like "Korea, Republic of" must not be spliced into a
+  // RegExp as syntax.
+  const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   if (desired.mode === 'decline') {
     return options.find((o) => DECLINE_RE.test(clean(o.text))) ?? null;
   }
@@ -335,16 +418,13 @@ export function matchOption<T extends { text: string }>(options: T[], desired: D
     // sponsorship").
     const isNeg = (t: string) =>
       /^\s*no\b/.test(t) || /\b(not|am not|do not|don'?t)\b/.test(t) || /require(s|d)?\s+(visa\s+)?sponsor/.test(t);
-    // Positive options are often phrased as statements, not "Yes" - "I am authorized to work in
-    // the country", "I am eligible to work" (live-seen on vercel.com), so match those too, as long
-    // as they aren't negated.
+    // Positive options are often phrased as statements, not "Yes" - "I am a protected veteran",
+    // so match those too, as long as they aren't negated. The work-auth statement alternatives
+    // ("I am authorized to work...") were removed with the always-ask work-auth change: no auth
+    // question produces a yes/no Desired anymore, and keeping them only let "authorization"
+    // wording inside a sponsorship question's options get mis-clicked as the positive.
     const isPos = (t: string) =>
-      (/^\s*yes\b/.test(t) ||
-        /\b(i am a|identify as|i have)\b/.test(t) ||
-        /\bauthoriz(ed|ation)\b/.test(t) ||
-        /\beligible to work\b/.test(t) ||
-        /\blegally (authorized|able|permitted)\b/.test(t)) &&
-      !isNeg(t);
+      (/^\s*yes\b/.test(t) || /\b(i am a|identify as|i have)\b/.test(t)) && !isNeg(t);
     const pos = options.filter((o) => isPos(norm(o.text)));
     const neg = options.filter((o) => isNeg(norm(o.text)) && !DECLINE_RE.test(o.text));
     const pick = wantYes ? pos : neg;
@@ -364,10 +444,20 @@ export function matchOption<T extends { text: string }>(options: T[], desired: D
     for (const v of candidates) {
       const exact = options.find((o) => norm(o.text) === v);
       if (exact) return exact;
-      const contains = options.filter((o) => norm(o.text).includes(v));
+      // Word-boundary substring, NEVER a bare fragment. A plain .includes() mis-selects on a
+      // coincidental letter run: "asian" sits inside "cauc-asian" and "male" inside "fe-male", so
+      // an Asian applicant against a [White/Caucasian, ...] taxonomy silently got Caucasian ticked,
+      // and a male applicant got Female - with contains.length === 1 it committed confidently
+      // rather than leaving it for the student. The boundary still matches the legitimate widening
+      // case ("Korea" -> "Korea, Republic of").
+      const vRe = new RegExp(`\\b${escapeRe(v)}\\b`);
+      const contains = options.filter((o) => vRe.test(norm(o.text)));
       if (contains.length === 1) return contains[0];
       if (contains.length > 1) return null; // ambiguous -> leave for the student
-      const reverse = options.filter((o) => v.includes(norm(o.text)) && norm(o.text).length > 2);
+      const reverse = options.filter((o) => {
+        const ot = norm(o.text);
+        return ot.length > 2 && new RegExp(`\\b${escapeRe(ot)}\\b`).test(v);
+      });
       if (reverse.length === 1) return reverse[0];
     }
     return null;
@@ -447,6 +537,18 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
       continue;
     }
 
+    // Work-eligibility questions (auth + sponsorship) are always-ask on every control type (see
+    // WORK_ELIGIBILITY_QUESTION). Checked
+    // BEFORE the identity mapping: "authorized to work in the location where this role is based"
+    // contains "location", which would otherwise fill the student's city into the box; and a
+    // work-auth textarea must never reach the AI-draft path (a drafted legal claim would land in
+    // the field even though the draft-review hold stops auto-submit).
+    if (WORK_ELIGIBILITY_QUESTION.test(id) || (isTextarea && WORK_ELIGIBILITY_QUESTION.test(questionLabel(el)))) {
+      fields_skipped++;
+      skipped_reasons.push(workEligibilitySkipReason(questionLabel(el) || id));
+      continue;
+    }
+
     // Identity-first mapping (input type beats label text).
     let value =
       type === 'email' ? email :
@@ -502,6 +604,8 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     // the structured part of the form populates immediately instead of blocking behind N
     // sequential draft calls.
     if (isTextarea) {
+      // Work-auth textareas never reach here: the always-ask intercept at the top of this loop
+      // skips them before the identity mapping, so nothing work-auth can be AI-drafted.
       if (draftAnswer) {
         pendingDrafts.push({ el, question: questionLabel(el) || id });
       } else {
@@ -611,6 +715,12 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     } else if (isAgreement) {
       fields_skipped++;
       skipped_reasons.push(`agreement checkbox left for you to confirm: "${short(id)}"`);
+    } else if (WORK_ELIGIBILITY_QUESTION.test(id)) {
+      // A standalone "I am legally authorized to work in ..." checkbox: desiredAnswer returns null
+      // for work-auth labels, and without this branch the loop fell through with NO skip reason,
+      // so the auto-submit gate never held on the unanswered declaration (review 2026-07-16).
+      fields_skipped++;
+      skipped_reasons.push(workEligibilitySkipReason(id));
     }
   }
 

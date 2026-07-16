@@ -607,7 +607,7 @@ export default defineContentScript({
       // error surfaces first; this is the backstop for the worse case where the service worker
       // is torn down and the callback never fires at all.
       const RESUME_GEN_TIMEOUT_MS = 65000;
-      const jobKey = `${company} ${title}`;
+      const jobKey = `${company}\u0000${title}`;
       const startResumeGen = (): Promise<ResumeGenResult> => {
         const cached = resumeGenByJob.get(jobKey);
         if (cached) return cached; // reuse across steps of a multi-step application (no re-charge)

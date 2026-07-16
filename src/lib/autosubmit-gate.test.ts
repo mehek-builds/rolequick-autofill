@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { skippedReasonsNeedReview } from './autosubmit-gate';
+import { linkSkipReason, workEligibilitySkipReason } from './adapters/generic';
 
 // Fix 5 of the completion audit: auto-submit must be HELD (hand back, do not start the countdown)
 // whenever the adapter left a review-required item behind. These strings are the exact
@@ -38,6 +39,29 @@ describe('skippedReasonsNeedReview', () => {
 
   it('holds on an autocomplete field left for manual selection', () => {
     expect(skippedReasonsNeedReview(['Referral source: autocomplete field, left for manual selection'])).toBe(true);
+  });
+
+  it('holds on a work-eligibility question left for the student (live QA 2026-07-16 fix)', () => {
+    // Work-auth AND sponsorship questions are never auto-answered anymore; the adapters emit
+    // exactly this reason, and auto-submit must not fire while the question sits unanswered.
+    expect(
+      skippedReasonsNeedReview([
+        'work-eligibility question left for you: "Are you legally authorized to work in the locat"',
+      ]),
+    ).toBe(true);
+  });
+
+  it('pins the shared reason builder to the gate: workEligibilitySkipReason must always hold', () => {
+    // The hold rests on this string contract. If someone rewords workEligibilitySkipReason so it
+    // stops matching REVIEW_FLAG, auto-submit could fire with a legal question blank; this test
+    // is the tripwire.
+    expect(skippedReasonsNeedReview([workEligibilitySkipReason('do you require sponsorship?')])).toBe(true);
+  });
+
+  it('pins the shared reason builder to the gate: linkSkipReason must always hold', () => {
+    // Same tripwire, for link questions we could not fill: a link field left blank must hand back
+    // rather than auto-submit an incomplete application.
+    expect(skippedReasonsNeedReview([linkSkipReason('please provide a link to your github')])).toBe(true);
   });
 
   it('holds on any open-ended question left blank', () => {

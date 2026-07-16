@@ -1,6 +1,6 @@
 // Token access goes through lib/storage, so the background reads the exact key the popup
 // writes, including the backward-compatible fallback to the legacy Volley-era key name.
-import { getToken as getStoredToken, migrateLegacyStorage } from '../lib/storage';
+import { getToken as getStoredToken, migrateLegacyStorage, setToken, setAutoSubmitEnabled } from '../lib/storage';
 
 // Set VITE_API_BASE at build time (e.g. your Vercel URL) to point at the deployed backend;
 // defaults to the local dev server.
@@ -192,6 +192,19 @@ export default defineBackground(() => {
   // One-time copy of any legacy Volley-era storage keys to their new rolequick_* names, so a
   // published update never orphans an existing user's saved token/profile/settings.
   void migrateLegacyStorage();
+
+  // QA/dev bootstrap: when built with VITE_QA_TOKEN, seed the session once at install/reload so
+  // the extension is signed in without driving the popup UI (which automation can't reach).
+  // Seeding on onInstalled (not on every service-worker wake) means sign-out tests and the
+  // auto-submit toggle hold their state for the rest of the QA run. Keeping it out of store
+  // builds is enforced by scripts/ensure-no-qa-token.mjs, which the zip scripts run first.
+  if (import.meta.env.VITE_QA_TOKEN) {
+    chrome.runtime.onInstalled.addListener(() => {
+      setToken(import.meta.env.VITE_QA_TOKEN)
+        .then(() => setAutoSubmitEnabled(import.meta.env.VITE_QA_AUTOSUBMIT === '1'))
+        .catch((e) => console.warn('[RoleQuick QA] storage seed failed:', e));
+    });
+  }
 
   let lastDetectedJob: { title: string; company: string; url: string } | null = null;
 

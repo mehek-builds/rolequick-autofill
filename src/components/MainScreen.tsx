@@ -4,6 +4,7 @@ import type { Contact, OutreachEvent, JobContext } from '../lib/types';
 import WarningBanner from './WarningBanner';
 import Avatar from './Avatar';
 import { SkeletonContactList, SkeletonBar } from './Skeleton';
+import BrandMark from './BrandMark';
 
 interface MainScreenProps {
   token: string;
@@ -171,8 +172,8 @@ export default function MainScreen({
       {/* Header */}
       <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white/95 px-4 py-3 backdrop-blur">
         <div className="flex items-center gap-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-brand-600 text-xs font-bold text-white">
-            V
+          <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-brand-600 text-white">
+            <BrandMark className="h-3.5 w-3.5" />
           </div>
           <span className="text-base font-bold tracking-tight text-gray-900">RoleQuick</span>
         </div>

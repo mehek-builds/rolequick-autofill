@@ -37,7 +37,7 @@ import {
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, matchOption, type Desired } from './generic';
+import { desiredAnswer, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 // ─── Shared answer helpers (mirror generic.ts's engine) ───────────────────────
 
@@ -329,25 +329,36 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
 
     const label = labelTextFor(block);
 
-    const linkTarget =
-      /linkedin/i.test(label) ? applicationProfile.linkedin_url :
-      /github/i.test(label) ? applicationProfile.github_url :
-      /portfolio|website/i.test(label) ? applicationProfile.portfolio_url :
-      undefined;
-    if (linkTarget !== undefined) {
-      const input = block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"]');
-      if (input && !input.value) {
-        if (linkTarget) {
-          await fillField(input, linkTarget);
+    // Link questions, via the one shared classifier (see linkQuestion in generic.ts). Replaces an
+    // inline version that let an unset URL fall through to the AI drafter and never looked at a
+    // textarea - the two holes behind the Lever prose-in-a-link-field bug.
+    const link = linkQuestion(label, applicationProfile);
+    if (link) {
+      const linkEl: HTMLInputElement | HTMLTextAreaElement | null =
+        block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"]') ??
+        (link.asksForLink ? block.querySelector<HTMLTextAreaElement>('textarea') : null);
+      if (linkEl && !linkEl.value && !isComboboxControl(linkEl)) {
+        if (link.url) {
+          await fillField(linkEl, link.url);
           fields_filled++;
         } else {
           fields_skipped++;
-          skipped_reasons.push(`${label.slice(0, 40)}: no value in application profile`);
+          skipped_reasons.push(linkSkipReason(label));
         }
         continue;
       }
     }
 
+    // Never answer work-eligibility questions (work authorization AND sponsorship), on any
+    // control type: one shared classifier and reason builder for every adapter (see
+    // WORK_ELIGIBILITY_QUESTION in generic.ts for the full story). Checked BEFORE the EEO branch
+    // so a block that also carries an EEO keyword cannot be routed to a decline answer or a
+    // mislabeled skip reason.
+    if (WORK_ELIGIBILITY_QUESTION.test(label)) {
+      fields_skipped++;
+      skipped_reasons.push(workEligibilitySkipReason(label));
+      continue;
+    }
     const isEeo = /gender|race|ethnicity|veteran|disability/i.test(label);
     if (isEeo) {
       // Real answer when the student stored one (eeo prefs), else decline. Works whether the
@@ -359,42 +370,6 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
         fields_skipped++;
         skipped_reasons.push('EEO field: no matching option found, left blank');
       }
-      continue;
-    }
-
-    const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
-    const isSponsorQuestion = /sponsorship/i.test(label);
-    const eligibilityAnswer = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
-    // `!= null` and keyed to the RELEVANT field: an unset boolean arrives as `null` (not undefined),
-    // and an auth question must not read a null work_authorized just because sponsorship is set.
-    // Either slip previously answered "No" and could auto-reject an authorized student.
-    if ((isAuthQuestion || isSponsorQuestion) && eligibilityAnswer != null) {
-      const wantYes = eligibilityAnswer;
-      const desired: Desired = wantYes ? { mode: 'yes' } : { mode: 'no' };
-      const radio = block.querySelector<HTMLInputElement>(`input[type="radio"][value="${wantYes ? 'Yes' : 'No'}" i]`);
-      if (radio) {
-        commitChoice(radio);
-        fields_filled++;
-        continue;
-      }
-      const select = block.querySelector<HTMLSelectElement>('select');
-      if (select) {
-        const opt = [...select.options].find((o) => new RegExp(wantYes ? '^yes' : '^no', 'i').test(o.text.trim()));
-        if (opt) {
-          select.value = opt.value;
-          select.dispatchEvent(new Event('change', { bubbles: true }));
-          fields_filled++;
-          continue;
-        }
-      }
-      // Workday commonly renders this as a prompt/listbox rather than a native control.
-      const combo = comboControlIn(block);
-      if (combo && (await fillCombobox(combo, desired))) {
-        fields_filled++;
-        continue;
-      }
-      fields_skipped++;
-      skipped_reasons.push(`${label.slice(0, 40)}: no clean Yes/No control found, left blank`);
       continue;
     }
 
