@@ -37,7 +37,7 @@ import {
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, matchOption, type Desired } from './generic';
+import { desiredAnswer, matchOption, WORK_AUTH_QUESTION, workAuthSkipReason, type Desired } from './generic';
 
 // ─── Shared answer helpers (mirror generic.ts's engine) ───────────────────────
 
@@ -348,6 +348,15 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
       }
     }
 
+    // Never answer work-authorization questions, on any control type: one shared classifier and
+    // reason builder for every adapter (see WORK_AUTH_QUESTION in generic.ts for the full story).
+    // Checked BEFORE the EEO branch so a block that also carries an EEO keyword cannot be routed
+    // to a decline answer or a mislabeled skip reason.
+    if (WORK_AUTH_QUESTION.test(label)) {
+      fields_skipped++;
+      skipped_reasons.push(workAuthSkipReason(label));
+      continue;
+    }
     const isEeo = /gender|race|ethnicity|veteran|disability/i.test(label);
     if (isEeo) {
       // Real answer when the student stored one (eeo prefs), else decline. Works whether the
@@ -362,13 +371,11 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
       continue;
     }
 
-    const isAuthQuestion = /authoriz(ed|ation) to work/i.test(label);
-    const isSponsorQuestion = /sponsorship/i.test(label);
-    const eligibilityAnswer = isAuthQuestion ? applicationProfile.work_authorized : applicationProfile.needs_sponsorship;
-    // `!= null` and keyed to the RELEVANT field: an unset boolean arrives as `null` (not undefined),
-    // and an auth question must not read a null work_authorized just because sponsorship is set.
-    // Either slip previously answered "No" and could auto-reject an authorized student.
-    if ((isAuthQuestion || isSponsorQuestion) && eligibilityAnswer != null) {
+    // Sponsorship stays answerable from the student's stored choice; work-auth questions were
+    // intercepted at the top of this loop and never reach here. `!= null`: an unset boolean
+    // arrives as `null` (not undefined) and must leave the question blank, not answer "No".
+    const eligibilityAnswer = applicationProfile.needs_sponsorship;
+    if (/sponsorship/i.test(label) && eligibilityAnswer != null) {
       const wantYes = eligibilityAnswer;
       const desired: Desired = wantYes ? { mode: 'yes' } : { mode: 'no' };
       const radio = block.querySelector<HTMLInputElement>(`input[type="radio"][value="${wantYes ? 'Yes' : 'No'}" i]`);

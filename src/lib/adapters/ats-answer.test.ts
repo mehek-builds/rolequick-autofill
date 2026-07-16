@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { desiredAnswer, matchOption } from './generic';
+import { desiredAnswer, matchOption, WORK_AUTH_QUESTION } from './generic';
 import type { ApplicationProfile } from '../types';
 
 // The ATS adapters (lever/greenhouse/ashby/workday/linkedin) now route their EEO, work-auth,
@@ -15,10 +15,24 @@ const ap = (o: Partial<ApplicationProfile> = {}): ApplicationProfile => o as App
 const opts = (...texts: string[]) => texts.map((text) => ({ text }));
 
 describe('desiredAnswer on ATS full-block label text', () => {
-  it('classifies work authorization when the label includes the option text', () => {
-    // Greenhouse/Lever labelTextFor returns the container text, e.g. question + "yes no".
+  it('never answers work authorization, even when the label includes the option text', () => {
+    // Work-auth questions are location-scoped; work_authorized is one global flag. Deriving an
+    // answer shipped a false declaration on a real Lever form (live QA 2026-07-16), so the
+    // resolver must leave these blank no matter what the profile says.
     expect(desiredAnswer('are you legally authorized to work in the us? yes no', ap({ work_authorized: true }), {}))
-      .toEqual({ mode: 'yes' });
+      .toBeNull();
+  });
+
+  it('never answers a combined authorized-without-sponsorship question from needs_sponsorship', () => {
+    // The auth branch must win over the sponsorship branch for combined phrasings: this is the
+    // exact question RoleQuick mis-filled on the Xsolla/Lever form.
+    expect(
+      desiredAnswer(
+        'are you legally authorized to work without sponsorship in the location where this role is based? yes no',
+        ap({ work_authorized: true, needs_sponsorship: true }),
+        {},
+      ),
+    ).toBeNull();
   });
 
   it('classifies sponsorship inside a longer container string', () => {
@@ -41,6 +55,24 @@ describe('desiredAnswer on ATS full-block label text', () => {
   it('answers an age-of-majority screening question inside block text', () => {
     expect(desiredAnswer('please confirm you are at least 18 years of age yes no', ap(), {}))
       .toEqual({ mode: 'yes' });
+  });
+});
+
+describe('WORK_AUTH_QUESTION classifier (the one shared by every adapter)', () => {
+  it('matches labels whose phrases wrap across lines (raw textContent keeps internal whitespace)', () => {
+    expect(WORK_AUTH_QUESTION.test('are you legally\n  authorised to\n  work without sponsorship?')).toBe(true);
+    expect(WORK_AUTH_QUESTION.test('legally  authorized\tto work')).toBe(true);
+  });
+
+  it('matches both spellings and the common phrasings', () => {
+    expect(WORK_AUTH_QUESTION.test('are you authorised to work in the united kingdom?')).toBe(true);
+    expect(WORK_AUTH_QUESTION.test('work authorisation status')).toBe(true);
+    expect(WORK_AUTH_QUESTION.test('do you have the right to work in ireland?')).toBe(true);
+    expect(WORK_AUTH_QUESTION.test('Are You Legally Authorized To Work In The US?')).toBe(true);
+  });
+
+  it('does not swallow plain sponsorship questions', () => {
+    expect(WORK_AUTH_QUESTION.test('will you now or in the future require visa sponsorship?')).toBe(false);
   });
 });
 

@@ -223,16 +223,34 @@ export function eeoAnswer(pref: string | undefined): Desired {
   return pref && pref.trim() ? { mode: 'value', value: pref.trim() } : { mode: 'decline' };
 }
 
+// Work-authorization questions are location-scoped ("legally authorized to work in the location
+// where this role is based?") but work_authorized is one global flag, so deriving Yes/No shipped
+// a false declaration on non-local roles (live QA 2026-07-16, Lever/Xsolla). RoleQuick NEVER
+// answers them: the adapters skip the question with workAuthSkipReason(), whose "left for" wording
+// makes the auto-submit gate HOLD (autosubmit-gate.ts REVIEW_FLAG) while it sits unanswered.
+// This is the ONE classifier every adapter must use: whitespace-tolerant (\s+, labels keep raw
+// internal whitespace from textContent), both spellings (authorized/authorised), case-insensitive.
+export const WORK_AUTH_QUESTION =
+  /authori[sz](?:ed|ation)\s+to\s+work|legally\s+authori[sz]ed|right\s+to\s+work|work\s+authori[sz]/i;
+
+// The one skip-reason builder for work-auth questions. "left for" is load-bearing: it is what the
+// auto-submit gate's REVIEW_FLAG matches, so every adapter must use this instead of hand-typing.
+export function workAuthSkipReason(label: string): string {
+  return `work-authorization question left for you: "${label.slice(0, 60)}"`;
+}
+
 export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string, string>): Desired {
   const l = label;
   if (NEVER_FILL_PATTERNS.some((re) => re.test(l))) return null;
 
-  // Eligibility yes/no. Use `!= null`, NOT `!== undefined`: GET /profile/application returns
+  // Never answer work-auth questions (see WORK_AUTH_QUESTION above). This branch must stay ABOVE
+  // the sponsorship one so "authorized to work without sponsorship" phrasings are never answered
+  // from needs_sponsorship either.
+  if (WORK_AUTH_QUESTION.test(l)) return null;
+  // Sponsorship yes/no. Use `!= null`, NOT `!== undefined`: GET /profile/application returns
   // `null` (not undefined) for a boolean the student never set, and `null !== undefined` is true,
-  // so the old guard let an unset field through and, because `null` is falsy, actively answered
-  // "No" - marking a work-authorized student as NOT authorized. `!= null` leaves it blank instead.
-  if (/authoriz(ed|ation)\s+to\s+work|legally\s+authorized|right\s+to\s+work|work\s+authoriz/.test(l) && ap.work_authorized != null)
-    return ap.work_authorized ? { mode: 'yes' } : { mode: 'no' };
+  // so an undefined-only guard would actively answer "No" for an unset field. `!= null` leaves it
+  // blank instead.
   if (/sponsor/.test(l) && ap.needs_sponsorship != null)
     return ap.needs_sponsorship ? { mode: 'yes' } : { mode: 'no' };
   // Affirmative age-of-majority only. Exclude negated phrasings ("are you UNDER 18?", "younger
@@ -335,16 +353,13 @@ export function matchOption<T extends { text: string }>(options: T[], desired: D
     // sponsorship").
     const isNeg = (t: string) =>
       /^\s*no\b/.test(t) || /\b(not|am not|do not|don'?t)\b/.test(t) || /require(s|d)?\s+(visa\s+)?sponsor/.test(t);
-    // Positive options are often phrased as statements, not "Yes" - "I am authorized to work in
-    // the country", "I am eligible to work" (live-seen on vercel.com), so match those too, as long
-    // as they aren't negated.
+    // Positive options are often phrased as statements, not "Yes" - "I am a protected veteran",
+    // so match those too, as long as they aren't negated. The work-auth statement alternatives
+    // ("I am authorized to work...") were removed with the always-ask work-auth change: no auth
+    // question produces a yes/no Desired anymore, and keeping them only let "authorization"
+    // wording inside a sponsorship question's options get mis-clicked as the positive.
     const isPos = (t: string) =>
-      (/^\s*yes\b/.test(t) ||
-        /\b(i am a|identify as|i have)\b/.test(t) ||
-        /\bauthoriz(ed|ation)\b/.test(t) ||
-        /\beligible to work\b/.test(t) ||
-        /\blegally (authorized|able|permitted)\b/.test(t)) &&
-      !isNeg(t);
+      (/^\s*yes\b/.test(t) || /\b(i am a|identify as|i have)\b/.test(t)) && !isNeg(t);
     const pos = options.filter((o) => isPos(norm(o.text)));
     const neg = options.filter((o) => isNeg(norm(o.text)) && !DECLINE_RE.test(o.text));
     const pick = wantYes ? pos : neg;
@@ -447,6 +462,17 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
       continue;
     }
 
+    // Work-auth questions are always-ask on every control type (see WORK_AUTH_QUESTION). Checked
+    // BEFORE the identity mapping: "authorized to work in the location where this role is based"
+    // contains "location", which would otherwise fill the student's city into the box; and a
+    // work-auth textarea must never reach the AI-draft path (a drafted legal claim would land in
+    // the field even though the draft-review hold stops auto-submit).
+    if (WORK_AUTH_QUESTION.test(id) || (isTextarea && WORK_AUTH_QUESTION.test(questionLabel(el)))) {
+      fields_skipped++;
+      skipped_reasons.push(workAuthSkipReason(questionLabel(el) || id));
+      continue;
+    }
+
     // Identity-first mapping (input type beats label text).
     let value =
       type === 'email' ? email :
@@ -502,6 +528,8 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     // the structured part of the form populates immediately instead of blocking behind N
     // sequential draft calls.
     if (isTextarea) {
+      // Work-auth textareas never reach here: the always-ask intercept at the top of this loop
+      // skips them before the identity mapping, so nothing work-auth can be AI-drafted.
       if (draftAnswer) {
         pendingDrafts.push({ el, question: questionLabel(el) || id });
       } else {
@@ -611,6 +639,12 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     } else if (isAgreement) {
       fields_skipped++;
       skipped_reasons.push(`agreement checkbox left for you to confirm: "${short(id)}"`);
+    } else if (WORK_AUTH_QUESTION.test(id)) {
+      // A standalone "I am legally authorized to work in ..." checkbox: desiredAnswer returns null
+      // for work-auth labels, and without this branch the loop fell through with NO skip reason,
+      // so the auto-submit gate never held on the unanswered declaration (review 2026-07-16).
+      fields_skipped++;
+      skipped_reasons.push(workAuthSkipReason(id));
     }
   }
 

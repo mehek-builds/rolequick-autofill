@@ -343,6 +343,13 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
                 onChange={(v) => setAppProfile((p) => ({ ...p, work_authorized: v === 'Yes' }))}
                 options={['Yes', 'No']}
               />
+              {/* Stored for your reference only. Never used to answer forms: work-authorization
+                  questions are location-specific, so RoleQuick always leaves them for you (see
+                  WORK_AUTH_QUESTION in adapters/generic.ts). Do not re-wire this into an adapter. */}
+              <p className="text-[11px] leading-snug text-gray-400">
+                Kept on your profile for reference. Applications ask this per location, so RoleQuick
+                always leaves work-authorization questions for you to answer.
+              </p>
             </div>
 
             <div className="flex flex-col gap-1.5">

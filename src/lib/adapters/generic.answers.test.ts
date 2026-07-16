@@ -13,11 +13,15 @@ const ap = (o: Partial<ApplicationProfile> = {}): ApplicationProfile => o as App
 const opts = (...texts: string[]) => texts.map((text) => ({ text }));
 
 describe('desiredAnswer', () => {
-  it('maps work-authorization yes/no from the profile', () => {
+  it('never answers work authorization from the profile (location-scoped question, global flag)', () => {
+    // Live QA 2026-07-16: deriving this from work_authorized shipped a false "authorized without
+    // sponsorship" declaration on a real Lever form. Always-ask, regardless of the stored value.
     expect(desiredAnswer('are you legally authorized to work in the united states?', ap({ work_authorized: true }), {}))
-      .toEqual({ mode: 'yes' });
+      .toBeNull();
     expect(desiredAnswer('legally authorized to work', ap({ work_authorized: false }), {}))
-      .toEqual({ mode: 'no' });
+      .toBeNull();
+    expect(desiredAnswer('do you have the right to work in the uk?', ap({ work_authorized: true }), {}))
+      .toBeNull();
   });
 
   it('maps sponsorship yes/no from the profile', () => {
@@ -132,8 +136,10 @@ describe('desiredAnswer: unset eligibility is left blank, never answered "No" (f
   it('leaves sponsorship blank when the field is null', () => {
     expect(desiredAnswer('do you require visa sponsorship?', ap({ needs_sponsorship: null as unknown as boolean }), {})).toBeNull();
   });
-  it('still answers set eligibility booleans', () => {
-    expect(desiredAnswer('legally authorized to work', ap({ work_authorized: true }), {})).toEqual({ mode: 'yes' });
+  it('still answers a set sponsorship boolean, never work authorization', () => {
+    // Work authorization became always-ask after live QA 2026-07-16 shipped a false declaration;
+    // sponsorship remains answerable because its stored value is what the student chose to state.
+    expect(desiredAnswer('legally authorized to work', ap({ work_authorized: true }), {})).toBeNull();
     expect(desiredAnswer('do you require visa sponsorship?', ap({ needs_sponsorship: false }), {})).toEqual({ mode: 'no' });
   });
 });
