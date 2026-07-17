@@ -115,6 +115,11 @@ export interface ApplicationProfile {
   // a careless application, which is the exact opposite of the product's promise.
   availability_term?: string;
   desired_salary?: string;
+  // The currency desired_salary is denominated in (ISO code, "EUR"). The pair is R-031's gate: a
+  // bare figure without its currency is an ambiguity, not an answer, and it only fills when the
+  // POSTING's currency is detectable and matches this one (see adapters/salary.ts). Never used to
+  // convert; a converted figure is a number the student never said.
+  desired_salary_currency?: string;
   date_of_birth?: string;
   eeo_prefs?: Record<string, string> | null;
   referral_source_default?: string;

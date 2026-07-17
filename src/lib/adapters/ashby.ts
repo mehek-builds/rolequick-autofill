@@ -49,7 +49,11 @@ import {
 import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { dateSkipReason, desiredAnswer, fillDateField, isDraftableQuestion, languageAnswerPlan, languageSkipReason, linkQuestion, linkSkipReason, locationComboQueries, locationQuestion, locationSkipReason, matchOption, noteLinkFillCandidate, unreadableQuestionSkipReason, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { classifyField, dateSkipReason, desiredAnswer, fillDateField, isDraftableQuestion, languageAnswerPlan, languageSkipReason, linkQuestion, linkSkipReason, locationComboQueries, locationQuestion, locationSkipReason, matchOption, noteLinkFillCandidate, unreadableQuestionSkipReason, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+// The salary rule (R-031 + R-011) and the Ashby posting-API pieces live in the pure salary
+// module, shared with background.ts (which fetches the compensation payload) and re-exported
+// below so existing importers of parseAshbyPostingRef keep working.
+import { parseAshbyPostingRef, resolveSalary, salarySkipReason, storedSalaryOf, type AshbyPostingRef, type PostingCompensation } from './salary';
 import { isDateControl } from './shared/dates';
 import { htmlToPlainText, JD_UNREADABLE, looksLikeJobDescription } from './shared/jd';
 
@@ -321,6 +325,11 @@ export interface AshbyFillParams {
   eeo?: Record<string, string>;
   draftAnswer?: (question: string) => Promise<string | null>;
   onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
+  // This posting's structured salary range (R-031), fetched by background.ts from the posting API
+  // (?includeCompensation=true) and plumbed through the GENERATE_RESUME_AND_FILL_DATA response.
+  // Optional and nullable: a board whose slug does not resolve, or a posting with no usable
+  // range, just leaves the salary rule on its label/stored-value chain.
+  postingCompensation?: PostingCompensation | null;
 }
 
 export function isAshbyApplicationPage(): boolean {
@@ -356,24 +365,10 @@ export function isAshbyApplicationPage(): boolean {
 
 const MAX_JD_CHARS = 12000;
 
-export interface AshbyPostingRef {
-  org: string;
-  postingId: string;
-}
-
-// `jobs.ashbyhq.com/espa/<uuid>[/application]` -> { org: 'espa', postingId: '<uuid>' }
-export function parseAshbyPostingRef(url: string): AshbyPostingRef | null {
-  try {
-    const { hostname, pathname } = new URL(url);
-    if (!hostname.includes('ashbyhq.com')) return null;
-    const parts = pathname.split('/').filter(Boolean);
-    const org = parts[0];
-    const postingId = parts.find((p) => /^[0-9a-f-]{36}$/i.test(p));
-    return org && postingId ? { org, postingId } : null;
-  } catch {
-    return null;
-  }
-}
+// `jobs.ashbyhq.com/espa/<uuid>[/application]` -> { org: 'espa', postingId: '<uuid>' }. The
+// implementation moved to ./salary (the leaf module background.ts can import); re-exported here
+// so this adapter stays the public home of the Ashby posting-URL contract.
+export { parseAshbyPostingRef, type AshbyPostingRef } from './salary';
 
 // Pick this posting out of the board payload. Matching on the id already in the page URL is exact;
 // matching on title would break on a board running two postings with the same title.
@@ -741,8 +736,46 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
       continue;
     }
 
+    // Salary (R-031 + R-011): the posting's own stated range first (the label, then the posting
+    // API's structured compensation payload), median only; then the stored answer behind the
+    // currency gate. Like the grade branch, this ALWAYS terminates the block - a salary question
+    // must fill or flag, never fall through to the drafter or a silent blank. Before this branch
+    // existed, salary rode the generic known-answer path below: a bare stored figure was typed
+    // into TEXT salary fields with no currency check (R-031's exact failure), and a NUMERIC
+    // salary field was invisible to the known path's text/url/tel selector, so it fell to a
+    // "no matching control" skip even when a value was stored (the Proxima Fusion parking).
+    if (classifyField(label.toLowerCase()) === 'desired_salary' && !blockAlreadyAnsweredForGrade(block)) {
+      const numberEl = block.querySelector<HTMLInputElement>('input[type="number"]');
+      const freeEl = block.querySelector<HTMLInputElement | HTMLTextAreaElement>('input[type="text"], textarea');
+      const numeric = !!numberEl || /^(numeric|decimal)$/i.test(freeEl?.getAttribute('inputmode') ?? '');
+      const salary = resolveSalary(
+        { label, field: numeric ? 'numeric' : 'freetext', posting: params.postingCompensation ?? null },
+        storedSalaryOf(applicationProfile),
+      );
+      if (salary.action === 'flag') {
+        fields_skipped++;
+        skipped_reasons.push(salary.reason);
+        continue;
+      }
+      // Choice-rendered salary (a dropdown of bands): match the resolved answer against the
+      // options; matchOption never guesses, so an unmatched band set falls to the flag below.
+      if (await answerChoiceBlock(block, { mode: 'value', value: salary.value })) {
+        fields_filled++;
+        continue;
+      }
+      const salaryEl = numberEl ?? freeEl;
+      if (salaryEl && !salaryEl.value && !isComboboxControl(salaryEl)) {
+        await writeReactText(salaryEl, salary.value);
+        fields_filled++;
+        continue;
+      }
+      fields_skipped++;
+      skipped_reasons.push(salarySkipReason(label, 'no control this answer fits'));
+      continue;
+    }
+
     // Other known-answer questions (age of majority, citizenship, availability, referral source,
-    // salary, DOB) resolved from the profile, across select / radio / combobox / free text.
+    // DOB) resolved from the profile, across select / radio / combobox / free text.
     const known = desiredAnswer(label, applicationProfile, eeo);
     if (known) {
       if (await answerChoiceBlock(block, known)) {

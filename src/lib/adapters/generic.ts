@@ -16,6 +16,10 @@ import {
   type DateOrder,
   type DateParts,
 } from './shared/dates';
+// The salary rule (R-031 + R-011): median of the posting's own stated range first, then the
+// currency-gated stored answer. Pure and shared, so this adapter, the ATS adapters and the
+// background all read the same decision.
+import { resolveSalary, storedSalaryOf } from './salary';
 
 // Generic adapter for companies that build their OWN application form on their own domain
 // against an ATS's API (live-tested targets 2026-07-04: vercel.com/careers - Greenhouse API
@@ -198,7 +202,9 @@ export function isLikelyApplicationForm(): boolean {
 }
 
 export function extractGenericJdText(): string {
-  return document.body.innerText.trim().slice(0, 12000);
+  // innerText when the environment renders (real browsers), textContent when it does not
+  // (jsdom, where innerText is undefined and .trim() on it would throw).
+  return (document.body.innerText ?? document.body.textContent ?? '').trim().slice(0, 12000);
 }
 
 export function getGenericJobDetails(): { title: string; company: string } {
@@ -1013,8 +1019,22 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
         ].filter(Boolean) as string[],
       };
 
-    case 'desired_salary':
-      return ap.desired_salary ? { mode: 'value', value: ap.desired_salary } : null;
+    // Salary answers route through the R-031 rule rather than the bare stored value: a range
+    // stated in the label fills its MEDIAN (currency-safe by construction), a stored prose answer
+    // passes through, and a stored bare figure fills ONLY when the label names a currency that
+    // matches desired_salary_currency. Everything else returns null so the caller's own skip
+    // reason ("dropdown left for you" / "no matching control, left blank") holds auto-submit.
+    // The old body here - `ap.desired_salary ? { mode: 'value', value: ap.desired_salary } : null`
+    // - is R-031's exact defect: a bare figure replayed into any posting, in any currency.
+    // Free-text salary controls in this adapter and Ashby are intercepted before ever reaching
+    // this case (they carry control-shape and posting context this signature cannot); what lands
+    // here is choice controls (select/radio/combobox) and the other ATS adapters' known path,
+    // whose value sinks are text-only (input[type="text"|"url"|"tel"]), so prose can never reach
+    // a numeric control through this return.
+    case 'desired_salary': {
+      const salary = resolveSalary({ label: l, field: 'freetext' }, storedSalaryOf(ap));
+      return salary.action === 'fill' ? { mode: 'value', value: salary.value } : null;
+    }
     case 'date_of_birth':
       return ap.date_of_birth ? { mode: 'value', value: ap.date_of_birth } : null;
 
@@ -1223,6 +1243,12 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
   const pendingDrafts: Array<{ el: HTMLTextAreaElement; question: string }> = [];
   const short = (s: string) => s.slice(0, 50).trim();
 
+  // Page text for the salary rule's JD sources (a stated range, or a currency, adjacent to
+  // salary wording), read lazily once per fill: the generic adapter runs on a company's own
+  // careers page, where the JD and the form share the document.
+  let jdTextCache: string | null = null;
+  const jdText = () => (jdTextCache ??= extractGenericJdText());
+
   const nameParts = fullName.trim().split(/\s+/);
   const firstName = nameParts[0] ?? '';
   const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
@@ -1267,7 +1293,32 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
       /\bcity\b|\blocation\b/.test(id) ? ap.address_city :
       undefined;
 
-    // Profile-value questions that can appear as free-text (salary, DOB, citizenship, etc.).
+    // Salary (R-031 + R-011), before the generic value lookup: this branch owns free-text,
+    // numeric AND textarea salary controls, because the decision needs the control's shape (a
+    // prose answer must never enter a number box) and the page text (the posting's stated range
+    // beats anything stored). Combobox-rendered salary stays on the combobox path below, which
+    // resolves through desiredAnswer and lands on the same salary rule. Before this branch, the
+    // value lookup below typed the bare stored figure into free-text and type=number salary
+    // fields with no currency check (R-031's exact defect), and a salary textarea fell through
+    // to the AI essay drafter - a drafted negotiating anchor in the student's name.
+    if (value === undefined && !isComboboxControl(el) && classifyField(id) === 'desired_salary') {
+      const numeric = type === 'number' || /^(numeric|decimal)$/i.test(el.getAttribute('inputmode') ?? '');
+      const salary = resolveSalary(
+        { label: questionLabel(el) || id, field: numeric ? 'numeric' : 'freetext', jdText: jdText() },
+        storedSalaryOf(ap),
+      );
+      if (salary.action === 'fill') {
+        await fillTextField(el, salary.value);
+        fields_filled++;
+      } else {
+        fields_skipped++;
+        skipped_reasons.push(salary.reason);
+      }
+      continue;
+    }
+
+    // Profile-value questions that can appear as free-text (DOB, citizenship, etc.; salary is
+    // owned by the branch above).
     if (value === undefined && !isTextarea) {
       const d = desiredAnswer(id, ap, eeo);
       if (d?.mode === 'value') value = d.value;
