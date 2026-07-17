@@ -9,7 +9,7 @@ import {
 import { isLinkedInApplicationPage, extractLinkedInJdText, fillLinkedInApplication } from '../lib/adapters/linkedin';
 import { isLikelyApplicationForm, extractGenericJdText, getGenericJobDetails, fillGenericApplication } from '../lib/adapters/generic';
 import { getAutoSubmitEnabled } from '../lib/storage';
-import { skippedReasonsNeedReview } from '../lib/autosubmit-gate';
+import { selectNeedsYouReasons, skippedReasonsNeedReview } from '../lib/autosubmit-gate';
 import { startHarvest } from '../lib/harvest';
 import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
 
@@ -309,11 +309,11 @@ export default defineContentScript({
       if (opts.resumeMissing) head.push('⚠ Resume not attached - add it yourself.');
       if (opts.autoSubmitHeld) head.push('Auto-submit held: finish the flagged items, then submit.');
       // Keep the reasons that actually need a human: resume, agreements, unmatched/never-fill,
-      // required blanks. Drop the resume line here (already surfaced above) and cap the list.
-      const needsYou = fillResult.skipped_reasons
-        .filter((r) => /agreement|never-fill|no matching|left for you|left blank|required|no unambiguous/i.test(r))
-        .filter((r) => !/^resume:/i.test(r))
-        .slice(0, 4);
+      // required blanks. Selection + ordering live in the pure selectNeedsYouReasons (autosubmit-
+      // gate.ts) so it stays unit-tested: required blanks sort ahead of the cap, because a card
+      // that truncated a REQUIRED blank off its list read as complete over an empty required
+      // field (R-033's second half).
+      const needsYou = selectNeedsYouReasons(fillResult.skipped_reasons);
       statusEl.style.display = 'block';
       statusEl.innerHTML =
         head.map((l) => `<div>${escapeHtml(l)}</div>`).join('') +

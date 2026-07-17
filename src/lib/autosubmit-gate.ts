@@ -15,3 +15,16 @@ const REVIEW_FLAG =
 export function skippedReasonsNeedReview(skippedReasons: string[]): boolean {
   return skippedReasons.some((r) => REVIEW_FLAG.test(r));
 }
+
+// Which skip reasons the card shows under "Still needs you", and in what order. Pure and here
+// (not inline in content.ts) so the selection is unit-testable, because it has already lied once:
+// the card caps the list, and R-033's REQUIRED blank could fall off the end of the cap while the
+// card read as done. Required blanks therefore sort ahead of everything else before the cap is
+// applied - a card may truncate niceties, never a required field.
+export function selectNeedsYouReasons(skippedReasons: string[], cap = 4): string[] {
+  return skippedReasons
+    .filter((r) => /agreement|never-fill|no matching|left for you|left blank|required|no unambiguous/i.test(r))
+    .filter((r) => !/^resume:/i.test(r))
+    .sort((a, b) => Number(/\brequired\b/i.test(b)) - Number(/\brequired\b/i.test(a)))
+    .slice(0, cap);
+}

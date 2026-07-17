@@ -575,6 +575,54 @@ export function unreadableQuestionSkipReason(): string {
   return "open-ended question left for you: RoleQuick could not read this question's label";
 }
 
+// ─── Open-ended question shape (R-033) ──────────────────────────────────────
+// The essay drafter's reach used to be textarea-shaped, but Greenhouse lets an author render a
+// free-text question as a single-line input[type=text] - Gemini asked for "3-5 sentences" in a
+// 255-char input, and the question was silently never drafted. Widening the drafter to every
+// text input would be its own bug (every name field becomes an essay), so the gate keys on the
+// QUESTION, not the control: does the label read like a prompt for prose? Callers must ALSO
+// check that the label maps to no profile field and no refused question before drafting -
+// this predicate only answers "is this asking for sentences", nothing about whether we should.
+export function isOpenEndedQuestion(label: string): boolean {
+  const l = clean(label ?? '').toLowerCase();
+  if (!l) return false;
+  // Essay-ish verbs and asks. Stems (describ\w+, explain\w*) rather than \b-bounded whole words,
+  // because "explaining"/"describing" are how the live Gemini label was phrased and a boundary
+  // after "explain" misses them.
+  // "include a brief note on the type of problems you most enjoy working on" is the live Cresta
+  // SWE Intern label (2026-07-17): no verb from the list below, no question mark, and a required
+  // 255-char input left undrafted. "brief note" and "you (most) enjoy" are prose asks the way
+  // "describe" is - a field label names a field, it does not invite a note about enjoyment.
+  if (
+    /\b(why\b|describ\w+|explain\w*|tell (?:us|me)\b|share\b|elaborat\w+|discuss\b|sentences?\b|paragraphs?\b|in your own words|what interest\w*|what excit\w*|what motivat\w*|what makes\b|how (?:did|do|would|have) you|brief note\b|note on\b|you (?:most )?enjoy\b)/.test(l)
+  )
+    return true;
+  // A long interrogative label is a question being asked, not a field being named. Short
+  // interrogatives without the verbs above ("Preferred name?") stay out on purpose.
+  return l.includes('?') && l.length >= 40;
+}
+
+/**
+ * Fit a drafted answer into a control's character budget WITHOUT misrepresenting the student.
+ * Returns the largest whole-sentence prefix that fits, or null when no real sentence does - and
+ * null must mean "leave it blank and flag it", never "clip mid-word". A sentence that ends
+ * mid-clause is the R-029 family: text in her voice saying something she didn't. The sentence
+ * boundary is a terminator FOLLOWED by space-or-end, so "3.89 GPA" and "web3.0" can't be cut at
+ * their decimal points.
+ */
+export function fitToBudget(text: string, maxLen: number): string | null {
+  const t = text.trim();
+  if (maxLen <= 0 || t.length <= maxLen) return t || null;
+  const slice = t.slice(0, maxLen);
+  let lastEnd = -1;
+  const re = /[.!?](?=\s|$)/g;
+  for (let m = re.exec(slice); m; m = re.exec(slice)) lastEnd = m.index;
+  // Under ~40 chars the "sentence" is almost certainly a fragment of the first clause, not an
+  // answer; a blank flagged for the student beats a confident non-answer.
+  if (lastEnd < 40) return null;
+  return slice.slice(0, lastEnd + 1).trim();
+}
+
 export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string, string>): Desired {
   // Lowercase here rather than trust the caller. Most rules below are case-SENSITIVE (no /i),
   // unlike the /i siblings linkQuestion and WORK_ELIGIBILITY_QUESTION, so they only worked because

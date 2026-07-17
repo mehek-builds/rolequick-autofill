@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { skippedReasonsNeedReview } from './autosubmit-gate';
+import { selectNeedsYouReasons, skippedReasonsNeedReview } from './autosubmit-gate';
 import { linkSkipReason, locationSkipReason, unreadableQuestionSkipReason, workEligibilitySkipReason } from './adapters/generic';
 
 // Fix 5 of the completion audit: auto-submit must be HELD (hand back, do not start the countdown)
@@ -101,5 +101,51 @@ describe('skippedReasonsNeedReview', () => {
     expect(skippedReasonsNeedReview([locationSkipReason('city', 'Location (City)', 'no-value')])).toBe(true);
     expect(skippedReasonsNeedReview([locationSkipReason('country', "Location* / Country you're currently residing in", 'no-option')])).toBe(true);
     expect(skippedReasonsNeedReview([locationSkipReason('state', 'State / Province', 'no-option')])).toBe(true);
+  });
+});
+
+describe('selectNeedsYouReasons', () => {
+  it('keeps the reasons that need a human and drops the resume line and benign info', () => {
+    expect(
+      selectNeedsYouReasons([
+        'resume: no generated resume file available',
+        'email: not present in stored profile',
+        'open-ended question left blank: "Why here?"',
+        'agreement checkbox left for you to confirm: "I certify..."',
+      ]),
+    ).toEqual([
+      'open-ended question left blank: "Why here?"',
+      'agreement checkbox left for you to confirm: "I certify..."',
+    ]);
+  });
+
+  it('sorts a REQUIRED blank ahead of the cap so it can never fall off the card (R-033)', () => {
+    // The live card capped its list at 4; a required blank sitting fifth would silently vanish
+    // and the card would read as complete over an empty required control. Required-first plus the
+    // cap makes that impossible.
+    const reasons = [
+      'dropdown left for you: "Country"',
+      'radio question left for you: "Veteran status"',
+      'agreement checkbox left for you to confirm: "I certify..."',
+      'open-ended question left blank: "Anything else?"',
+      'required open-ended question left blank: "Please share 3-5 sentences explaining..."',
+    ];
+    const picked = selectNeedsYouReasons(reasons);
+    expect(picked).toHaveLength(4);
+    expect(picked[0]).toMatch(/^required open-ended question left blank/);
+  });
+
+  it('keeps the adapter emission order among equals (stable sort, no reshuffling)', () => {
+    const reasons = [
+      'dropdown left for you: "Country"',
+      'radio question left for you: "Veteran status"',
+    ];
+    expect(selectNeedsYouReasons(reasons)).toEqual(reasons);
+  });
+
+  it('surfaces the R-032 verify-pass reason (a value the page did not keep)', () => {
+    expect(
+      selectNeedsYouReasons(['first name left for you: the page did not keep the value RoleQuick wrote']),
+    ).toEqual(['first name left for you: the page did not keep the value RoleQuick wrote']);
   });
 });
