@@ -7,7 +7,7 @@ import {
   isWorkdayStartScreen, findApplyManuallyButton,
 } from '../lib/adapters/workday';
 import { isLinkedInApplicationPage, extractLinkedInJdText, fillLinkedInApplication } from '../lib/adapters/linkedin';
-import { isLikelyApplicationForm, extractGenericJdText, getGenericJobDetails, fillGenericApplication } from '../lib/adapters/generic';
+import { isLikelyApplicationForm, extractGenericJdText, getGenericJobDetails, fillGenericApplication, drainR030CandidateLabels } from '../lib/adapters/generic';
 import { getAutoSubmitEnabled } from '../lib/storage';
 import { selectNeedsYouReasons, skippedReasonsNeedReview } from '../lib/autosubmit-gate';
 import { startHarvest } from '../lib/harvest';
@@ -726,6 +726,10 @@ export default defineContentScript({
         // 90s only fires on a genuine hang; onProgress streams field counts meanwhile so the
         // student is never staring at a frozen status.
         const FILL_TIMEOUT_MS = 90000;
+        // R-030 observation: a previous run that timed out (the catch below returns without
+        // reporting) may have left labels behind. Discard them so THIS report only ever carries
+        // labels recorded by this fill.
+        drainR030CandidateLabels();
         let fillResult: AutofillResult;
         try {
           fillResult = await Promise.race([
@@ -783,6 +787,12 @@ export default defineContentScript({
         // fill flagged ANYTHING for review, hold auto-submit and hand back rather than submit unread.
         const needsReview = skippedReasonsNeedReview(fillResult.skipped_reasons);
 
+        // R-030 observation (register: the "cheapest next step"): labels where linkQuestion
+        // committed with asksForLink false on an input[type=text] - the population that fills a
+        // URL unconditionally. Shipped with the telemetry this event already posts, only when
+        // non-empty, so one real label off a real board can finally say what the R-030 fix is.
+        const r030Labels = drainR030CandidateLabels();
+
         const reportEvent = (autoSubmitted: boolean) => {
           chrome.runtime.sendMessage({
             type: 'AUTOFILL_EVENT',
@@ -792,6 +802,7 @@ export default defineContentScript({
               fields_filled: fillResult.fields_filled,
               fields_skipped: fillResult.fields_skipped,
               auto_submitted: autoSubmitted,
+              ...(r030Labels.length > 0 ? { r030_candidate_labels: r030Labels } : {}),
             },
           });
         };

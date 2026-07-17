@@ -41,7 +41,7 @@ import {
 import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, isDraftableQuestion, linkQuestion, linkSkipReason, locationQuestion, locationSkipReason, matchOption, unreadableQuestionSkipReason, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { desiredAnswer, isDraftableQuestion, linkQuestion, linkSkipReason, locationQuestion, locationSkipReason, matchOption, noteLinkFillCandidate, unreadableQuestionSkipReason, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 // ─── Shared answer helpers (mirror generic.ts's engine) ───────────────────────
 
@@ -365,6 +365,8 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
       const linkEl: HTMLInputElement | HTMLTextAreaElement | null =
         block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"]') ??
         (link.asksForLink ? block.querySelector<HTMLTextAreaElement>('textarea') : null);
+      // R-030 observation only (see generic.ts): record the labels that fill a URL unconditionally.
+      noteLinkFillCandidate(label, link, linkEl);
       if (linkEl && !linkEl.value && !isComboboxControl(linkEl)) {
         if (link.url) {
           await fillField(linkEl, link.url);
