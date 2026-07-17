@@ -312,8 +312,11 @@ export function radioOptionsIn(block: Element): Array<{ radio: HTMLInputElement;
 // every form is worse than no warning at all: the student learns to scroll past the one form where
 // it was true. So an input only counts on a POSITIVE signal - explicitly required, or a label that
 // names a document we know we cannot produce.
+// "proof of" swallows the word or two after it because match()[0] becomes the user-facing name of
+// the document: "proof of enrollment left for you" reads right where a bare "proof of left for
+// you" reads broken.
 const DOCUMENT_LABELS =
-  /transcript|cover.?letter|portfolio|writing sample|reference letter|letter of recommendation|certificate|diploma|proof of|work sample/i;
+  /transcript|cover.?letter|portfolio|writing sample|reference letter|letter of recommendation|certificate|diploma|proof of [\w-]+(?: [\w-]+)?|work sample/i;
 
 // Wording that identifies an ATS's own resume-parsing helper rather than a document slot.
 const PARSER_WIDGET_LABELS = /autofill|auto-fill|parse|import your|upload your resume to/i;

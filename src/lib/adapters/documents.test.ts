@@ -28,6 +28,9 @@ describe('documentSlotReason: flags what RoleQuick cannot attach', () => {
   it('names the document, so the student knows what to go find', () => {
     expect(documentSlotReason('upload your cover letter here', false)).toContain('cover letter');
     expect(documentSlotReason('academic transcript', false)).toContain('transcript');
+    // "proof of" must carry its object into the reason: the matched text IS the user-facing name
+    // of the document, and "proof of left for you" reads as a broken sentence.
+    expect(documentSlotReason('proof of enrollment', false)).toContain('proof of enrollment');
   });
 
   it('holds auto-submit, so the student is told before the form can fire', () => {
