@@ -54,6 +54,24 @@ export function splitName(fullName: string): { first: string; last: string } {
   return { first: parts[0] ?? '', last: parts.slice(1).join(' ') };
 }
 
+// ATS labels are author-written, so a phone field is not reliably labelled "Phone". Live-caught
+// 2026-07-17 (R-020): Enpal's Ashby board labels its REQUIRED phone field just "Number", which
+// `/\bphone\b/` misses, so the field came back empty on a form where the profile HAD the number.
+// That is the worst class of non-fill - not "we lack the data" but "we had it and missed".
+//
+// The widening is deliberately gated on `type="tel"` for the ambiguous words. "Number" alone is
+// meaningless (a form could ask for a student number, a house number); "Number" on a tel control
+// is a phone, and the control type settles it with no guessing. Unambiguous words match on the
+// label alone, because plenty of boards render a phone field as `type="text"`.
+const PHONE_LABEL_RE = /\b(phone|telephone|telefon|mobile|cell|handy)\b/i;
+const TEL_ONLY_LABEL_RE = /\b(number|nummer|tel|no)\b/i;
+
+export function isPhoneLabel(label: string, el?: Element | null): boolean {
+  if (PHONE_LABEL_RE.test(label)) return true;
+  const isTel = (el as HTMLInputElement | null)?.type === 'tel';
+  return isTel && TEL_ONLY_LABEL_RE.test(label);
+}
+
 // Radios that carry no meaningful `value` (Ashby/LinkedIn use "on"): the real option text lives
 // in the associated `label[for=radio.id]`. Returns each radio paired with its label text.
 export function radioOptionsIn(block: Element): Array<{ radio: HTMLInputElement; text: string }> {

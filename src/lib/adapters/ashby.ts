@@ -37,6 +37,7 @@ import {
   setNativeValue,
   radioOptionsIn,
   isComboboxControl,
+  isPhoneLabel,
   openCombobox,
   pickComboOption,
   closeOpenCombobox,
@@ -391,12 +392,15 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
     // Phone/location are `_systemfield_*` inputs on some boards (filled above) but per-posting
     // UUID-named custom fields on others (live-tested 2026-07-04: Notion's board), where only
     // the label identifies them.
+    //
+    // The input is resolved BEFORE the label match because `isPhoneLabel` needs the control type
+    // to read a bare "Number" label as a phone (R-020) - the label text alone is ambiguous there.
+    const input = block.querySelector<HTMLInputElement>('input[type="text"], input[type="tel"]');
     const textTarget =
-      /\bphone\b/.test(label) ? applicationProfile.phone :
+      isPhoneLabel(label, input) ? applicationProfile.phone :
       /^(location|city)\b/.test(label) ? applicationProfile.address_city :
       undefined;
     if (textTarget !== undefined) {
-      const input = block.querySelector<HTMLInputElement>('input[type="text"], input[type="tel"]');
       // Skip autocomplete comboboxes (Location on most boards): a typed value that never
       // selects a suggestion doesn't register as an answer, it just blocks the field.
       const isCombobox = input?.getAttribute('role') === 'combobox' || !!input?.getAttribute('aria-autocomplete');
