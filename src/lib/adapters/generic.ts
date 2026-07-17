@@ -6,6 +6,13 @@ import {
   pickComboOption,
   closeOpenCombobox,
 } from './shared/dom';
+import {
+  dateOrderCandidates,
+  formatDate,
+  isDateControl,
+  parseStoredDate,
+  valueHoldsDate,
+} from './shared/dates';
 
 // Generic adapter for companies that build their OWN application form on their own domain
 // against an ATS's API (live-tested targets 2026-07-04: vercel.com/careers - Greenhouse API
@@ -389,11 +396,23 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
     return { mode: 'value', value: ap.desired_salary };
   if (/date of birth|birth\s*date|\bdob\b/.test(l) && ap.date_of_birth)
     return { mode: 'value', value: ap.date_of_birth };
-  if (/availab|start date|when can you start|earliest start/.test(l) && ap.availability_date)
+  // Term/duration BEFORE start date: "length or term/length of availability (10-14 weeks)" and
+  // "how long are you available" both contain "availab", so the old single /availab/ rule poured
+  // the start date into them. It answered when she can start in response to how long she can stay
+  // (R-014 facet b, live on Espa). These are two questions and now two fields.
+  if (TERM_QUESTION.test(l)) return ap.availability_term ? { mode: 'value', value: ap.availability_term } : null;
+  // "starting date" / "earliest possible starting date" (Enpal's verbatim label) matched neither
+  // "start date" nor "earliest start", so a required start-date field was never even a candidate.
+  if (/availab|start(ing)?\s+date|date.*you.*start|when can you start|earliest.*start/.test(l) && ap.availability_date)
     return { mode: 'value', value: ap.availability_date };
 
   return null;
 }
+
+// "How long", not "when". Deliberately narrow: it must beat the /availab/ rule below it without
+// swallowing a plain "When are you available to start?", which is a start-date question.
+const TERM_QUESTION =
+  /(length|duration|term)\b.*\bavailab|availab.*\b(length|duration|term)\b|how long.*(available|intern|stay|commit)|(weeks|months).*\b(available|internship|commit)|\bterm\s*\/?\s*length/i;
 
 // Opt-out wordings for EEO/demographic questions. Broadened beyond "decline/prefer not" to catch
 // the common "Choose not to disclose" / "I do not wish to identify" phrasings that ATSes use, so a
@@ -488,6 +507,41 @@ export function matchOption<T extends { text: string }>(options: T[], desired: D
 }
 
 // ─── DOM fillers ────────────────────────────────────────────────────────────
+
+// Why the stored value could not be written as a date. The "left for" wording is load-bearing:
+// autosubmit-gate's REVIEW_FLAG matches it, so an unwritable date HOLDS auto-submit instead of
+// letting the countdown fire into a form the ATS will bounce (R-014).
+export function dateSkipReason(stored: string, label: string): string {
+  const why = parseStoredDate(stored)
+    ? 'the field would not accept it'
+    : `"${stored.slice(0, 24)}" is not an unambiguous date`;
+  return `date left for you: "${label}" (${why})`;
+}
+
+// Write a date and PROVE it landed. Every attempt is read back, because the failure this exists to
+// stop is invisible: the widget shows the text while its state holds nothing, so a write that is
+// assumed to have worked is exactly how a required field reaches submit empty.
+export async function fillDateField(el: HTMLInputElement, stored: string): Promise<boolean> {
+  const parts = parseStoredDate(stored);
+  if (!parts) return false; // "Immediately", or an ambiguous 03/04/2026 - never guess into a date
+
+  for (const order of dateOrderCandidates(el)) {
+    await randomDelay();
+    el.focus();
+    setNativeValue(el, formatDate(parts, order));
+    el.blur();
+    // Let a controlled component re-render before reading: React may clear a value it rejected,
+    // and reading synchronously would see our own text still sitting in the box and call it a pass.
+    await new Promise((r) => setTimeout(r, 60));
+    if (valueHoldsDate(el.value, parts, order)) return true;
+  }
+
+  // Nothing round-tripped. Leave the field genuinely empty rather than parked with a value the
+  // form has already rejected - a visibly-filled dead field is what made this bug cost 4 round
+  // trips to diagnose in the first place.
+  setNativeValue(el, '');
+  return false;
+}
 
 async function fillTextField(el: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
   await randomDelay();
@@ -604,6 +658,20 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
       } else if (id) {
         fields_skipped++;
         skipped_reasons.push(`unrecognized field left blank: "${short(id)}"`);
+      }
+      continue;
+    }
+
+    // Date fields go through the formatter, never the plain text filler: a raw locale string is
+    // silently dropped by a picker expecting the other order, leaving a field that LOOKS answered
+    // and blocks the submit (R-014). fillDateField reads the value back and only counts a write
+    // that actually committed.
+    if (value && isDateControl(el, id)) {
+      if (await fillDateField(el as HTMLInputElement, value)) {
+        fields_filled++;
+      } else {
+        fields_skipped++;
+        skipped_reasons.push(dateSkipReason(value, short(id)));
       }
       continue;
     }

@@ -44,7 +44,8 @@ import {
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { dateSkipReason, desiredAnswer, fillDateField, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { isDateControl } from './shared/dates';
 
 // Resolves once the DOM has gone quiet for `quietMs`, or after `maxMs` regardless - Ashby's
 // React tree re-renders after most field changes, and firing the next fill mid-re-render risks
@@ -468,9 +469,27 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
         continue;
       }
       if (known.mode === 'value') {
-        const textEl = block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"], input[type="tel"]');
+        // type="date" is included so a native picker is reachable at all - it was invisible to
+        // this selector before, and an unmatched block is reported as "no matching control".
+        const textEl = block.querySelector<HTMLInputElement>(
+          'input[type="text"], input[type="url"], input[type="tel"], input[type="date"]',
+        );
         const isCombo = textEl ? textEl.getAttribute('role') === 'combobox' || !!textEl.getAttribute('aria-autocomplete') : false;
         if (textEl && !textEl.value && !isCombo) {
+          // Enpal's start-date picker is where R-014 was found: it parses MM/DD/YYYY, so a Dubai
+          // -shaped "18/07/2026" left React's state empty while the box still showed the text, and
+          // the submit bounced on a field that visibly had content. Dates go through the verified
+          // formatter; everything else keeps the plain write.
+          if (isDateControl(textEl, label)) {
+            if (await fillDateField(textEl, known.value)) {
+              await waitForStableDom();
+              fields_filled++;
+            } else {
+              fields_skipped++;
+              skipped_reasons.push(dateSkipReason(known.value, label.slice(0, 40)));
+            }
+            continue;
+          }
           await randomDelay();
           textEl.focus();
           setNativeValue(textEl, known.value);
