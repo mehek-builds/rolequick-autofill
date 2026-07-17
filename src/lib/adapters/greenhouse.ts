@@ -56,6 +56,7 @@ import {
   classifyField,
   desiredAnswer,
   fitToBudget,
+  GENERIC_LINK_ASK,
   isDraftableQuestion,
   isOpenEndedQuestion,
   isRefusedQuestion,
@@ -653,11 +654,16 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
     if (textInput && !textInput.value && !tracked.some((t) => t.el === textInput)) {
       const required =
         textInput.required || textInput.getAttribute('aria-required') === 'true' || /\*\s*$/.test(label);
+      // A question that asks for a LINK is never drafted as prose, however open-ended its verbs
+      // read (GENERIC_LINK_ASK: "Share a link to something you've built" is R-008 reopened
+      // through this very gate). It flags via linkSkipReason instead, which holds auto-submit.
+      const linkAsk = GENERIC_LINK_ASK.test(label);
       const draftable =
         required &&
         !!draftAnswer &&
         !isComboboxControl(textInput) &&
         isOpenEndedQuestion(label) &&
+        !linkAsk &&
         !isRefusedQuestion(label) &&
         classifyField(label) === null;
       if (draftable) {
@@ -670,7 +676,11 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
         });
       } else {
         fields_skipped++;
-        skipped_reasons.push(`${required ? 'required ' : ''}open-ended question left blank: "${label.slice(0, 60)}"`);
+        skipped_reasons.push(
+          linkAsk && isOpenEndedQuestion(label)
+            ? linkSkipReason(label)
+            : `${required ? 'required ' : ''}open-ended question left blank: "${label.slice(0, 60)}"`,
+        );
       }
     }
   }

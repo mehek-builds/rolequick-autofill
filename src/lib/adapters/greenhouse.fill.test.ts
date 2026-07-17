@@ -622,3 +622,79 @@ describe('language questions (declared-list authority), through the real Greenho
     expect(result.skipped_reasons.some((r) => /language question left for you/.test(r))).toBe(true);
   });
 });
+
+describe('R-033 drafter gate: generic link asks are never drafted as prose (R-008 reopened)', () => {
+  // The audit case: `share\b` fires isOpenEndedQuestion, no platform name for linkQuestion, no
+  // profile key for classifyField - before the GENERIC_LINK_ASK veto, this REQUIRED URL-expecting
+  // input received a drafted prose paragraph.
+  const LINK_ASK_LABEL = "Share a link to something you've built*";
+
+  function requiredInput(labelText: string): HTMLInputElement {
+    const q = textInput('question_link');
+    q.required = true;
+    markReactManaged(q);
+    wrapper(labelText, q);
+    return q;
+  }
+
+  function baseFormFields(): void {
+    const { first, last, email } = coreFields();
+    for (const el of [first, last, email]) markReactManaged(el);
+  }
+
+  it('flags the link-ask input via linkSkipReason and never calls the drafter', async () => {
+    baseFormFields();
+    const q = requiredInput(LINK_ASK_LABEL);
+    const draftAnswer = vi.fn(async (_q: string) => 'A prose paragraph that must never reach a URL field.');
+
+    const result = await fillGreenhouseApplication({
+      fullName: 'Mehek Mandal',
+      email: 'mehekman@usc.edu',
+      profile,
+      applicationProfile: {},
+      draftAnswer,
+    });
+
+    expect(draftAnswer).not.toHaveBeenCalled();
+    expect(q.value).toBe('');
+    // linkSkipReason's wording, and it must hold auto-submit.
+    expect(result.skipped_reasons.some((r) => /link question left for you/.test(r))).toBe(true);
+    expect(skippedReasonsNeedReview(result.skipped_reasons)).toBe(true);
+  });
+
+  it('still drafts a genuine open-ended input that merely uses the same verb (both directions)', async () => {
+    baseFormFields();
+    const q = requiredInput('Please share what excites you about this role.*');
+    q.maxLength = 255;
+    const draftAnswer = vi.fn(async (_q: string) => 'The product is real and the team ships. I want to build that.');
+
+    const result = await fillGreenhouseApplication({
+      fullName: 'Mehek Mandal',
+      email: 'mehekman@usc.edu',
+      profile,
+      applicationProfile: {},
+      draftAnswer,
+    });
+
+    expect(draftAnswer).toHaveBeenCalledTimes(1);
+    expect(q.value).toBe('The product is real and the team ships. I want to build that.');
+    expect(result.ai_drafted).toBe(1);
+  });
+
+  it('an OPTIONAL link-ask input is flagged with the link wording too, not the generic blank line', async () => {
+    baseFormFields();
+    const q = textInput('question_link_opt');
+    markReactManaged(q);
+    wrapper("Share a link to something you've built", q);
+
+    const result = await fillGreenhouseApplication({
+      fullName: 'Mehek Mandal',
+      email: 'mehekman@usc.edu',
+      profile,
+      applicationProfile: {},
+    });
+
+    expect(q.value).toBe('');
+    expect(result.skipped_reasons.some((r) => /link question left for you/.test(r))).toBe(true);
+  });
+});

@@ -457,6 +457,19 @@ export function linkSkipReason(label: string): string {
   return `link question left for you (no URL in your profile): "${label.slice(0, 60)}"`;
 }
 
+// Does this question ask for a link at all, whatever it is a link TO? R-008 reopened through
+// R-033's drafter (audit 2026-07-17): "Share a link to something you've built" fires
+// isOpenEndedQuestion on `share\b`, names no platform linkQuestion knows, and classifyField has
+// no generic-link key - so the R-033 gate drafted a PROSE paragraph into a URL-expecting input.
+// A question that asks for a link/URL is never draftable as prose; the gate flags it instead
+// (linkSkipReason, which holds auto-submit).
+//
+// Deliberately LIGHTER than linkQuestion's own asksForLink, which also matches
+// profile/handle/username: those words are fine inside a platform-named link question, but as a
+// drafter veto they would flag "how do you handle conflict" - a genuine essay ask - trading a
+// working draft for a hold. links/urls only.
+export const GENERIC_LINK_ASK = /\b(links?|urls?)\b/i;
+
 // A question asking WHERE the student lives (city / state / country of residence). Live QA
 // 2026-07-16 left a required location field blank on 3 of 12 real forms (Monzo "Location (City)*",
 // ElevenLabs "Location* / Country you're currently residing in", Global Relay "Country*") while
