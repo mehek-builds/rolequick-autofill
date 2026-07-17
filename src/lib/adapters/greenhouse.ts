@@ -67,6 +67,7 @@ import {
   locationQuestion,
   locationSkipReason,
   matchOption,
+  noteLinkFillCandidate,
   unreadableQuestionSkipReason,
   WORK_ELIGIBILITY_QUESTION,
   workEligibilitySkipReason,
@@ -455,6 +456,8 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
       const linkEl: HTMLInputElement | HTMLTextAreaElement | null =
         block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"]') ??
         (link.asksForLink ? block.querySelector<HTMLTextAreaElement>('textarea') : null);
+      // R-030 observation only (see generic.ts): record the labels that fill a URL unconditionally.
+      noteLinkFillCandidate(label, link, linkEl);
       if (linkEl && !linkEl.value && !isComboboxControl(linkEl)) {
         if (link.url) {
           await fillTracked(linkEl, link.url, `link field "${label.slice(0, 40)}"`);
