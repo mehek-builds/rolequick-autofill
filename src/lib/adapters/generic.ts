@@ -463,6 +463,47 @@ export function linkSkipReason(label: string): string {
   return `link question left for you (no URL in your profile): "${label.slice(0, 60)}"`;
 }
 
+// Does this question ask for a link at all, whatever it is a link TO? R-008 reopened through
+// R-033's drafter (audit 2026-07-17): "Share a link to something you've built" fires
+// isOpenEndedQuestion on `share\b`, names no platform linkQuestion knows, and classifyField has
+// no generic-link key - so the R-033 gate drafted a PROSE paragraph into a URL-expecting input.
+// A question that asks for a link/URL is never draftable as prose; the gate flags it instead
+// (linkSkipReason, which holds auto-submit).
+//
+// Deliberately LIGHTER than linkQuestion's own asksForLink, which also matches
+// profile/handle/username: those words are fine inside a platform-named link question, but as a
+// drafter veto they would flag "how do you handle conflict" - a genuine essay ask - trading a
+// working draft for a hold. links/urls only.
+export const GENERIC_LINK_ASK = /\b(links?|urls?)\b/i;
+
+// ── R-030 instrumentation: observation ONLY, never a behavior change ──
+// linkQuestion commits on a keyword anywhere in the label, so "Do you have experience with GitHub
+// Actions?" rendered as a text input would get the GitHub URL (R-030, zero live reproductions so
+// far). The register forbids guessing a guard here: two guards in a row invented against
+// hypotheticals each produced the opposite bug, and asksForLink is provably not the discriminator
+// (see the R-030 entry). Its cheapest next step is exactly this: record the labels of the
+// population that fills a URL unconditionally - linkQuestion non-null AND asksForLink false AND
+// the control is input[type=text] - ship them with the autofill telemetry, and let one real label
+// decide what the fix even is. Do NOT grow this into a veto or a gate; that is the documented trap.
+const r030CandidateLabels: string[] = [];
+
+// Called by each adapter right where it resolves the control for a link question. Pure recording:
+// it must never influence what fills. (input[type=url] is excluded on purpose - the browser typed
+// it as a URL field, so filling a URL there is not R-030's shape.)
+export function noteLinkFillCandidate(label: string, link: LinkQuestion, control: Element | null): void {
+  if (link.asksForLink) return;
+  if (!control || control.tagName !== 'INPUT') return;
+  if ((control as HTMLInputElement).type !== 'text') return;
+  r030CandidateLabels.push(label.slice(0, 200));
+}
+
+// Drained by content.ts once per fill run and attached to the AUTOFILL_EVENT payload only when
+// non-empty. Drain-and-clear, so labels from one application can never leak into the next run's
+// telemetry.
+export function drainR030CandidateLabels(): string[] {
+  return r030CandidateLabels.splice(0, r030CandidateLabels.length);
+}
+
 // A question asking WHERE the student lives (city / state / country of residence). Live QA
 // 2026-07-16 left a required location field blank on 3 of 12 real forms (Monzo "Location (City)*",
 // ElevenLabs "Location* / Country you're currently residing in", Global Relay "Country*") while
@@ -552,6 +593,259 @@ export function locationComboQueries(field: LocationQuestion['field'], ap: Appli
     });
   const fuller = parts.join(', ');
   return fuller === parts[0] ? [fuller] : [fuller, parts[0]];
+}
+
+// ─── Language proficiency (declared-list authority) ─────────────────────────
+//
+// Live phrasings this exists for (2026-07-17): ZURU's "This role involves working closely with
+// our team in Mexico, so Spanish language skills are preferred but not essential. Are you
+// comfortable communicating in Spanish in a professional setting?" (radio Yes/No), and the
+// Enpal-style level selects "Wie gut sind deine Deutschkenntnisse?" / "German level" /
+// "English level".
+//
+// RoleQuick answers these from EXACTLY ONE source: the languages the student DECLARED
+// (ApplicationProfile.languages). Never the resume, never citizenship, never the JD - a language
+// "inferred" from adjacent data is R-015's exact failure (JD keywords lifted onto a submitted
+// resume as if they were hers) re-expressed as a spoken claim. The mis-fill asymmetry each arm
+// below encodes:
+//   - asked language IS declared: a clean Yes, or the fluent-tier level. NEVER "Native": fluent
+//     is what she declared, native is a STRONGER claim she did not make (the same line eeoAnswer
+//     draws - a near-miss option is a different statement, not a formatting variant).
+//   - asked language is NOT declared: an honest No is fillable, but only review-flagged. The
+//     declared list is authoritative for what she CAN claim, weaker as proof of what she cannot
+//     (she may simply not have listed one), so every No is confirmed by the student before
+//     submit - the review wording matches the auto-submit gate's REVIEW_FLAG, so the hold
+//     engages while it waits.
+//   - anything ambiguous (native-level asks, multi-language stems, Chinese vs Mandarin): flag,
+//     never guess.
+//   - declared list EMPTY: always-ask, every time. No default, no resume peek.
+//
+// REFUSAL PRECEDENCE (locationQuestion's ordering doctrine): work-eligibility, citizenship and
+// EEO guards run FIRST at every call site, and languageQuestion re-checks them internally, so a
+// regression in either ordering alone cannot let a language rule answer a legal question.
+// "Authorized to work" phrasings routinely name countries whose ADJECTIVES are languages
+// ("Spanish", "German"), which is exactly how a language classifier could re-open R-004.
+
+// Curated vocabulary: label variant -> canonical name. Curated rather than open-ended on purpose:
+// only a language RoleQuick can NAME can ever be matched against the declared list, so a language
+// outside this table degrades to the existing unrecognized-question flags instead of a guess.
+// Native names (Deutsch, Espanol, Francais, Italiano, ...) are included because the form may ask
+// in its own language; diacritics are stripped by normalizeLanguageText before lookup, so one
+// ASCII key covers both spellings.
+const LANGUAGE_VOCABULARY: Record<string, string> = {
+  english: 'english', englisch: 'english',
+  spanish: 'spanish', espanol: 'spanish', spanisch: 'spanish', castellano: 'spanish',
+  german: 'german', deutsch: 'german',
+  french: 'french', francais: 'french', franzosisch: 'french',
+  italian: 'italian', italiano: 'italian', italienisch: 'italian',
+  portuguese: 'portuguese', portugues: 'portuguese',
+  dutch: 'dutch', nederlands: 'dutch',
+  hindi: 'hindi',
+  urdu: 'urdu',
+  arabic: 'arabic', arabisch: 'arabic',
+  mandarin: 'mandarin',
+  chinese: 'chinese',
+  cantonese: 'cantonese',
+  japanese: 'japanese', japanisch: 'japanese',
+  korean: 'korean',
+  russian: 'russian', russisch: 'russian',
+  turkish: 'turkish', turkisch: 'turkish',
+  polish: 'polish', polnisch: 'polish',
+};
+
+// clean() + lowercase + strip diacritics (and fold the German eszett), so "Español" matches the
+// `espanol` key and an option spelled "Fließend" can be matched by a "fliessend" value. NFD
+// splits a diacritic into base char + combining mark; the mark range is then removable.
+function normalizeLanguageText(s: string): string {
+  return clean(s ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ß/g, 'ss');
+}
+
+// Longest-first so the alternation cannot stop at a shorter variant that shares a prefix.
+const LANG_ALT = Object.keys(LANGUAGE_VOCABULARY)
+  .sort((a, b) => b.length - a.length)
+  .join('|');
+const LANG_WORD_RE = new RegExp(`\\b(${LANG_ALT})\\b`, 'g');
+// German fuses the language name and "kenntnisse" into one word ("Deutschkenntnisse"), so \b
+// never fires between them and LANG_WORD_RE cannot see the language inside the compound.
+const LANG_KENNTNISSE_RE = new RegExp(`\\b(${LANG_ALT})[\\s-]*(?:sprach)?kenntnisse`, 'g');
+
+// (b) level questions: "German level", "English level", "Wie gut sind deine Deutschkenntnisse?",
+// "niveau de francais". Checked BEFORE the yes/no shape: a level question answered Yes/No is a
+// non-answer, and several level phrasings ("what is your level of spoken German") also contain
+// yes/no-shape verbs.
+const LANG_LEVEL_SHAPE = new RegExp(
+  `\\b(?:${LANG_ALT})\\s+(?:language\\s+)?(?:level|niveau)\\b` +
+    `|\\b(?:level|niveau)\\s+(?:of|in|de)\\s+(?:\\w+\\s+){0,2}(?:${LANG_ALT})\\b` +
+    `|\\b(?:${LANG_ALT})[\\s-]*(?:sprach)?kenntnisse`,
+);
+
+// (a) yes/no comfort/fluency questions naming a language: "comfortable communicating in X",
+// "fluent in X", "X language skills", "proficiency in X", "speak X". The verb stems are bounded
+// on the left and the language name on both sides, with a small word gap between them, so a
+// label that merely CONTAINS a language name with no proficiency ask around it ("please polish
+// this design", a Turkish-coffee perk blurb) does not classify.
+const LANG_YESNO_SHAPE = new RegExp(
+  `\\b(?:comfortabl\\w*|fluen\\w*|proficien\\w*|convers\\w*|communicat\\w*|speak\\w*|understand\\w*)\\s+(?:\\w+\\s+){0,4}(?:${LANG_ALT})\\b` +
+    `|\\b(?:${LANG_ALT})\\s+(?:language\\s+)?(?:skills?|fluency|proficiency|speaker)\\b`,
+);
+
+// A native-level CLAIM, distinct from mere fluency. Used two ways: a yes/no "are you a native X
+// speaker?" is never answered (declared fluency cannot prove native), and no level value below
+// ever names a native tier, so a level select can never have Native committed.
+const NATIVE_CLAIM = /\bnative\b|mother\s*tongue|muttersprach|bilingual/;
+
+export interface LanguageQuestion {
+  kind: 'yesno' | 'level';
+  // Canonical vocabulary names, deduped, in order of appearance. Usually one; the ZURU label
+  // names Spanish twice and must still resolve to one.
+  languages: string[];
+}
+
+export function languageQuestion(label: string): LanguageQuestion | null {
+  const l = normalizeLanguageText(label);
+  if (!l) return null;
+  // Refusals first, same shape as locationQuestion: a work-eligibility / EEO / never-fill label
+  // can never be a language question, and citizenship gets the same guard because nationality
+  // ADJECTIVES double as language names ("Spanish", "German") - a citizenship dropdown's label
+  // must keep resolving through classifyField, never through a fluency rule.
+  if (isRefusedQuestion(l)) return null;
+  if (/citizen|nationalit/i.test(l)) return null;
+  // "Preferred programming language" is a tooling question. The natural-language vocabulary
+  // rarely appears in one, but "English" does show up in developer-tooling labels ("comments in
+  // English"), so the veto is explicit rather than assumed.
+  if (/\b(?:programming|coding|scripting|computer|software)\s+languages?\b/.test(l)) return null;
+  // "How many languages do you speak?" asks for a COUNT, not a proficiency in a named language.
+  if (/\bhow many\b[^?]*\blanguages?\b/.test(l)) return null;
+
+  const kind = LANG_LEVEL_SHAPE.test(l) ? 'level' : LANG_YESNO_SHAPE.test(l) ? 'yesno' : null;
+  if (!kind) return null;
+
+  const languages: string[] = [];
+  for (const re of [LANG_WORD_RE, LANG_KENNTNISSE_RE]) {
+    re.lastIndex = 0;
+    for (let m = re.exec(l); m; m = re.exec(l)) {
+      const canonical = LANGUAGE_VOCABULARY[m[1]];
+      if (canonical && !languages.includes(canonical)) languages.push(canonical);
+    }
+  }
+  return languages.length > 0 ? { kind, languages } : null;
+}
+
+// The student's declared list, canonicalized through the same vocabulary the questions resolve
+// through, so "Deutsch" in the profile answers a "German" question. A declared language outside
+// the vocabulary is kept as its normalized self: it can never match a question (questions only
+// classify on vocabulary names), but it must not be silently dropped either.
+function declaredLanguages(ap: ApplicationProfile): Set<string> {
+  const out = new Set<string>();
+  for (const raw of ap.languages ?? []) {
+    const n = normalizeLanguageText(raw);
+    if (n) out.add(LANGUAGE_VOCABULARY[n] ?? n);
+  }
+  return out;
+}
+
+// Chinese needs a curated asymmetry: a declared Mandarin or Cantonese speaker DOES speak
+// "Chinese" (answering Yes is honest), but a declared "Chinese" asked specifically about
+// Mandarin or Cantonese is ambiguous - the list does not say WHICH - so that direction is
+// flagged, never guessed.
+const CHINESE_FAMILY = ['chinese', 'mandarin', 'cantonese'];
+
+function languageMembership(lang: string, declared: Set<string>): 'declared' | 'not-declared' | 'ambiguous' {
+  if (declared.has(lang)) return 'declared';
+  if (lang === 'chinese' && CHINESE_FAMILY.some((f) => declared.has(f))) return 'declared';
+  if (CHINESE_FAMILY.includes(lang) && CHINESE_FAMILY.some((f) => declared.has(f))) return 'ambiguous';
+  return 'not-declared';
+}
+
+// The level options RoleQuick may commit for a DECLARED language, fullest-claim-first, matched
+// through matchOption's oneof (first value landing an unambiguous option wins). Deliberately no
+// native tier - see NATIVE_CLAIM. C1 before C2 on the same conservatism: both are fluent-tier,
+// C2 is the stronger claim, so it is only reached when the form offers no C1. German option
+// spellings included for the Enpal-style boards (both eszett and ss forms: option TEXT is not
+// normalized by matchOption, only the label was).
+export const FLUENT_LEVEL_OPTIONS = [
+  'fluent', 'proficient', 'c1', 'c2', 'advanced', 'full professional',
+  'fliessend', 'fließend', 'verhandlungssicher',
+];
+
+// The lowest HONEST options for a language not on the declared list: only wordings that clearly
+// mean none/basic. "Beginner"/"Elementary" are deliberately absent - they claim a little actual
+// skill, and the declared list says nothing about a little. If none of these exists on the form,
+// the field is left for the student (flagged), never rounded up.
+export const NO_KNOWLEDGE_LEVEL_OPTIONS = [
+  'none', 'no knowledge', 'not at all', 'keine kenntnisse', 'keine', 'a1', 'grundkenntnisse', 'basic',
+];
+
+// "left for" is load-bearing (auto-submit gate REVIEW_FLAG), same as the location/link builders.
+export function languageSkipReason(label: string, why: string): string {
+  return `language question left for you (${why}): "${label.slice(0, 60)}"`;
+}
+
+// Filled-but-flagged reasons for the not-declared arm. "review before submitting" is what the
+// auto-submit gate's REVIEW_FLAG matches, so a filled No still HOLDS the countdown.
+export function languageNoReviewReason(language: string, label: string): string {
+  return `answered No (${language} is not in your declared languages), review before submitting: "${label.slice(0, 60)}"`;
+}
+export function languageLevelReviewReason(language: string, label: string): string {
+  return `picked the lowest ${language} level (not in your declared languages), review before submitting: "${label.slice(0, 60)}"`;
+}
+
+// What an adapter should DO with a language question: fill this Desired (optionally pushing a
+// review reason alongside), or flag it. null when the label is not a language question at all.
+// Like linkQuestion/locationQuestion, classification never depends on what is stored - an empty
+// declared list still terminates the block (flagged), it does not fall through to the drafter.
+export type LanguageAnswerPlan =
+  | { kind: 'fill'; desired: NonNullable<Desired>; reviewReason?: string }
+  | { kind: 'skip'; reason: string };
+
+export function languageAnswerPlan(label: string, ap: ApplicationProfile): LanguageAnswerPlan | null {
+  const q = languageQuestion(label);
+  if (!q) return null;
+  const declared = declaredLanguages(ap);
+  if (declared.size === 0) {
+    return { kind: 'skip', reason: languageSkipReason(label, 'no languages declared in your profile') };
+  }
+  const l = normalizeLanguageText(label);
+
+  if (q.kind === 'yesno') {
+    // "Are you a native X speaker?" asks for a claim the declared list cannot prove in either
+    // direction (she may or may not be native in a declared language) - always-ask.
+    if (NATIVE_CLAIM.test(l)) {
+      return { kind: 'skip', reason: languageSkipReason(label, 'asks about native-level ability') };
+    }
+    const memberships = q.languages.map((lang) => languageMembership(lang, declared));
+    // Every named language declared -> a clean Yes ("do you speak English and French?" holds for
+    // both "and" and "or" readings, so multi-language is safe only on this arm).
+    if (memberships.every((m) => m === 'declared')) return { kind: 'fill', desired: { mode: 'yes' } };
+    // Exactly one language asked and it is not declared -> an honest No, review-flagged.
+    if (q.languages.length === 1 && memberships[0] === 'not-declared') {
+      return { kind: 'fill', desired: { mode: 'no' }, reviewReason: languageNoReviewReason(q.languages[0], label) };
+    }
+    // Mixed multi-language stems ("and" vs "or" changes the honest answer) and the Chinese
+    // ambiguity both land here: flag, never guess.
+    return { kind: 'skip', reason: languageSkipReason(label, 'could not resolve it from your declared languages') };
+  }
+
+  // Level questions name exactly one language or nobody answers them.
+  if (q.languages.length !== 1) {
+    return { kind: 'skip', reason: languageSkipReason(label, 'names more than one language') };
+  }
+  switch (languageMembership(q.languages[0], declared)) {
+    case 'declared':
+      return { kind: 'fill', desired: { mode: 'oneof', values: [...FLUENT_LEVEL_OPTIONS] } };
+    case 'not-declared':
+      return {
+        kind: 'fill',
+        desired: { mode: 'oneof', values: [...NO_KNOWLEDGE_LEVEL_OPTIONS] },
+        reviewReason: languageLevelReviewReason(q.languages[0], label),
+      };
+    default:
+      return { kind: 'skip', reason: languageSkipReason(label, 'could not resolve it from your declared languages') };
+  }
 }
 
 // The essay drafter must never be handed a question it cannot answer. This is the second half of
@@ -1039,6 +1333,29 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     // .value does nothing to these, so they were previously collected and skipped. Links and
     // email stay plain text fields even if they carry a combobox role.
     if (isComboboxControl(el) && !/linkedin|github|portfolio|e-?mail/.test(id)) {
+      // Language questions first (declared-list authority): a level question routinely renders
+      // as a react-select. languageAnswerPlan re-checks the refusal guards internally, so running
+      // it ahead of desiredAnswer cannot answer a work-eligibility or EEO label.
+      const langLabel = questionLabel(el) || id;
+      const langPlan = languageAnswerPlan(langLabel, ap);
+      if (langPlan) {
+        if (langPlan.kind === 'skip') {
+          fields_skipped++;
+          skipped_reasons.push(langPlan.reason);
+          continue;
+        }
+        if ((await fillComboboxFor(el as HTMLElement, langPlan.desired)) === 'filled') {
+          fields_filled++;
+          if (langPlan.reviewReason) {
+            skipped_reasons.push(langPlan.reviewReason);
+            markForReview(el, 'Language answer: review before submitting');
+          }
+        } else {
+          fields_skipped++;
+          skipped_reasons.push(languageSkipReason(langLabel, 'no honest option in this picker'));
+        }
+        continue;
+      }
       const desired: Desired = value !== undefined ? { mode: 'value', value } : desiredAnswer(id, ap, eeo);
       const res = await fillComboboxFor(el as HTMLElement, desired);
       if (res === 'filled') {
@@ -1080,8 +1397,18 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     if (isTextarea) {
       // Work-auth textareas never reach here: the always-ask intercept at the top of this loop
       // skips them before the identity mapping, so nothing work-auth can be AI-drafted.
+      const question = questionLabel(el) || id;
+      // A language question rendered as free text never reaches the drafter either: the model
+      // knows nothing about the declared list, and a drafted paragraph claiming comfort in a
+      // language she never declared is a fabricated claim in her voice (R-015's shape). The
+      // "left for" flag holds auto-submit instead.
+      if (languageQuestion(question)) {
+        fields_skipped++;
+        skipped_reasons.push(languageSkipReason(question, 'needs your own answer, not a draft'));
+        continue;
+      }
       if (draftAnswer) {
-        pendingDrafts.push({ el, question: questionLabel(el) || id });
+        pendingDrafts.push({ el, question });
       } else {
         fields_skipped++;
         skipped_reasons.push(`open-ended question left blank: "${short(id)}"`);
@@ -1100,10 +1427,36 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     if (select.closest('[id*="rolequick"]') || select.disabled || !isVisible(select)) continue;
     if (select.selectedIndex > 0 && select.value && !/select|choose|^$/i.test(select.options[select.selectedIndex]?.text ?? '')) continue; // already answered
     const label = questionLabel(select);
-    const desired = desiredAnswer(label, ap, eeo);
     const options = [...select.options]
       .filter((o) => o.value && !/^(select|choose|please|--)/i.test(o.text.trim()))
       .map((o) => ({ text: o.text, value: o.value }));
+    // Language questions first (declared-list authority): the Enpal-style "German level" /
+    // "English level" selects land here. languageAnswerPlan re-checks the refusal guards
+    // internally, so running it ahead of desiredAnswer cannot answer a work-eligibility or EEO
+    // label. Always terminates the select: fill or flag, never silence.
+    const langPlan = languageAnswerPlan(label, ap);
+    if (langPlan) {
+      if (langPlan.kind === 'skip') {
+        fields_skipped++;
+        skipped_reasons.push(langPlan.reason);
+        continue;
+      }
+      const m = matchOption(options, langPlan.desired);
+      if (m) {
+        await randomDelay();
+        setNativeValue(select, m.value);
+        fields_filled++;
+        if (langPlan.reviewReason) {
+          skipped_reasons.push(langPlan.reviewReason);
+          markForReview(select, 'Language answer: review before submitting');
+        }
+      } else {
+        fields_skipped++;
+        skipped_reasons.push(languageSkipReason(label, 'no honest option to select'));
+      }
+      continue;
+    }
+    const desired = desiredAnswer(label, ap, eeo);
     const match = matchOption(options, desired);
     if (match) {
       await randomDelay();
@@ -1133,6 +1486,31 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     }));
     // Derive the question stem AFTER the options, so it can subtract them from the container.
     const label = groupQuestionText(group, options.map((o) => o.text));
+    // Language questions first (declared-list authority): ZURU's "comfortable communicating in
+    // Spanish?" is a radio Yes/No. Refusal guards are re-checked inside languageAnswerPlan, so
+    // this ordering cannot answer a work-eligibility or EEO label. Always terminates the group.
+    const langPlan = languageAnswerPlan(label, ap);
+    if (langPlan) {
+      if (langPlan.kind === 'skip') {
+        fields_skipped++;
+        skipped_reasons.push(langPlan.reason);
+        continue;
+      }
+      const m = matchOption(options, langPlan.desired);
+      if (m) {
+        await randomDelay();
+        checkChoice(m.el);
+        fields_filled++;
+        if (langPlan.reviewReason) {
+          skipped_reasons.push(langPlan.reviewReason);
+          markForReview(visibleLabelFor(m.el) ?? m.el, 'Language answer: review before submitting');
+        }
+      } else {
+        fields_skipped++;
+        skipped_reasons.push(languageSkipReason(label, 'no honest option to select'));
+      }
+      continue;
+    }
     const desired = desiredAnswer(label, ap, eeo);
     const match = matchOption(options, desired);
     if (match) {
@@ -1181,6 +1559,23 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     const cb = group[0];
     const id = controlIdentity(cb) || questionLabel(cb);
     const isAgreement = /agree|consent|terms|privacy|certif|accurate|acknowledg|authorize .*contact|i confirm/.test(id);
+    // A single "I am fluent in X" attestation checkbox: tick only on a clean in-list Yes. For
+    // every other language outcome the honest state IS unticked, but the student is still told
+    // (flag), because a silently unticked attestation is invisible on the card.
+    const langPlan = isAgreement ? null : languageAnswerPlan(id, ap);
+    if (langPlan) {
+      if (langPlan.kind === 'fill' && langPlan.desired.mode === 'yes') {
+        await randomDelay();
+        checkChoice(cb);
+        fields_filled++;
+      } else {
+        fields_skipped++;
+        skipped_reasons.push(
+          langPlan.kind === 'skip' ? langPlan.reason : languageSkipReason(id, 'not in your declared languages'),
+        );
+      }
+      continue;
+    }
     const desired = isAgreement ? null : desiredAnswer(id, ap, eeo);
     if (desired?.mode === 'yes') {
       await randomDelay();

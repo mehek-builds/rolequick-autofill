@@ -56,14 +56,18 @@ import {
   classifyField,
   desiredAnswer,
   fitToBudget,
+  GENERIC_LINK_ASK,
   isDraftableQuestion,
   isOpenEndedQuestion,
   isRefusedQuestion,
+  languageAnswerPlan,
+  languageSkipReason,
   linkQuestion,
   linkSkipReason,
   locationQuestion,
   locationSkipReason,
   matchOption,
+  noteLinkFillCandidate,
   unreadableQuestionSkipReason,
   WORK_ELIGIBILITY_QUESTION,
   workEligibilitySkipReason,
@@ -452,6 +456,8 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
       const linkEl: HTMLInputElement | HTMLTextAreaElement | null =
         block.querySelector<HTMLInputElement>('input[type="text"], input[type="url"]') ??
         (link.asksForLink ? block.querySelector<HTMLTextAreaElement>('textarea') : null);
+      // R-030 observation only (see generic.ts): record the labels that fill a URL unconditionally.
+      noteLinkFillCandidate(label, link, linkEl);
       if (linkEl && !linkEl.value && !isComboboxControl(linkEl)) {
         if (link.url) {
           await fillTracked(linkEl, link.url, `link field "${label.slice(0, 40)}"`);
@@ -521,6 +527,35 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
       continue;
     }
 
+    // Language proficiency, via the one shared classifier (see languageQuestion in generic.ts).
+    // Answered ONLY from the student's declared list (declared-list authority, R-015's lesson).
+    // Placed AFTER the work-eligibility and EEO branches (refusal precedence, locationQuestion's
+    // ordering doctrine) - languageAnswerPlan re-checks those refusals internally, so a
+    // regression in either ordering alone cannot route a legal question to a language answer.
+    // ALWAYS terminates the block: fill (a not-declared No or lowest level also pushes a review
+    // reason that HOLDS auto-submit) or flag, never silence, and never the drafter below - a
+    // drafted paragraph claiming comfort in an undeclared language is a fabricated claim in her
+    // voice.
+    const langPlan = languageAnswerPlan(label, applicationProfile);
+    if (langPlan && !blockAlreadyAnswered(block)) {
+      if (langPlan.kind === 'skip') {
+        fields_skipped++;
+        skipped_reasons.push(langPlan.reason);
+        continue;
+      }
+      if (await answerChoiceBlock(block, langPlan.desired)) {
+        fields_filled++;
+        if (langPlan.reviewReason) {
+          const reviewEl = block.querySelector<HTMLElement>('input, select, textarea');
+          if (reviewEl) markForReview(reviewEl, 'Language answer: review before submitting');
+          skipped_reasons.push(langPlan.reviewReason);
+        }
+      } else {
+        fields_skipped++;
+        skipped_reasons.push(languageSkipReason(label, 'no honest option to select'));
+      }
+      continue;
+    }
 
     // Academic record (R-005): GPA / grade average / degree classification / major. Placed with the
     // other known-answer classifiers and, like them, ALWAYS terminates the block so an unanswerable
@@ -622,11 +657,16 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
     if (textInput && !textInput.value && !tracked.some((t) => t.el === textInput)) {
       const required =
         textInput.required || textInput.getAttribute('aria-required') === 'true' || /\*\s*$/.test(label);
+      // A question that asks for a LINK is never drafted as prose, however open-ended its verbs
+      // read (GENERIC_LINK_ASK: "Share a link to something you've built" is R-008 reopened
+      // through this very gate). It flags via linkSkipReason instead, which holds auto-submit.
+      const linkAsk = GENERIC_LINK_ASK.test(label);
       const draftable =
         required &&
         !!draftAnswer &&
         !isComboboxControl(textInput) &&
         isOpenEndedQuestion(label) &&
+        !linkAsk &&
         !isRefusedQuestion(label) &&
         classifyField(label) === null;
       if (draftable) {
@@ -639,7 +679,11 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
         });
       } else {
         fields_skipped++;
-        skipped_reasons.push(`${required ? 'required ' : ''}open-ended question left blank: "${label.slice(0, 60)}"`);
+        skipped_reasons.push(
+          linkAsk && isOpenEndedQuestion(label)
+            ? linkSkipReason(label)
+            : `${required ? 'required ' : ''}open-ended question left blank: "${label.slice(0, 60)}"`,
+        );
       }
     }
   }

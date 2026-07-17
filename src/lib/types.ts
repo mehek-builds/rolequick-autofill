@@ -130,6 +130,14 @@ export interface ApplicationProfile {
   gpa?: string; // as earned, e.g. "3.89"
   gpa_scale?: string; // e.g. "4.0"
   major?: string; // e.g. "Computer Science"
+  // Languages the student DECLARED fluent, as plain language names (e.g. ["English", "Hindi",
+  // "Arabic", "French"]). Served by the backend's applicationProfile. This list is the ONLY
+  // authority for language-proficiency questions: never infer a language from the resume, the JD,
+  // citizenship, or the country of residence. That is R-015's lesson re-applied - the resume's
+  // SKILLS line lifted JD keywords as if they were hers, and a language "inferred" from adjacent
+  // data is the same fabrication as a spoken claim on a legal-adjacent screening question. An
+  // empty or absent list means every language question is always-ask, never guessed.
+  languages?: string[];
 }
 
 export interface ResumeContact {
