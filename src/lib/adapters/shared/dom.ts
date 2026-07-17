@@ -107,14 +107,25 @@ function declaresPhoneAutocomplete(value: string): boolean {
 // like the denylist did: "Number of hours you can work per week" contains "work", and "work" is a
 // perfectly good phone qualifier - but only when it is touching the number word. "Work number"
 // fills; "Number of hours you can work" does not, because the token next to "number" is "of".
-const NUMBER_WORDS = new Set(['number', 'nummer', 'nr']);
+// `nr` is deliberately NOT here, though `number` and `nummer` are. German address forms split the
+// street into `Straße` and `Nr.`, and a house-number box is exactly the numeric-keypad field that
+// gets `type="tel"` - so a bare `Nr.` on a tel control would take her phone number as her house
+// number, on Enpal, the German board BOTH R-014 and R-020 came from. `nr` was not in the original
+// matcher (`number|nummer|tel|no`); it was added during this work and is now walked back.
+const NUMBER_WORDS = new Set(['number', 'nummer']);
 // Tokens a label can be made ENTIRELY of and still just mean "your number": "Tel", "Tel No",
-// "Tel. Nr", "Nummer". Kept apart from NUMBER_WORDS because a lone "No" means nothing on its own
-// and must not qualify, while "Tel No" plainly does.
-const BARE_PHONE_TOKENS = new Set([...NUMBER_WORDS, 'no', 'tel', 'telefon']);
+// "Tel. Nr", "Nummer". Wider than NUMBER_WORDS, because a token can be part of a bare phone label
+// without being evidence of one on its own - a lone "No" or "Nr." means nothing, while "Tel Nr"
+// plainly does. Hence the second condition below: something here must be a real number word or
+// `tel` before any of this counts.
+const BARE_PHONE_TOKENS = new Set([...NUMBER_WORDS, 'no', 'nr', 'tel', 'telefon']);
 const PHONE_QUALIFIERS = new Set([
   'contact', 'best', 'primary', 'secondary', 'alternate', 'alternative', 'preferred', 'main',
-  'personal', 'private', 'your', 'my', 'work', 'home', 'daytime', 'evening', 'mobile', 'cell',
+  // `personal` is deliberately absent: "Personal number" is the standard English rendering of the
+  // Nordic personnummer, the national identity number, and Swedish/Norwegian boards ask for it in
+  // exactly those words. Losing "Personal number" as a phone label costs a blank box; keeping it
+  // costs her phone number in a national-ID field. `private` carries no such collision.
+  'private', 'your', 'my', 'work', 'home', 'daytime', 'evening', 'mobile', 'cell',
   'tel', 'telephone', 'phone', 'whatsapp', 'sms', 'landline',
 ]);
 // A label can also earn it by saying what the number is used FOR, when that use is contacting her.

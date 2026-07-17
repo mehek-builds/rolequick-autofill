@@ -220,7 +220,9 @@ describe('isPhoneLabel: default-deny, adjacency-scoped', () => {
       'Contact number', 'Best number to reach you during the day',
       'Number where we can reach you during business hours',
       'Number (we will only use this to schedule interviews)',
-      'Primary number', 'Personal number', 'Alternate number', 'WhatsApp number',
+      'Primary number', 'Alternate number', 'WhatsApp number',
+      // NB: 'Personal number' is deliberately NOT here. It is the English personnummer, a national
+      // ID, and losing it as a phone label is the trade we want. See the bare-tokens block below.
     ]) {
       expect(isPhoneLabel(label, tel())).toBe(true);
     }
@@ -231,5 +233,34 @@ describe('isPhoneLabel: default-deny, adjacency-scoped', () => {
     expect(isPhoneLabel('Preferred office: Tel Aviv or Berlin', text())).toBe(false);
     expect(isPhoneLabel('Preferred office: Tel Aviv or Berlin', tel())).toBe(false);
     expect(isPhoneLabel('Which Tel Aviv team interests you?', text())).toBe(false);
+  });
+});
+
+describe('isPhoneLabel: bare tokens that are NOT evidence of a phone', () => {
+  const tel = () => ({ type: 'tel' }) as unknown as Element;
+
+  it('does not read a German house number as a phone (regression I introduced)', () => {
+    // German address forms are `Straße` + `Nr.`, and a house-number box is precisely the
+    // numeric-keypad field that gets type="tel". `nr` was not in the original matcher
+    // (number|nummer|tel|no); I added it mid-way through this work. On Enpal, the German board BOTH
+    // R-014 and R-020 came from, this typed her phone number in as her house number.
+    expect(isPhoneLabel('Nr', tel())).toBe(false);
+    expect(isPhoneLabel('Nr.', tel())).toBe(false);
+    expect(isPhoneLabel('Straße', tel())).toBe(false);
+    expect(isPhoneLabel('Hausnummer', tel())).toBe(false);
+  });
+
+  it('still fills the tel-qualified abbreviations, which is what nr was there for', () => {
+    for (const label of ['Tel Nr', 'Tel. Nr', 'Tel No', 'Tel', 'Nummer', 'Number']) {
+      expect(isPhoneLabel(label, tel())).toBe(true);
+    }
+  });
+
+  it('does not read a Nordic national ID as a phone', () => {
+    // "Personal number" is the standard English rendering of personnummer. Swedish and Norwegian
+    // boards ask for it in exactly those words, and `personal` was in the qualifier allowlist.
+    expect(isPhoneLabel('Personal number', tel())).toBe(false);
+    expect(isPhoneLabel('Personnummer', tel())).toBe(false);
+    expect(isPhoneLabel('Personal identity number', tel())).toBe(false);
   });
 });
