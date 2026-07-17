@@ -263,4 +263,61 @@ describe('isPhoneLabel: bare tokens that are NOT evidence of a phone', () => {
     expect(isPhoneLabel('Personnummer', tel())).toBe(false);
     expect(isPhoneLabel('Personal identity number', tel())).toBe(false);
   });
+
+  // R-028, found live on Ramp 2026-07-17, pre-merge. Every case above is a short FIELD LABEL.
+  // Nobody had tested a QUESTION, which is the entire failure mode: rule 1 matched its phone word
+  // anywhere in the string with no negative check, so a free-text engineering question was answered
+  // with her phone number and would have been submitted.
+  describe('R-028: a phone word inside a question is not a phone field', () => {
+    it("does not type her phone number into Ramp's mobile-app question", () => {
+      // The exact string from the live reproduction, on Ramp "Software Engineer Internship,
+      // Android" (Ashby). type="text", so the type="tel" gate could never have saved this.
+      const ramp =
+        'Have you contributed to a mobile app(s) and/or several features that reached a large number of users?';
+      expect(isPhoneLabel(ramp, text())).toBe(false);
+      expect(isPhoneLabel(ramp, tel())).toBe(false);
+    });
+
+    it('still fills the real phone field on that same form', () => {
+      // The fix is worthless if it buys correctness by breaking the field it exists to fill.
+      // Ramp's genuine phone label is "Phone" on a type="text" control.
+      expect(isPhoneLabel('Phone', text())).toBe(true);
+    });
+
+    it('rejects the question shape whether or not it ends in a question mark', () => {
+      // Rule 2's own comment predicted this one verbatim, for attributes rather than labels.
+      expect(isPhoneLabel('Do you own a mobile device?', text())).toBe(false);
+      expect(isPhoneLabel('Do you own a mobile device', text())).toBe(false);
+      expect(isPhoneLabel('Have you shipped a mobile app', text())).toBe(false);
+      expect(isPhoneLabel('Which mobile platforms have you worked with', text())).toBe(false);
+      expect(isPhoneLabel('Please describe your mobile experience', text())).toBe(false);
+    });
+
+    it('rejects prose that mentions a phone word without asking a question', () => {
+      // No '?' and no interrogative opener, so length is the only thing standing between her phone
+      // number and a free-text box. This is why the char cap is part of the guard, not decoration.
+      expect(isPhoneLabel('Your experience building mobile applications', text())).toBe(false);
+      expect(isPhoneLabel('The largest mobile codebase you have ever owned', text())).toBe(false);
+    });
+
+    it('does not punish a real phone label for carrying a parenthetical footnote', () => {
+      // Stripped before measuring, so this is judged as "Mobile phone number" (19 chars), not as a
+      // 60-char sentence. Without the strip, the char cap would turn R-028 into a fresh R-020.
+      expect(isPhoneLabel('Mobile phone number (we only use this to schedule interviews)', text())).toBe(true);
+      expect(isPhoneLabel('Phone (required)', text())).toBe(true);
+      expect(isPhoneLabel('Handynummer (mobil)', text())).toBe(true);
+    });
+
+    it('leaves every previously-passing label alone', () => {
+      // The R-020 matrix, re-asserted through the new guard: the guard must cost nothing that
+      // already worked, or it has traded one live bug for another.
+      for (const label of ['Phone', 'Telephone', 'Mobile', 'Cell phone', 'Telefon', 'Handy', 'Telefonnummer']) {
+        expect(isPhoneLabel(label, text())).toBe(true);
+      }
+      expect(isPhoneLabel('Phone Number', text())).toBe(true);
+      expect(isPhoneLabel('Mobile number', text())).toBe(true);
+      expect(isPhoneLabel('Number', tel())).toBe(true);
+      expect(isPhoneLabel('Phone number to reach you on', text())).toBe(true);
+    });
+  });
 });

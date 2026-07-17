@@ -165,9 +165,49 @@ function numberIsPhoneShaped(label: string): boolean {
   return PHONE_PURPOSE_RE.test(tokens.join(' '));
 }
 
+// Rule 1's guard (R-028). A phone word is only evidence of a phone FIELD when the label is a field
+// label at all. "Phone" is; "Have you contributed to a mobile app(s) and/or several features that
+// reached a large number of users?" is a question that merely contains one - and rule 1, matching
+// the word anywhere with no negative check, answered it with her phone number on Ramp, live.
+//
+// That is the R-018 harm class (a MIS-FILL), and strictly worse than the R-020 non-fill rule 1 was
+// widened to fix: a blank box cannot lie. Rule 3 is default-deny for exactly this reason; rule 1
+// was the one tier that was default-allow, which is the whole bug.
+//
+// The reasoning already existed one tier up and simply was not applied to the label. Rule 2's note
+// explains that `name`/`id` were dropped because `id="mobile-2"` on "Do you own a mobile device?"
+// "would have answered a yes/no question with her phone number". A label is author-chosen prose
+// too. Ramp's label is that hypothetical, one word different.
+//
+// Three signals, any one of which means "not a field label". None of them guesses at vocabulary:
+// the set of things that merely MENTION "mobile" (apps, devices, web, teams, experience) is
+// unbounded, so a denylist of nouns would leak the same way rule 3's denylist did.
+const PARENTHETICAL_RE = /\([^)]*\)/g;
+// A field label is a noun phrase. These openers start a sentence being asked OF her.
+const INTERROGATIVE_OPENER_RE =
+  /^(have|has|do|does|did|are|is|was|were|would|will|can|could|should|which|what|why|how|if|please|tell|describe|list|share)\b/i;
+// Longest genuine phone label in the live corpus is "Mobile phone number" (19). 40 leaves better
+// than 2x headroom and still cannot admit a sentence. Measured AFTER parentheticals are stripped,
+// so "Mobile phone number (we only use this to schedule interviews)" is judged on its 19 real
+// chars rather than rejected for carrying a footnote.
+const MAX_FIELD_LABEL_CHARS = 40;
+
+function isFieldLabelShaped(label: string): boolean {
+  const bare = label.replace(PARENTHETICAL_RE, ' ').replace(DECORATION_RE, ' ').trim();
+  // A phone field is never a question. This alone catches Ramp.
+  if (bare.includes('?')) return false;
+  // ...and a question does not need its question mark to be one: "Do you own a mobile device".
+  if (INTERROGATIVE_OPENER_RE.test(bare)) return false;
+  return bare.length <= MAX_FIELD_LABEL_CHARS;
+}
+
 export function isPhoneLabel(label: string, el?: Element | null): boolean {
   if (THIRD_PARTY_RE.test(label)) return false;
-  if (PHONE_LABEL_RE.test(label)) return true;
+  // Failing the shape check is not a verdict of "not a phone", only "rule 1 does not get to decide".
+  // The label still falls through to the autocomplete and type="tel" tiers, which are structural
+  // rather than prose-based, so a real phone field wearing an unusual label degrades to a
+  // recoverable non-fill instead of a mis-fill.
+  if (PHONE_LABEL_RE.test(label) && isFieldLabelShaped(label)) return true;
   const input = el as HTMLInputElement | null;
   if (!input) return false;
   if (declaresPhoneAutocomplete(input.getAttribute?.('autocomplete') ?? '')) return true;
