@@ -42,10 +42,11 @@ import {
   pickComboOption,
   closeOpenCombobox,
   blockAlreadyAnswered,
+  driveAsyncLocationCombobox,
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { dateSkipReason, desiredAnswer, fillDateField, linkQuestion, linkSkipReason, locationQuestion, locationSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { dateSkipReason, desiredAnswer, fillDateField, linkQuestion, linkSkipReason, locationComboQueries, locationQuestion, locationSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 import { isDateControl } from './shared/dates';
 import { htmlToPlainText, JD_UNREADABLE, looksLikeJobDescription } from './shared/jd';
 
@@ -572,17 +573,39 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
         skipped_reasons.push(locationSkipReason(loc.field, label, 'no-value'));
         continue;
       }
+      // Ashby's location picker is an ASYNC combobox, and classifying the question is only half
+      // the fix: the live verdict on the exact form R-002 was logged on (Espa Labs, 2026-07-17)
+      // was that the silent blank became a flag, but Location itself stayed EMPTY while the
+      // profile held the value. Flagging "couldn't select it in this picker" on a field we can
+      // drive is the product politely declining to do the one thing it promised. So the combobox
+      // shape gets driven first, with the sequence the QA session proved by hand on five forms:
+      // type the FULLER stored query (typing just the city renders no listbox), poll for the
+      // async options, click the match with a real element click, and claim the fill only after
+      // reading the committed value back. Anything short of a verified commit falls to the flag
+      // path below - a flag, never a guess.
+      const comboTrigger = comboControlIn(block);
+      const comboInput =
+        comboTrigger instanceof HTMLInputElement ? comboTrigger : (comboTrigger?.querySelector('input') ?? null);
+      if (comboInput && isComboboxControl(comboInput)) {
+        const queries = locationComboQueries(loc.field, applicationProfile);
+        if (await driveAsyncLocationCombobox(comboInput, queries, block)) {
+          await waitForStableDom();
+          fields_filled++;
+          continue;
+        }
+        fields_skipped++;
+        skipped_reasons.push(locationSkipReason(loc.field, label, 'no-option'));
+        continue;
+      }
+      // Non-combobox shapes: native select / radios via the option matcher, then a plain input.
       const desired: Desired = { mode: 'value', value: loc.value };
-      // answerChoiceBlock covers select / radio / react-select. A location field on Ashby is
-      // usually the last of those, and a typed value that never selects a suggestion doesn't
-      // register as an answer - so drive the picker rather than typing into it.
       if (await answerChoiceBlock(block, desired)) {
         fields_filled++;
         continue;
       }
-      const input = block.querySelector<HTMLInputElement>('input[type="text"], input[type="tel"]');
-      if (input && !isComboboxControl(input)) {
-        await writeReactText(input, loc.value);
+      const locEl = block.querySelector<HTMLInputElement>('input[type="text"], input[type="tel"]');
+      if (locEl && !isComboboxControl(locEl)) {
+        await writeReactText(locEl, loc.value);
         fields_filled++;
         continue;
       }

@@ -515,6 +515,38 @@ export function locationSkipReason(field: LocationQuestion['field'], label: stri
   return `location question left for you (${detail}): "${label.slice(0, 60)}"`;
 }
 
+// The typeahead queries for an ASYNC location combobox, fullest first. Ashby's picker runs a
+// network lookup on what was typed, and the query must be SPECIFIC enough for it to return
+// anything: typing "Dubai" alone rendered NO listbox on the live Espa Labs form (2026-07-17),
+// while "Dubai, United Arab Emirates" returned exactly the right option. So the first query is
+// the stored unit widened with every LESS specific stored unit after it, comma-joined the way a
+// human types a place. The bare unit follows as a fallback for pickers with preloaded options,
+// which filter by containment and would find nothing containing the fuller string.
+//
+// Composed ONLY from stored profile values - no unit is ever invented, defaulted, or completed,
+// and an unset primary unit returns [] so a caller cannot type a query for a value the profile
+// does not hold. That is the same never-fabricate line the GPA rule (R-005) draws.
+export function locationComboQueries(field: LocationQuestion['field'], ap: ApplicationProfile): string[] {
+  const units =
+    field === 'city'
+      ? [ap.address_city, ap.address_state, ap.address_country]
+      : field === 'state'
+        ? [ap.address_state, ap.address_country]
+        : [ap.address_country];
+  if (!units[0]?.trim()) return [];
+  const seen = new Set<string>();
+  const parts = units
+    .map((u) => u?.trim() ?? '')
+    .filter((u) => {
+      const key = u.toLowerCase();
+      if (!u || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  const fuller = parts.join(', ');
+  return fuller === parts[0] ? [fuller] : [fuller, parts[0]];
+}
+
 export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string, string>): Desired {
   // Lowercase here rather than trust the caller. Most rules below are case-SENSITIVE (no /i),
   // unlike the /i siblings linkQuestion and WORK_ELIGIBILITY_QUESTION, so they only worked because
