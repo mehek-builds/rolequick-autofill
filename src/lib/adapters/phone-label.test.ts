@@ -263,4 +263,173 @@ describe('isPhoneLabel: bare tokens that are NOT evidence of a phone', () => {
     expect(isPhoneLabel('Personnummer', tel())).toBe(false);
     expect(isPhoneLabel('Personal identity number', tel())).toBe(false);
   });
+
+  // R-028, found live on Ramp 2026-07-17, pre-merge. Every case above is a short FIELD LABEL.
+  // Nobody had tested PROSE, which is the entire failure mode: rule 1 matched its phone word
+  // anywhere in the string with no negative check, so a free-text engineering question was answered
+  // with her phone number and would have been submitted.
+  //
+  // Rule 1 now asks where the phone word SITS: a field label names its field first, prose buries it
+  // as a modifier. The pairs below are the point - each one holds two labels that a length cap or a
+  // question-word list scores identically, and that position separates.
+  describe('R-028: a phone word must HEAD the label to count', () => {
+    it("does not type her phone number into Ramp's mobile-app question", () => {
+      // The exact string from the live reproduction, on Ramp "Software Engineer Internship,
+      // Android" (Ashby). type="text", so the type="tel" gate could never have saved this.
+      const ramp =
+        'Have you contributed to a mobile app(s) and/or several features that reached a large number of users?';
+      expect(isPhoneLabel(ramp, text())).toBe(false);
+      expect(isPhoneLabel(ramp, tel())).toBe(false);
+    });
+
+    it('still fills the real phone field on that same form', () => {
+      // The fix is worthless if it buys correctness by breaking the field it exists to fill.
+      // Ramp's genuine phone label is "Phone" on a type="text" control.
+      expect(isPhoneLabel('Phone', text())).toBe(true);
+    });
+
+    it('rejects a question with no question mark and no interrogative word', () => {
+      // Nothing here is keyed on '?' or on a list of question openers. These are all rejected
+      // because their head is `do`/`have`/`which`/`years`/`link`, not a phone word.
+      for (const label of [
+        'Do you own a mobile device?',
+        'Do you own a mobile device',
+        'Have you shipped a mobile app',
+        'Which mobile platforms have you worked with',
+        'Years of mobile experience',
+        'Link to your mobile app',
+        'Your experience building mobile applications',
+        'The largest mobile codebase you have ever owned',
+      ]) {
+        expect(isPhoneLabel(label, text())).toBe(false);
+      }
+    });
+
+    it('rejects short prose that a length cap would have let through', () => {
+      // All under 40 chars, no '?', no interrogative opener: invisible to the shape guard this
+      // replaced, and every one of them would have typed her phone number into a free-text box.
+      // `cell` is in the phone vocabulary, so a biotech posting is the same bug.
+      for (const label of [
+        'Mobile app experience',
+        'Mobile app portfolio',
+        'Mobile platforms used',
+        'Mobile development experience',
+        'Your mobile app store links',
+        'Cell culture experience',
+        'Cell line engineering experience',
+      ]) {
+        expect(isPhoneLabel(label, text())).toBe(false);
+      }
+    });
+
+    it('is not fooled by hiding the question inside parentheses', () => {
+      // The previous guard stripped parentheticals BEFORE looking for '?' and the opener, so all
+      // three of these passed it. Position never looks at the tail, so there is nowhere to hide.
+      for (const label of [
+        'Mobile experience (how many users? which platforms?)',
+        'Mobile development (React Native, Swift, Kotlin - which have you used?)',
+        'Mobile (Have you shipped one? Tell us about the largest app you worked on.)',
+      ]) {
+        expect(isPhoneLabel(label, text())).toBe(false);
+      }
+    });
+
+    it('is not fooled by list numbering in front of the question', () => {
+      // A `^` anchor on the raw label is defeated by any leading artifact. Numbering is skipped, so
+      // the head is still the real first word...
+      for (const label of ['1. Do you own a mobile device', 'Q1: Do you own a mobile device']) {
+        expect(isPhoneLabel(label, text())).toBe(false);
+      }
+      // ...and a numbered REAL phone field still fills.
+      expect(isPhoneLabel('1. Phone number', text())).toBe(true);
+      expect(isPhoneLabel('Q1: Phone number', text())).toBe(true);
+    });
+
+    it('fills a phone label that politely asks, which the opener list broke', () => {
+      // `please` heads a request for a field, not a question about one. The previous guard rejected
+      // all of these outright, and the last two are total non-fills since rule 3 needs a number word.
+      for (const label of [
+        'Please provide your phone number',
+        'Please enter your mobile number',
+        'Please provide your mobile phone number',
+        'Please provide your cell phone',
+        'Please add your mobile',
+      ]) {
+        expect(isPhoneLabel(label, text())).toBe(true);
+      }
+      // The discriminating pair: same opener, opposite answers, because `describe` is not a filler
+      // so it becomes the head.
+      expect(isPhoneLabel('Please describe your mobile experience', text())).toBe(false);
+    });
+
+    it('fills long phone labels that a 40-char cap killed', () => {
+      for (const label of [
+        'Mobile phone number where we can reach you during business hours',
+        'Mobile Phone Number - Please include country code',
+        'Your mobile telephone number including country code',
+        'Mobile phone number for interview scheduling',
+        'Phone number we should use to contact you',
+        'Phone number to reach you on',
+        'Mobile phone number (we only use this to schedule interviews)',
+      ]) {
+        expect(isPhoneLabel(label, text())).toBe(true);
+      }
+    });
+
+    it('fills the German compound in prose, on Enpal, the board R-020 came from', () => {
+      // A 50-char sentence headed by a compound that is its own number word. The cap rejected this
+      // on BOTH text and tel, because PHONE_PURPOSE_RE is English-only and `telefonnummer` is not a
+      // NUMBER_WORDS token, so rule 3 could not rescue it either.
+      expect(isPhoneLabel('Telefonnummer, unter der wir Sie erreichen koennen', text())).toBe(true);
+      expect(isPhoneLabel('Handynummer (mobil)', text())).toBe(true);
+    });
+
+    it('refuses a THIRD-PARTY phone label in German, not only in English', () => {
+      // Caught in pre-merge review of this very branch. Rule 1's vocabulary was widened to German
+      // for Enpal; rule 0's veto was not. So the English label was forbidden (asserted below) while
+      // its German twin filled her personal number into an emergency-contact box, on the exact
+      // board the German support exists for. Branch (b) returns on the head alone and never looks
+      // at the tail, so ONLY rule 0 can stop these.
+      for (const label of [
+        'Telefonnummer des Notfallkontakts',
+        'Telefonnummer der Referenzperson',
+        'Telefonnummer Ihrer Referenz',
+        'Handynummer des Notfallkontakts',
+        'Mobilnummer Ihres Notfallkontakts',
+        'Telnr des Notfallkontakts',
+        'Telefonnummer des Erziehungsberechtigten',
+        'Notfallnummer',
+      ]) {
+        expect(isPhoneLabel(label, text())).toBe(false);
+        expect(isPhoneLabel(label, tel())).toBe(false);
+      }
+      // The English twins this branch already forbade, re-asserted as the pair.
+      expect(isPhoneLabel('Phone number of your emergency contact', text())).toBe(false);
+      expect(isPhoneLabel("Reference's phone number", text())).toBe(false);
+    });
+
+    it('still fills HER German phone label, which rule 0 must not swallow', () => {
+      // The veto is deliberately broad, so this is the line it must not cross: these are her own
+      // number, in the same language, and must keep filling.
+      expect(isPhoneLabel('Telefonnummer, unter der wir Sie erreichen koennen', text())).toBe(true);
+      expect(isPhoneLabel('Telefonnummer', text())).toBe(true);
+      expect(isPhoneLabel('Handynummer (mobil)', text())).toBe(true);
+      expect(isPhoneLabel('Mobilnummer', text())).toBe(true);
+    });
+
+    it('leaves every previously-passing label alone', () => {
+      // The R-020 matrix, re-asserted through the new rule: it must cost nothing that already
+      // worked, or it has traded one live bug for another.
+      for (const label of ['Phone', 'Telephone', 'Mobile', 'Cell phone', 'Telefon', 'Handy', 'Telefonnummer']) {
+        expect(isPhoneLabel(label, text())).toBe(true);
+      }
+      expect(isPhoneLabel('Phone Number', text())).toBe(true);
+      expect(isPhoneLabel('Mobile number', text())).toBe(true);
+      expect(isPhoneLabel('Mobile no', text())).toBe(true);
+      expect(isPhoneLabel('Phone (required)', text())).toBe(true);
+      expect(isPhoneLabel('Number', tel())).toBe(true);
+      // Rule 0 still wins over a phone-headed label: not her number.
+      expect(isPhoneLabel('Phone number of your emergency contact', text())).toBe(false);
+    });
+  });
 });
