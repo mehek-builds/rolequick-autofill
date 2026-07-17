@@ -208,3 +208,38 @@ describe('languageAnswerPlan: declared-list semantics', () => {
     ).toBeNull();
   });
 });
+
+// ── Live regression, Enpal Business Analytics 2026-07-17 late night ──────────────────────────
+// The live form asks "How would you describe your german/english language skills?" with bare
+// CEFR radio bands (C2/C1/B2/B1/A). The first shipped classifier read the describe-phrasing as
+// a yes/no comfort question, found no Yes option, and flagged BOTH questions - a safe non-fill,
+// but a non-fill on a form we can answer. Pinned here in both directions.
+import { describe as d2, it as i2, expect as e2 } from 'vitest';
+import { languageAnswerPlan as planOf, matchOption as matchOf } from './generic';
+
+d2('describe-stem level questions (Enpal live shape)', () => {
+  const ap = { languages: ['English', 'Hindi', 'Arabic', 'French'] } as never;
+  const cefr = ['C2', 'C1', 'B2', 'B1', 'A'].map((t) => ({ text: t, value: t }));
+
+  i2('declared language: describe-phrasing resolves to a LEVEL fill that lands C1 on CEFR radios', () => {
+    const plan = planOf('How would you describe your english language skills?', ap);
+    e2(plan?.kind).toBe('fill');
+    if (plan?.kind !== 'fill') return;
+    const m = matchOf(cefr, plan.desired);
+    e2(m?.text).toBe('C1');
+  });
+
+  i2('undeclared language: bare "A" is not a clearly-none option, so it stays flagged', () => {
+    const plan = planOf('How would you describe your german language skills?', ap);
+    e2(plan?.kind).toBe('fill');
+    if (plan?.kind !== 'fill') return;
+    e2(matchOf(cefr, plan.desired)).toBeNull();
+  });
+
+  i2('describe WITHOUT a skills tail stays yes/no: "would you describe yourself as fluent in Spanish"', () => {
+    const plan = planOf('Would you describe yourself as fluent in Spanish?', ap);
+    e2(plan?.kind).toBe('fill');
+    if (plan?.kind !== 'fill') return;
+    e2(plan.desired).toEqual({ mode: 'no' });
+  });
+});
