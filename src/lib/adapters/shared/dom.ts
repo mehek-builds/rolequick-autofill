@@ -33,9 +33,14 @@ export function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
 }
 
 // Write a value through the native setter and fire input+change, so React/Vue controlled inputs
-// see it as a real edit rather than a value poke they'll overwrite on next render.
-export function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
-  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+// see it as a real edit rather than a value poke they'll overwrite on next render. Selects are
+// included (R-032's phone country selector is one): a React-controlled <select> ignores a bare
+// `.value =` for the same reason a controlled input does.
+export function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string): void {
+  const proto =
+    el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype :
+    el instanceof HTMLSelectElement ? HTMLSelectElement.prototype :
+    HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
   setter?.call(el, value);
   el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -47,6 +52,101 @@ export async function fillField(el: HTMLInputElement | HTMLTextAreaElement, valu
   el.focus();
   setNativeValue(el, value);
   el.blur();
+}
+
+// ─── Verify-after-fill (R-032) ────────────────────────────────────────────────
+//
+// setNativeValue is the CORRECT write for a mounted React input (R-007's closure proved it live,
+// twelve submissions running). What it cannot survive is being run BEFORE React hydrates: the
+// write lands on the server-rendered DOM, no component is listening yet, and hydration then
+// replaces the value with the component's own (empty) state. That is R-032's signature on
+// job-boards.greenhouse.io - the card said "Filled 5 fields" while First/Last/Email were empty,
+// because the adapter counted its write, not the DOM's eventual state.
+//
+// So a write is only trusted once it demonstrably PERSISTS, and the check is a detection loop,
+// not a fixed sleep. The loop reads the value back on a widening schedule and distinguishes
+// three worlds:
+//   - the framework has adopted the node (React stamps a `__reactFiber$...` expando on every
+//     host element it manages, and a `_valueTracker` on controlled inputs, at hydration/render
+//     time): a value that survives one read-back HERE is committed - exit immediately;
+//   - no framework signal and the caller doesn't expect one (legacy boards.greenhouse.io is
+//     plain server HTML): a value that sits still through a few consecutive reads is real - exit
+//     after a short stability streak instead of burning the whole window;
+//   - the value was REVERTED (typically to empty, by hydration): re-fill it - the re-fill runs
+//     against the now-mounted component, which is exactly the write R-007 proved correct - and
+//     keep watching. Re-fills are bounded so a widget that fights every write can't loop us.
+
+// Has a framework (React) attached itself to this node? Pre-hydration server HTML has neither
+// expando; post-hydration React host nodes always carry the fiber key, and controlled inputs
+// additionally carry _valueTracker.
+export function isReactManagedNode(el: Element): boolean {
+  const bag = el as unknown as Record<string, unknown>;
+  if ('_valueTracker' in bag) return true;
+  for (const k of Object.keys(bag)) {
+    if (k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$')) return true;
+  }
+  return false;
+}
+
+export interface VerifyPersistOptions {
+  // Read-back schedule. The default widens from quick checks (catch an immediate revert cheaply)
+  // to slower ones (cover a hydration that lands a few seconds after the fill). The sum is the
+  // whole window's bound, ~5s - there is no path that waits longer.
+  delaysMs?: number[];
+  // How many times a reverted-to-empty field is re-filled before giving up and reporting false.
+  maxRefills?: number;
+  // True on a board known to hydrate (job-boards.greenhouse.io): the early stability exit is
+  // disabled, because pre-hydration a value "sits still" right up until hydration wipes it, so
+  // stillness proves nothing there. Only the framework signal (or surviving the full window)
+  // counts. False for plain-HTML boards, where three quiet reads is real persistence.
+  expectHydration?: boolean;
+}
+
+// Compare what the field holds against what was written. Whitespace is not a revert; and for tel
+// inputs the comparison is digits-only, because phone widgets legitimately re-space a number -
+// "56 741 7451" for "567417451" is the same value, while intl-tel-input's trunk-zero rewrite
+// ("0567417451") changes the digits and is exactly the mangle R-032 must flag.
+function holdsValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): boolean {
+  const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
+  if (norm(el.value) === norm(value)) return true;
+  if ((el as HTMLInputElement).type === 'tel') {
+    const digits = (s: string) => s.replace(/\D/g, '');
+    return digits(el.value) === digits(value) && digits(value).length > 0;
+  }
+  return false;
+}
+
+// Watch a just-filled field until its value verifiably persists (true) or demonstrably will not
+// (false). Only an EMPTY field is ever re-filled: a different non-empty value means either the
+// student started typing (never fight them) or a widget rewrote the value (that rewrite is what
+// R-032's phone mangle looks like, so surface it for review instead of thrashing).
+export async function verifyFieldPersists(
+  el: HTMLInputElement | HTMLTextAreaElement,
+  value: string,
+  opts: VerifyPersistOptions = {},
+): Promise<boolean> {
+  const delays = opts.delaysMs ?? [150, 350, 700, 1400, 2500];
+  const maxRefills = opts.maxRefills ?? 3;
+  let refills = 0;
+  let stable = 0;
+  for (const d of delays) {
+    await pause(d);
+    if (holdsValue(el, value)) {
+      stable++;
+      if (isReactManagedNode(el)) return true; // framework adopted it; committed
+      if (!opts.expectHydration && stable >= 3) return true; // plain form, value sat still
+      continue;
+    }
+    if (el.value.trim() !== '') return false; // rewritten, not wiped: hands off, flag it
+    if (refills >= maxRefills) return false;
+    refills++;
+    stable = 0;
+    await fillField(el, value); // hydration wiped it; this write hits the mounted component
+  }
+  // Window exhausted with no framework signal either way: trust the last read. This is the
+  // "count only what persists at count time" contract - a hydration slower than the whole
+  // window escapes it, but that bound is explicit rather than a hopeful sleep.
+  return holdsValue(el, value);
 }
 
 export function splitName(fullName: string): { first: string; last: string } {
