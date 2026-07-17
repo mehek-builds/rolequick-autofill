@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { desiredAnswer, linkQuestion, matchOption, eeoAnswer, WORK_ELIGIBILITY_QUESTION, type Desired } from './generic';
+import { desiredAnswer, linkQuestion, locationQuestion, matchOption, eeoAnswer, WORK_ELIGIBILITY_QUESTION, type Desired } from './generic';
 // desiredAnswer/matchOption/eeoAnswer remain exported from generic; commitChoice (the shared
 // radio/checkbox commit that every adapter now routes through) lives in ./shared/dom.
 import type { ApplicationProfile } from '../types';
@@ -383,5 +383,77 @@ describe('desiredAnswer: "18" used for tenure is not an age-of-majority yes', ()
     expect(desiredAnswer('are you over 18?', ap(), {})).toEqual({ mode: 'yes' });
     expect(desiredAnswer('are you 18 years or older?', ap(), {})).toEqual({ mode: 'yes' });
     expect(desiredAnswer('you must be 18 years of age or older to apply', ap(), {})).toEqual({ mode: 'yes' });
+  });
+});
+
+describe('locationQuestion', () => {
+  // Live QA 2026-07-16: a required location field was left blank on 3 of 12 real forms while being
+  // filled on a 4th from the same profile. These are the verbatim labels from those forms.
+  const full = ap({ address_city: 'Dubai', address_state: 'Dubai', address_country: 'United Arab Emirates' });
+
+  it('classifies the three labels that were left blank live', () => {
+    // Monzo (Greenhouse): "Location (City)*" - names the unit, so city.
+    expect(locationQuestion('location (city)', full)).toEqual({ field: 'city', value: 'Dubai' });
+    // Global Relay (Greenhouse embed): a bare "Country*".
+    expect(locationQuestion('country', full)).toEqual({ field: 'country', value: 'United Arab Emirates' });
+    // ElevenLabs (Ashby): the label that broke the old `/^(location|city)\b/` rule two ways - it
+    // does not START with "location", and the adapter had no country branch at all.
+    expect(locationQuestion("location* / country you're currently residing in", full)).toEqual({
+      field: 'country',
+      value: 'United Arab Emirates',
+    });
+  });
+
+  it('still classifies a bare "Location" as city, which is what Abound filled correctly', () => {
+    expect(locationQuestion('location', full)).toEqual({ field: 'city', value: 'Dubai' });
+  });
+
+  it('classifies the question even when the profile has no value stored', () => {
+    // The property that makes this a fix rather than a wider regex: "no country stored" and "not a
+    // location question" must NOT collapse into the same result. A classified question with an
+    // undefined value still terminates the block (blank + flagged, which holds auto-submit); the
+    // old inline rules required the value to be present to even recognise the question, so an unset
+    // field was left blank silently and bounced at submit.
+    expect(locationQuestion('country', ap({}))).toEqual({ field: 'country', value: undefined });
+    expect(locationQuestion('location (city)', ap({}))).toEqual({ field: 'city', value: undefined });
+  });
+
+  it('never answers a work-eligibility question that happens to name a country (R-004)', () => {
+    // These name a country but are always-ask LEGAL questions. Answering them from address_country
+    // is exactly the CRITICAL failure that shipped a false declaration on a real Lever form: a
+    // global profile flag mapped onto a location-scoped legal question. They must fall through to
+    // WORK_ELIGIBILITY_QUESTION, so locationQuestion must not claim them.
+    expect(locationQuestion('which country are you authorized to work in?', full)).toBeNull();
+    expect(locationQuestion('are you legally authorized to work in canada?', full)).toBeNull();
+    expect(locationQuestion('do you require sponsorship to work in the country where this role is based?', full)).toBeNull();
+  });
+
+  it('never answers a citizenship question with the residence country', () => {
+    // A student whose citizenship differs from where she lives is the whole reason for the split.
+    expect(locationQuestion('what country are you a citizen of?', full)).toBeNull();
+    expect(locationQuestion('country of citizenship', full)).toBeNull();
+    expect(locationQuestion('nationality', full)).toBeNull();
+  });
+
+  it('prefers the most specific unit when a label names more than one', () => {
+    // A city-first order would try to put "Dubai" into a country picker and match nothing.
+    expect(locationQuestion('city / country', full)?.field).toBe('country');
+    expect(locationQuestion('state / province', full)?.field).toBe('state');
+  });
+
+  it('is not a location question at all when nothing locational is named', () => {
+    expect(locationQuestion('why do you want to work here?', full)).toBeNull();
+    expect(locationQuestion('what is your phone number?', full)).toBeNull();
+    expect(locationQuestion('desired salary', full)).toBeNull();
+  });
+
+  it('routes through desiredAnswer too, so an unwired adapter still resolves the value', () => {
+    expect(desiredAnswer('country', full, {})).toEqual({ mode: 'value', value: 'United Arab Emirates' });
+    expect(desiredAnswer('location (city)', full, {})).toEqual({ mode: 'value', value: 'Dubai' });
+    // Unset stays null in desiredAnswer (unchanged fall-through); only adapters calling
+    // locationQuestion directly get the flag-instead-of-silence guarantee.
+    expect(desiredAnswer('country', ap({}), {})).toBeNull();
+    // And the R-004 guard holds through this path as well.
+    expect(desiredAnswer('are you legally authorized to work in canada?', full, {})).toBeNull();
   });
 });

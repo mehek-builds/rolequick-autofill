@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { skippedReasonsNeedReview } from './autosubmit-gate';
-import { linkSkipReason, workEligibilitySkipReason } from './adapters/generic';
+import { linkSkipReason, locationSkipReason, workEligibilitySkipReason } from './adapters/generic';
 
 // Fix 5 of the completion audit: auto-submit must be HELD (hand back, do not start the countdown)
 // whenever the adapter left a review-required item behind. These strings are the exact
@@ -83,5 +83,17 @@ describe('skippedReasonsNeedReview', () => {
         'Country: no matching option found, left blank',
       ]),
     ).toBe(true);
+  });
+
+  it('holds on a location question left unanswered (R-002)', () => {
+    // This coupling is the entire point of the R-002 fix and it is invisible in either file alone:
+    // locationSkipReason's "left for" wording is what REVIEW_FLAG matches. Build the strings with
+    // the real builder rather than hand-typing them, so rewording the reason without checking the
+    // gate fails HERE instead of silently letting a form with an empty required country field
+    // auto-submit. Both variants must hold: no value stored, and a picker we could not drive.
+    expect(skippedReasonsNeedReview([locationSkipReason('country', 'Country', 'no-value')])).toBe(true);
+    expect(skippedReasonsNeedReview([locationSkipReason('city', 'Location (City)', 'no-value')])).toBe(true);
+    expect(skippedReasonsNeedReview([locationSkipReason('country', "Location* / Country you're currently residing in", 'no-option')])).toBe(true);
+    expect(skippedReasonsNeedReview([locationSkipReason('state', 'State / Province', 'no-option')])).toBe(true);
   });
 });

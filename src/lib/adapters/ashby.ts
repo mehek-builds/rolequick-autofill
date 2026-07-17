@@ -41,10 +41,12 @@ import {
   openCombobox,
   pickComboOption,
   closeOpenCombobox,
+  blockAlreadyAnswered,
+  driveAsyncLocationCombobox,
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { dateSkipReason, desiredAnswer, fillDateField, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { dateSkipReason, desiredAnswer, fillDateField, linkQuestion, linkSkipReason, locationComboQueries, locationQuestion, locationSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 import { isDateControl } from './shared/dates';
 import { htmlToPlainText, JD_UNREADABLE, looksLikeJobDescription } from './shared/jd';
 
@@ -91,6 +93,18 @@ function labelTextFor(el: Element): string {
 function isNeverFillField(el: Element): boolean {
   const label = labelTextFor(el);
   return NEVER_FILL_LABEL_PATTERNS.some((re) => re.test(label));
+}
+
+// Write text into an Ashby (React-controlled) input the way the rest of this adapter does: pace it,
+// focus, set through the native setter, blur, then let the re-render settle before the next write.
+// Deliberately NOT shared/dom's fillField, which omits the waitForStableDom - Ashby re-renders
+// after most field changes and the next fill can land in a node that is about to be replaced.
+async function writeReactText(el: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
+  await randomDelay();
+  el.focus();
+  setNativeValue(el, value);
+  el.blur();
+  await waitForStableDom();
 }
 
 // ─── Shared answer helpers (mirror generic.ts's engine) ───────────────────────
@@ -518,28 +532,22 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
       }
     }
 
-    // Phone/location are `_systemfield_*` inputs on some boards (filled above) but per-posting
-    // UUID-named custom fields on others (live-tested 2026-07-04: Notion's board), where only
-    // the label identifies them.
+    // Phone is a `_systemfield_*` input on some boards (filled above) but a per-posting UUID-named
+    // custom field on others (live-tested 2026-07-04: Notion's board), where only the label
+    // identifies it. Terminates the block either way, so an unset phone is flagged rather than
+    // falling through to the essay drafter. Location used to share this rule; it now has its own
+    // block below (R-002), because the inline `/^(location|city)\b/` shape is exactly what left
+    // three live required location fields silently blank.
     //
     // The input is resolved BEFORE the label match because `isPhoneLabel` needs the control type
     // to read a bare "Number" label as a phone (R-020) - the label text alone is ambiguous there.
     const input = block.querySelector<HTMLInputElement>('input[type="text"], input[type="tel"]');
-    const textTarget =
-      isPhoneLabel(label, input) ? applicationProfile.phone :
-      /^(location|city)\b/.test(label) ? applicationProfile.address_city :
-      undefined;
-    if (textTarget !== undefined) {
-      // Skip autocomplete comboboxes (Location on most boards): a typed value that never
-      // selects a suggestion doesn't register as an answer, it just blocks the field.
-      const isCombobox = input?.getAttribute('role') === 'combobox' || !!input?.getAttribute('aria-autocomplete');
-      if (input && !input.value && !isCombobox) {
-        if (textTarget) {
-          await randomDelay();
-          input.focus();
-          setNativeValue(input, textTarget);
-          input.blur();
-          await waitForStableDom();
+    if (isPhoneLabel(label, input) && !blockAlreadyAnswered(block)) {
+      // Skip autocomplete comboboxes: a typed value that never selects a suggestion doesn't
+      // register as an answer, it just blocks the field.
+      if (input && !isComboboxControl(input)) {
+        if (applicationProfile.phone) {
+          await writeReactText(input, applicationProfile.phone);
           fields_filled++;
         } else {
           fields_skipped++;
@@ -547,18 +555,63 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
         }
         continue;
       }
-      if (input && !input.value && isCombobox) {
-        // Ashby's location field is a react-select combobox: drive it through the shared helpers
-        // rather than skipping it, since a typed value that never selects a suggestion doesn't
-        // register as an answer.
-        if (textTarget && (await fillCombobox(input, { mode: 'value', value: textTarget }))) {
-          fields_filled++;
-        } else {
-          fields_skipped++;
-          skipped_reasons.push(`${label.slice(0, 40)}: autocomplete field, left for manual selection`);
-        }
+    }
+
+    // Location of residence (city/state/country), via the one shared classifier (see
+    // locationQuestion in generic.ts). This replaces an inline `/^(location|city)\b/` rule that
+    // carried BOTH of the holes behind the link bug (R-008), and lost the same way:
+    //   1. It was anchored to the start of the label, so ElevenLabs' "Location* / Country you're
+    //      currently residing in" never matched - and it had no country branch to match anyway.
+    //   2. Its `textTarget !== undefined` guard collapsed "no city stored" and "not a location
+    //      question" into one value, so an unset field fell through to the generic paths and was
+    //      left blank with NO reason - the auto-submit gate saw nothing to hold on, and the student
+    //      met the empty required field at submit instead of in the card (R-002, 3/12 live forms).
+    const loc = locationQuestion(label, applicationProfile);
+    if (loc && !blockAlreadyAnswered(block)) {
+      if (!loc.value) {
+        fields_skipped++;
+        skipped_reasons.push(locationSkipReason(loc.field, label, 'no-value'));
         continue;
       }
+      // Ashby's location picker is an ASYNC combobox, and classifying the question is only half
+      // the fix: the live verdict on the exact form R-002 was logged on (Espa Labs, 2026-07-17)
+      // was that the silent blank became a flag, but Location itself stayed EMPTY while the
+      // profile held the value. Flagging "couldn't select it in this picker" on a field we can
+      // drive is the product politely declining to do the one thing it promised. So the combobox
+      // shape gets driven first, with the sequence the QA session proved by hand on five forms:
+      // type the FULLER stored query (typing just the city renders no listbox), poll for the
+      // async options, click the match with a real element click, and claim the fill only after
+      // reading the committed value back. Anything short of a verified commit falls to the flag
+      // path below - a flag, never a guess.
+      const comboTrigger = comboControlIn(block);
+      const comboInput =
+        comboTrigger instanceof HTMLInputElement ? comboTrigger : (comboTrigger?.querySelector('input') ?? null);
+      if (comboInput && isComboboxControl(comboInput)) {
+        const queries = locationComboQueries(loc.field, applicationProfile);
+        if (await driveAsyncLocationCombobox(comboInput, queries, block)) {
+          await waitForStableDom();
+          fields_filled++;
+          continue;
+        }
+        fields_skipped++;
+        skipped_reasons.push(locationSkipReason(loc.field, label, 'no-option'));
+        continue;
+      }
+      // Non-combobox shapes: native select / radios via the option matcher, then a plain input.
+      const desired: Desired = { mode: 'value', value: loc.value };
+      if (await answerChoiceBlock(block, desired)) {
+        fields_filled++;
+        continue;
+      }
+      const locEl = block.querySelector<HTMLInputElement>('input[type="text"], input[type="tel"]');
+      if (locEl && !isComboboxControl(locEl)) {
+        await writeReactText(locEl, loc.value);
+        fields_filled++;
+        continue;
+      }
+      fields_skipped++;
+      skipped_reasons.push(locationSkipReason(loc.field, label, 'no-option'));
+      continue;
     }
 
     // Never answer work-eligibility questions (work authorization AND sponsorship), on any

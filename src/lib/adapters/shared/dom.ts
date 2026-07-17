@@ -294,6 +294,25 @@ export function radioOptionsIn(block: Element): Array<{ radio: HTMLInputElement;
   });
 }
 
+// Does this question block already carry an answer? The location branch (R-002) needs this because
+// a block loop and an earlier selector-based pass can both reach the same field: Greenhouse fills
+// #candidate-location before the loop runs, and that input sits inside a .field-wrapper the loop
+// then visits. Without this guard the loop would re-open an already-answered combobox and, failing
+// to re-select, flag a field that is in fact correctly filled.
+// Covers the four shapes an answered control takes. The react-select case is the subtle one: its
+// inner input keeps an EMPTY value after a selection (the chosen option renders as a separate
+// singleValue node), so a value check alone reads an answered picker as blank.
+export function blockAlreadyAnswered(block: Element): boolean {
+  const text = block.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+    'input[type="text"], input[type="tel"], input[type="url"], input[type="email"], textarea',
+  );
+  if (text?.value.trim()) return true;
+  if (block.querySelector('input[type="radio"]:checked, input[type="checkbox"]:checked')) return true;
+  const select = block.querySelector<HTMLSelectElement>('select');
+  if (select?.value) return true;
+  return !!block.querySelector('[class*="singleValue"], [class*="multiValue"]');
+}
+
 // ─── Combobox / react-select filling ────────────────────────────────────────
 // Modern ATS forms (Greenhouse's current template, Workday, Ashby's location field) render
 // their city / yes-no / EEO / country questions as react-select comboboxes: a styled <div>
@@ -452,4 +471,154 @@ export async function pickComboOption(option: ComboOption): Promise<void> {
 export function closeOpenCombobox(): void {
   document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   (document.activeElement as HTMLElement | null)?.blur?.();
+}
+
+// ─── Async location combobox (R-002) ────────────────────────────────────────
+// Ashby's location/residence picker is a step past the widgets above: role="combobox" with
+// aria-controls pointing at a listbox whose options come from a NETWORK lookup that lands about
+// 700ms after the last keystroke (measured live on Espa Labs, 2026-07-17). Two things defeat a
+// naive fill there, both confirmed on the real form:
+//   1. The query must be specific enough. Typing "Dubai" alone rendered no listbox at all;
+//      typing "Dubai, United Arab Emirates" returned exactly one option. locationComboQueries
+//      (generic.ts) builds that fuller form from stored profile values only.
+//   2. Typed text that never selects an option commits NOTHING. The input can visibly read
+//      "Dubai" while the form still holds an empty value - which is how three live forms bounced
+//      at submit on a field that looked filled. Only clicking a rendered option commits, after
+//      which the input settles to the option's text with aria-expanded="false".
+// So this drives the picker the way the QA session proved works by hand on five forms: type the
+// fuller query, POLL for the async listbox (bounded, never a fixed sleep), click the matching
+// option with a real element.click(), then VERIFY by reading the control back. Same
+// read-back-and-verify discipline as fillDateField (R-014).
+
+const normalizeOptionText = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+
+// realPointerSequence's cousin, minus the synthetic click (the caller follows with a REAL
+// element.click(), see the commit step below) and minus `view: window` in the init: `view` is
+// optional, nothing in these widgets reads it, and jsdom - where the unit tests for this driver
+// run - rejects the global window proxy as a Window while real browsers accept either.
+function pressSequence(el: HTMLElement): void {
+  const base = { bubbles: true, cancelable: true } as const;
+  try { el.dispatchEvent(new PointerEvent('pointerdown', base)); } catch { /* older engines */ }
+  el.dispatchEvent(new MouseEvent('mousedown', base));
+  try { el.dispatchEvent(new PointerEvent('pointerup', base)); } catch { /* older engines */ }
+  el.dispatchEvent(new MouseEvent('mouseup', base));
+}
+
+// Which rendered option IS the stored location? Containment against the typed query, in either
+// direction: Espa returned "United Arab Emirates" for the query "Dubai, United Arab Emirates"
+// (option inside query), while Google-places-style pickers return "Dubai, Dubai, United Arab
+// Emirates" (query inside option). Among options inside the query prefer the LONGEST (the most
+// specific unit matched); among options containing the query prefer the SHORTEST (the least
+// unasked-for geography). The 3-char floor keeps a stray "AL"-style fragment from matching by
+// accident. Anything that matches in neither direction is NOT the stored location, and clicking
+// it anyway would be a mis-fill of the R-004 class - so no match means no click, ever.
+export function matchLocationOption(options: ComboOption[], query: string): ComboOption | null {
+  const q = normalizeOptionText(query);
+  if (!q) return null;
+  let within: ComboOption | null = null;
+  let containing: ComboOption | null = null;
+  for (const o of options) {
+    const t = normalizeOptionText(o.text);
+    if (t.length < 3) continue;
+    if (t === q) return o;
+    if (q.includes(t)) {
+      if (!within || t.length > normalizeOptionText(within.text).length) within = o;
+    } else if (t.includes(q)) {
+      if (!containing || t.length < normalizeOptionText(containing.text).length) containing = o;
+    }
+  }
+  return within ?? containing;
+}
+
+// A failed drive must not leave a filled-LOOKING input. The typed query is visible in the box but
+// nothing was committed, which is exactly the lie the register documents (value="Dubai", form
+// holds nothing) - and worse here, because the card is about to say "left for you" about a field
+// the student sees as full. Clear it and close any open menu so what she sees matches the flag.
+function abandonTypedQuery(input: HTMLInputElement): null {
+  setNativeValue(input, '');
+  closeOpenCombobox();
+  return null;
+}
+
+// Read the committed value back. The input's own value is the Ashby shape (it settles to the
+// option's text); a classic react-select instead EMPTIES its input and renders the selection as a
+// singleValue node, so check that too - but only inside the caller's own question block, never
+// document-wide, or an adjacent field's selection could vouch for this one.
+function readCommittedValue(input: HTMLInputElement, scope?: Element): string {
+  const own = input.value.trim();
+  if (own) return own;
+  const single = scope?.querySelector('[class*="singleValue"], [class*="single-value"]');
+  return single?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+}
+
+// Returns the committed text, or null after cleaning up - and only ever null when the field was
+// genuinely not committed, so the caller's fallback is the flag path, not a guess.
+export async function driveAsyncLocationCombobox(
+  input: HTMLInputElement,
+  queries: string[],
+  scope?: Element,
+  timeoutMs = 4000,
+  pollMs = 100,
+): Promise<string | null> {
+  if (queries.length === 0) return null;
+  input.scrollIntoView?.({ block: 'center' });
+
+  // Engage the widget the way a user does before typing, then write the query in one
+  // React-visible stroke: setNativeValue is the native prototype setter plus bubbling input and
+  // change, the exact sequence React's controlled inputs listen for (E-007). The queries run
+  // fullest-first; a later, barer query only gets typed when the fuller one rendered nothing
+  // (preloaded pickers filter by containment and need the bare unit).
+  let options: ComboOption[] = [];
+  let typed = '';
+  for (const query of queries) {
+    typed = query;
+    input.focus();
+    pressSequence(input);
+    input.click();
+    setNativeValue(input, query);
+    // Poll for the async listbox - never a fixed sleep. ~700ms is the measured latency; the
+    // budget is a few multiples of it, and the poll exits the moment options render.
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      options = readRenderedOptions(input);
+      if (options.length > 0 || Date.now() >= deadline) break;
+      await pause(pollMs);
+    }
+    if (options.length > 0) break;
+  }
+  // Match against the FULLEST query regardless of which one rendered the options: it names every
+  // stored unit, so it is the strictest containment test available.
+  const match = matchLocationOption(options, queries[0]);
+  if (!match) return abandonTypedQuery(input);
+
+  // Commit with a real element.click(). E-009 caught synthetic-only mouse events not landing on
+  // React handlers, and the harness run that proved this sequence used a real click; the pointer
+  // preamble is still sent first because react-select commits on mousedown, Ashby's listbox on
+  // click - this fires both shapes on the same element.
+  pressSequence(match.el);
+  match.el.click();
+
+  // VERIFY the commit before claiming the fill: wait for the widget to settle (listbox gone,
+  // aria-expanded no longer "true"), then read the control back. The input holding the TYPED text
+  // with the menu still open is precisely the uncommitted state, which is why settling is checked
+  // before the value is trusted.
+  const verifyDeadline = Date.now() + Math.max(1500, pollMs * 4);
+  for (;;) {
+    const settled =
+      input.getAttribute('aria-expanded') !== 'true' && readRenderedOptions(input).length === 0;
+    if (settled) {
+      const got = readCommittedValue(input, scope);
+      if (!got) return abandonTypedQuery(input);
+      const g = normalizeOptionText(got);
+      const opt = normalizeOptionText(match.text);
+      const q = normalizeOptionText(typed);
+      // The committed text must be RELATED to what was chosen or asked for, in either containment
+      // direction. Anything else means the widget committed something we did not choose - report
+      // that as not-committed and let the human see the flag, never claim it as a fill.
+      if (g === opt || opt.includes(g) || g.includes(opt) || q.includes(g) || g.includes(q)) return got;
+      return abandonTypedQuery(input);
+    }
+    if (Date.now() >= verifyDeadline) return abandonTypedQuery(input);
+    await pause(pollMs);
+  }
 }

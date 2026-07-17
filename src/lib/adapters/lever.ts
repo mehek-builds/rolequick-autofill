@@ -15,10 +15,11 @@ import {
   openCombobox,
   pickComboOption,
   closeOpenCombobox,
+  blockAlreadyAnswered,
 } from './shared/dom';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { desiredAnswer, linkQuestion, linkSkipReason, locationQuestion, locationSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 function labelTextFor(el: Element): string {
   const container = el.closest('.application-question, .card, li') ?? el.parentElement;
@@ -218,6 +219,36 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
     if (WORK_ELIGIBILITY_QUESTION.test(label)) {
       fields_skipped++;
       skipped_reasons.push(workEligibilitySkipReason(label));
+      continue;
+    }
+
+    // Location of residence (city/state/country), via the one shared classifier (see
+    // locationQuestion in generic.ts). Placed AFTER the work-eligibility branch so a legal
+    // "authorized to work in X?" question is already gone by the time we look for a country -
+    // locationQuestion guards that internally too, but the ordering means a regression in either
+    // one alone cannot resurrect the R-004 false declaration.
+    // ALWAYS terminates the block, which is the fix: a location question we cannot answer now
+    // leaves a "left for you" reason that HOLDS auto-submit and shows in the card, instead of
+    // falling through to be left blank silently and bounce at submit (R-002, 3/12 live forms).
+    const loc = locationQuestion(label, applicationProfile);
+    if (loc && !blockAlreadyAnswered(block)) {
+      if (!loc.value) {
+        fields_skipped++;
+        skipped_reasons.push(locationSkipReason(loc.field, label, 'no-value'));
+        continue;
+      }
+      if (await answerChoiceBlock(block, { mode: 'value', value: loc.value })) {
+        fields_filled++;
+        continue;
+      }
+      const locEl = block.querySelector<HTMLInputElement>('input[type="text"]');
+      if (locEl && !isComboboxControl(locEl)) {
+        await fillField(locEl, loc.value);
+        fields_filled++;
+        continue;
+      }
+      fields_skipped++;
+      skipped_reasons.push(locationSkipReason(loc.field, label, 'no-option'));
       continue;
     }
     const isEeo = /gender|race|ethnicity|veteran|disability/i.test(label);
