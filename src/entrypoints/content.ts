@@ -12,6 +12,7 @@ import { getAutoSubmitEnabled } from '../lib/storage';
 import { selectNeedsYouReasons, skippedReasonsNeedReview } from '../lib/autosubmit-gate';
 import { startHarvest } from '../lib/harvest';
 import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
+import type { PostingCompensation } from '../lib/adapters/salary';
 
 export default defineContentScript({
   matches: [
@@ -332,6 +333,9 @@ export default defineContentScript({
       profile?: Profile;
       applicationProfile?: ApplicationProfile;
       resume?: { resume_url: string; file_name: string };
+      // This posting's structured salary range (R-031), fetched by the background from Ashby's
+      // posting API off the tab URL; null/absent on every other ATS or when nothing usable exists.
+      posting_compensation?: PostingCompensation | null;
     };
     const resumeGenByJob = new Map<string, Promise<ResumeGenResult>>();
 
@@ -581,6 +585,9 @@ export default defineContentScript({
       eeo?: Record<string, string>;
       draftAnswer?: (question: string) => Promise<string | null>;
       onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
+      // Ashby-only today (the other adapters ignore it): the posting's structured salary range,
+      // for the R-031 median rule.
+      postingCompensation?: PostingCompensation | null;
     }) => Promise<AutofillResult>;
 
     // Shared by every ATS adapter: generate the JD-tailored resume, then run that adapter's
@@ -632,7 +639,9 @@ export default defineContentScript({
             RESUME_GEN_TIMEOUT_MS,
           );
           chrome.runtime.sendMessage(
-            { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: getJd() } },
+            // `url` lets the background fetch Ashby's structured compensation range (R-031)
+            // for this exact posting; harmless everywhere else (it resolves to null).
+            { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: getJd(), url: location.href } },
             (result: ResumeGenResult | undefined) => {
               clearTimeout(timer);
               // A dead service worker resolves the callback with lastError set (or with no
@@ -740,6 +749,8 @@ export default defineContentScript({
               // questions, and an AI-draft hook for open-ended textareas routed through the
               // background to the backend. jdText/company/title are already in scope here.
               eeo: (result.applicationProfile?.eeo_prefs as Record<string, string> | undefined) ?? {},
+              // The posting's structured salary range (R-031), when the background resolved one.
+              postingCompensation: result.posting_compensation ?? null,
               draftAnswer: (question: string) =>
                 new Promise<string | null>((resolve) => {
                   chrome.runtime.sendMessage(

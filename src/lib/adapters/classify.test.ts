@@ -73,8 +73,16 @@ describe('desiredAnswer value branches (characterization - behaviour predates cl
     expect((d as { values: string[] }).values[0]).toBe('Company website');
   });
 
-  it('salary, DOB and availability fill from the profile', () => {
-    expect(desiredAnswer('desired salary', FULL, NO_EEO)).toEqual({ mode: 'value', value: '80000' });
+  it('DOB and availability fill from the profile; salary no longer does bare (R-031)', () => {
+    // The characterized salary behaviour - the bare stored figure for any salary label - IS
+    // R-031's defect, so this one branch is deliberately superseded rather than preserved: a
+    // bare figure now needs the label to name a currency matching desired_salary_currency
+    // (adapters/salary.ts owns the rule, salary.test.ts pins it).
+    expect(desiredAnswer('desired salary', FULL, NO_EEO)).toBeNull();
+    expect(desiredAnswer('desired salary (aed)', { ...FULL, desired_salary_currency: 'AED' }, NO_EEO)).toEqual({
+      mode: 'value',
+      value: '80000',
+    });
     expect(desiredAnswer('date of birth', FULL, NO_EEO)).toEqual({ mode: 'value', value: '25 Sep 2005' });
     expect(desiredAnswer('when can you start?', FULL, NO_EEO)).toEqual({ mode: 'value', value: 'June 2027' });
   });

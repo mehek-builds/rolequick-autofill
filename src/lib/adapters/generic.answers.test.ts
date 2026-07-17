@@ -55,8 +55,21 @@ describe('desiredAnswer', () => {
 
   it('fills factual profile values', () => {
     expect(desiredAnswer('country of citizenship', ap({ citizenship: 'India' }), {})).toEqual({ mode: 'value', value: 'India' });
-    expect(desiredAnswer('desired salary', ap({ desired_salary: '120000' }), {})).toEqual({ mode: 'value', value: '120000' });
     expect(desiredAnswer('date of birth', ap({ date_of_birth: '2005-01-01' }), {})).toEqual({ mode: 'value', value: '2005-01-01' });
+  });
+
+  it('salary routes through the R-031 currency gate, not the bare stored value', () => {
+    // The old case returned the stored figure verbatim for any salary label - R-031's defect.
+    // Now a bare figure needs the label to name a currency matching the stored one; a label
+    // with no currency resolves nothing and the caller's skip reason holds auto-submit.
+    expect(desiredAnswer('desired salary', ap({ desired_salary: '120000' }), {})).toBeNull();
+    expect(
+      desiredAnswer('desired salary (usd)', ap({ desired_salary: '120000', desired_salary_currency: 'USD' }), {}),
+    ).toEqual({ mode: 'value', value: '120000' });
+    // A range stated in the label beats everything stored: median, in the posting's own format.
+    expect(
+      desiredAnswer('expected salary (usd 90,000 - 110,000)', ap({ desired_salary_currency: 'EUR' }), {}),
+    ).toEqual({ mode: 'value', value: 'USD 100,000' });
   });
 
   it('never answers sensitive fields', () => {

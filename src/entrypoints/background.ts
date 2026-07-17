@@ -2,6 +2,9 @@
 // writes, including the backward-compatible fallback to the legacy Volley-era key name.
 import { getToken as getStoredToken, migrateLegacyStorage, setToken, setAutoSubmitEnabled } from '../lib/storage';
 import { overloadWaitMs, overloadBudgetRemains, RESUME_OVERLOAD_BUDGET_MS } from '../lib/overload';
+// Pure salary/posting helpers (R-031). adapters/salary is a LEAF module (types only), so this
+// import does not pull the DOM-adjacent adapter graph into the service worker bundle.
+import { parseAshbyPostingRef, selectPostingCompensation, type PostingCompensation } from '../lib/adapters/salary';
 
 // Set VITE_API_BASE at build time (e.g. your Vercel URL) to point at the deployed backend;
 // defaults to the local dev server.
@@ -209,6 +212,7 @@ interface ApplicationProfileResponse {
   needs_sponsorship?: boolean;
   availability_date?: string;
   desired_salary?: string;
+  desired_salary_currency?: string;
   eeo_prefs?: Record<string, string> | null;
   referral_source_default?: string;
   // Academic record (R-005). The backend serves these from GET /profile/application under exactly
@@ -217,6 +221,28 @@ interface ApplicationProfileResponse {
   gpa?: string;
   gpa_scale?: string;
   major?: string;
+}
+
+// This posting's structured salary range (R-031), when the tab is an Ashby posting whose board
+// slug resolves on the public posting API. Ashby's JD extractor always fetched this payload with
+// includeCompensation=true and then DROPPED the compensation object on the floor; this is the
+// same fetch, keeping only the one slice the salary rule needs. Never fatal and never blocking:
+// any failure (non-Ashby URL, 404 slug, malformed payload, timeout) resolves null and the fill
+// proceeds exactly as before, with the salary rule on its label/stored-value chain.
+async function fetchAshbyPostingCompensation(url: string | undefined): Promise<PostingCompensation | null> {
+  if (!url) return null;
+  const ref = parseAshbyPostingRef(url);
+  if (!ref) return null;
+  try {
+    const res = await timeoutFetch(
+      `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(ref.org)}?includeCompensation=true`,
+      { credentials: 'omit' },
+    );
+    if (!res.ok) return null;
+    return selectPostingCompensation(await res.json(), ref.postingId);
+  } catch {
+    return null;
+  }
 }
 
 // Fetches everything a client-side autofill adapter needs in one round trip: the resume
@@ -395,7 +421,9 @@ export default defineBackground(() => {
       }
 
       case 'GENERATE_RESUME_AND_FILL_DATA': {
-        const { company, role, jd_text } = message.payload;
+        // `url` is the sending tab's posting URL, used only to fetch Ashby's structured
+        // compensation range (R-031). Older callers that omit it just get no payload.
+        const { company, role, jd_text, url } = message.payload;
         // The card lives in the sending tab, so a capacity-retry notice has to go back to that tab
         // specifically: chrome.runtime.sendMessage from the background reaches the popup, never a
         // content script (that is why DRAFTS_READY works but this would not). Best-effort by
@@ -414,8 +442,11 @@ export default defineBackground(() => {
             return;
           }
           try {
+            // Started alongside the (much slower) resume generation, awaited only at the end;
+            // internally caught, so a compensation miss can never sink the fill data.
+            const compensationPromise = fetchAshbyPostingCompensation(url);
             const result = await generateResumeAndProfile(company, role, jd_text, token, notifyRetry);
-            sendResponse(result);
+            sendResponse({ ...result, posting_compensation: await compensationPromise });
           } catch (err) {
             sendResponse({ error: err instanceof Error ? err.message : 'resume generation failed' });
           }
