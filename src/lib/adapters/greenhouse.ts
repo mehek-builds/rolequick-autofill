@@ -42,6 +42,7 @@ import {
   closeOpenCombobox,
   blockAlreadyAnswered,
 } from './shared/dom';
+import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. These are pure (no DOM) and covered by
 // generic.answers.test.ts + ats-answer.test.ts.
@@ -125,11 +126,14 @@ async function answerChoiceBlock(block: Element, desired: Desired): Promise<bool
 }
 
 // Visually flag an AI-drafted field so the student can't miss that it needs review.
-function markForReview(el: HTMLElement): void {
+// `note` exists because not everything flagged for review is an AI draft. A converted
+// grade (R-005) is a deterministic band mapping, not model output, and calling it an "AI
+// draft" would tell the student an LLM invented their GPA.
+function markForReview(el: HTMLElement, note = 'AI draft: review before submitting'): void {
   el.style.outline = '2px solid #f59e0b';
   el.style.outlineOffset = '1px';
   const badge = document.createElement('div');
-  badge.textContent = 'AI draft: review before submitting';
+  badge.textContent = note;
   badge.style.cssText = 'font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;color:#b45309;margin-top:4px;';
   el.insertAdjacentElement('afterend', badge);
 }
@@ -146,6 +150,19 @@ async function fillResumeFile(input: HTMLInputElement, blob: Blob, fileName: str
   dt.items.add(file);
   input.files = dt.files;
   input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+// Has this block already been answered? The grade branch needs it for the same reason the location
+// branch does: an earlier pass or a pre-filled form must not be overwritten.
+function blockAlreadyAnsweredForGrade(block: Element): boolean {
+  const text = block.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+    'input[type="text"], input[type="number"], textarea',
+  );
+  if (text?.value.trim()) return true;
+  if (block.querySelector('input[type="radio"]:checked, input[type="checkbox"]:checked')) return true;
+  const select = block.querySelector<HTMLSelectElement>('select');
+  if (select?.value) return true;
+  return !!block.querySelector('[class*="singleValue"], [class*="multiValue"]');
 }
 
 export interface GreenhouseFillParams {
@@ -340,6 +357,42 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
       } else {
         fields_skipped++;
         skipped_reasons.push('EEO field: no matching option found, left blank');
+      }
+      continue;
+    }
+
+
+    // Academic record (R-005): GPA / grade average / degree classification / major. Placed with the
+    // other known-answer classifiers and, like them, ALWAYS terminates the block so an unanswerable
+    // one is flagged rather than silently left blank.
+    // A CONVERTED answer (a form asking for a scale we don't store) is filled AND flagged: the
+    // review flag is the whole reason converting is defensible at all, so it is not optional here.
+    const grade = gradeQuestion(label, applicationProfile);
+    if (grade && !blockAlreadyAnsweredForGrade(block)) {
+      if (!grade.value) {
+        fields_skipped++;
+        skipped_reasons.push(gradeSkipReason(grade.field, label));
+        continue;
+      }
+      const gradeDesired: Desired = { mode: 'value', value: grade.value };
+      let wrote = await answerChoiceBlock(block, gradeDesired);
+      if (!wrote) {
+        const gradeEl = block.querySelector<HTMLInputElement>('input[type="text"], input[type="number"]');
+        if (gradeEl && !isComboboxControl(gradeEl)) {
+          await fillField(gradeEl, grade.value);
+          wrote = true;
+        }
+      }
+      if (!wrote) {
+        fields_skipped++;
+        skipped_reasons.push(gradeSkipReason(grade.field, label));
+        continue;
+      }
+      fields_filled++;
+      if (grade.needsReview) {
+        const reviewEl = block.querySelector<HTMLElement>('input, select, textarea');
+        if (reviewEl) markForReview(reviewEl, 'Converted grade: check this before submitting');
+        skipped_reasons.push(gradeReviewReason(label, grade.disclosure));
       }
       continue;
     }

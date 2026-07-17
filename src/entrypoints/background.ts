@@ -211,6 +211,12 @@ interface ApplicationProfileResponse {
   desired_salary?: string;
   eeo_prefs?: Record<string, string> | null;
   referral_source_default?: string;
+  // Academic record (R-005). The backend serves these from GET /profile/application under exactly
+  // these names, and this object is handed to the adapters as-is, so listing them here is what
+  // keeps this passthrough honest rather than fields that only exist at runtime.
+  gpa?: string;
+  gpa_scale?: string;
+  major?: string;
 }
 
 // Fetches everything a client-side autofill adapter needs in one round trip: the resume

@@ -1133,11 +1133,14 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
 }
 
 // Visually mark an AI-drafted field so the student can't miss that it needs review.
-function markForReview(el: HTMLElement) {
+// `note` exists because not everything flagged for review is an AI draft. A converted
+// grade (R-005) is a deterministic band mapping, not model output, and calling it an "AI
+// draft" would tell the student an LLM invented their GPA.
+function markForReview(el: HTMLElement, note = '✎ AI draft: review before submitting') {
   el.style.outline = '2px solid #f59e0b';
   el.style.outlineOffset = '1px';
   const badge = document.createElement('div');
-  badge.textContent = '✎ AI draft: review before submitting';
+  badge.textContent = note;
   badge.style.cssText =
     'font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;color:#b45309;margin-top:4px;';
   el.insertAdjacentElement('afterend', badge);
