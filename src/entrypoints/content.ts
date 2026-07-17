@@ -1,7 +1,6 @@
 import { isLeverApplicationPage, extractLeverJdText, fillLeverApplication } from '../lib/adapters/lever';
 import { isGreenhouseApplicationPage, extractGreenhouseJdText, fillGreenhouseApplication } from '../lib/adapters/greenhouse';
-import { isAshbyApplicationPage, extractAshbyJd, fillAshbyApplication } from '../lib/adapters/ashby';
-import { JD_UNREADABLE } from '../lib/adapters/shared/jd';
+import { isAshbyApplicationPage, extractAshbyJdText, fillAshbyApplication } from '../lib/adapters/ashby';
 import {
   isWorkdayApplicationPage, extractWorkdayJdText, fillWorkdayApplication,
   isWorkdayAccountCreationPage, fillWorkdayAccountCreation,
@@ -11,6 +10,7 @@ import { isLinkedInApplicationPage, extractLinkedInJdText, fillLinkedInApplicati
 import { isLikelyApplicationForm, extractGenericJdText, getGenericJobDetails, fillGenericApplication } from '../lib/adapters/generic';
 import { getAutoSubmitEnabled } from '../lib/storage';
 import { skippedReasonsNeedReview } from '../lib/autosubmit-gate';
+import { startHarvest } from '../lib/harvest';
 import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
 
 export default defineContentScript({
@@ -585,14 +585,7 @@ export default defineContentScript({
 
     // Shared by every ATS adapter: generate the JD-tailored resume, then run that adapter's
     // client-side fill-and-stop. Only the JD-extraction and fill functions differ per ATS.
-    // extractJdText may be async: Ashby's real JD is not in the DOM on the Application tab and has
-    // to be fetched (see adapters/ashby.ts). Sync extractors still work unchanged.
-    function injectResumeFillCard(
-      title: string,
-      company: string,
-      extractJdText: () => string | Promise<string>,
-      fill: FillFn,
-    ) {
+    function injectResumeFillCard(title: string, company: string, extractJdText: () => string, fill: FillFn) {
       if (document.getElementById('rolequick-resume-card')) return;
       const card = document.createElement('div');
       card.id = 'rolequick-resume-card';
@@ -608,8 +601,8 @@ export default defineContentScript({
       // JD is read at intent time (first hover/click), NOT at card injection, so a JD that
       // lazy-loads after the card appears is present when we tailor. Memoized so the gen call and
       // the essay-draft hook read the same JD text.
-      let jdCache: Promise<string> | null = null;
-      const getJd = (): Promise<string> => (jdCache ??= Promise.resolve(extractJdText()));
+      let jdCache: string | null = null;
+      const getJd = (): string => (jdCache ??= extractJdText());
 
       // Slightly longer than the background's own resume-fetch budget (60s) so its descriptive
       // error surfaces first; this is the backstop for the worse case where the service worker
@@ -631,30 +624,20 @@ export default defineContentScript({
             () => done({ error: 'Resume generation timed out - fill this form manually.' }),
             RESUME_GEN_TIMEOUT_MS,
           );
-          void getJd().then((jd_text) => {
-            // Never tailor to a JD we couldn't actually read. A resume built from the job title and
-            // some form labels looks tailored and isn't, which is worse than saying so: the student
-            // can't tell, and on a minimal form it could even auto-submit itself.
-            if (jd_text === JD_UNREADABLE) {
+          chrome.runtime.sendMessage(
+            { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text: getJd() } },
+            (result: ResumeGenResult | undefined) => {
               clearTimeout(timer);
-              done({ error: "Couldn't read this job's description, so the resume wasn't tailored - fill this one manually." });
-              return;
-            }
-            chrome.runtime.sendMessage(
-              { type: 'GENERATE_RESUME_AND_FILL_DATA', payload: { company, role: title, jd_text } },
-              (result: ResumeGenResult | undefined) => {
-                clearTimeout(timer);
-                // A dead service worker resolves the callback with lastError set (or with no
-                // result), rather than the response object - treat both as a recoverable error
-                // instead of letting `undefined` fall through as a fake success.
-                if (chrome.runtime.lastError || !result) {
-                  done({ error: chrome.runtime.lastError?.message || 'Could not reach the extension - fill this form manually.' });
-                } else {
-                  done(result);
-                }
-              },
-            );
-          });
+              // A dead service worker resolves the callback with lastError set (or with no
+              // result), rather than the response object - treat both as a recoverable error
+              // instead of letting `undefined` fall through as a fake success.
+              if (chrome.runtime.lastError || !result) {
+                done({ error: chrome.runtime.lastError?.message || 'Could not reach the extension - fill this form manually.' });
+              } else {
+                done(result);
+              }
+            },
+          );
         });
         resumeGenByJob.set(jobKey, p);
         return p;
@@ -718,19 +701,13 @@ export default defineContentScript({
               // questions, and an AI-draft hook for open-ended textareas routed through the
               // background to the backend. jdText/company/title are already in scope here.
               eeo: (result.applicationProfile?.eeo_prefs as Record<string, string> | undefined) ?? {},
-              // The JD is already resolved and cached by the time any essay drafts (resume-gen
-              // awaited it), so this adds no latency. An unreadable JD still drafts: an essay
-              // grounded in her own bank is useful without the posting, unlike a resume that
-              // claims to be tailored to it.
-              draftAnswer: async (question: string) => {
-                const jd = await getJd();
-                return new Promise<string | null>((resolve) => {
+              draftAnswer: (question: string) =>
+                new Promise<string | null>((resolve) => {
                   chrome.runtime.sendMessage(
-                    { type: 'ANSWER_QUESTION', payload: { company, role: title, jd_text: jd === JD_UNREADABLE ? '' : jd, question } },
+                    { type: 'ANSWER_QUESTION', payload: { company, role: title, jd_text: getJd(), question } },
                     (r: { answer?: string | null } | undefined) => resolve(r?.answer ?? null),
                   );
-                });
-              },
+                }),
               // Streamed progress: instant fields report immediately, then each essay updates
               // the count as its own draft call resolves, instead of the status text sitting on
               // "Filling the application..." until every essay in the form is done.
@@ -1201,6 +1178,11 @@ export default defineContentScript({
         return;
       }
       const job = getGenericJobDetails();
+      // Company-hosted forms count too: isLikelyApplicationForm() has already confirmed this page
+      // is a real application (resume upload, or name AND email), which is the same bar the ATS
+      // path uses. This branch only runs on an on-demand inject from the popup, so the student
+      // has explicitly pointed RoleQuick at this form.
+      startHarvest();
       injectResumeFillCard(job.title, job.company, extractGenericJdText, fillGenericApplication);
     }
     w.__rolequickGenericInit = genericInit;
@@ -1221,6 +1203,11 @@ export default defineContentScript({
 
       const job = getJobDetails();
       if (!job) return;
+
+      // Watch what the student types by hand, but only on a real application form. Idempotent and
+      // self-latching: it stops for good the first time the backend says onboarding is complete,
+      // so a returning user's later applications are filled and never read. See lib/harvest.ts.
+      if (isApplicationPage()) startHarvest();
 
       // Workday multi-stages within one "application" (triage modal -> sign-in/account
       // creation -> real form), and two of those stages need handling the generic
@@ -1262,7 +1249,7 @@ export default defineContentScript({
         } else if (isGreenhouseApplicationPage()) {
           injectResumeFillCard(job.title, job.company, extractGreenhouseJdText, fillGreenhouseApplication);
         } else if (isAshbyApplicationPage()) {
-          injectResumeFillCard(job.title, job.company, () => extractAshbyJd(), fillAshbyApplication);
+          injectResumeFillCard(job.title, job.company, extractAshbyJdText, fillAshbyApplication);
         }
       } else {
         // Job listing page: silently notify the popup so it can pre-fill fields

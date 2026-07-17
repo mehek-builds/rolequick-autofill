@@ -6,6 +6,47 @@ import { getToken as getStoredToken, migrateLegacyStorage, setToken, setAutoSubm
 // defaults to the local dev server.
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 
+// Latched off once the backend reports onboarding complete. Service-worker memory is fine for
+// this: the worst case on a restart is one wasted 403, which re-latches it immediately.
+let harvestStopped = false;
+
+/**
+ * POST what the student typed by hand to /profile/harvest.
+ *
+ * The server is the authority on every rule that matters here - it refuses work authorization,
+ * sponsorship and self-identification with a hard 400, only fills fields that are empty, and 403s
+ * once onboarding is done. This function deliberately re-checks none of that: a second copy of
+ * those rules in the client is a second thing to drift. Its only job is carrying the token and
+ * translating a 403 into "stop asking".
+ */
+async function harvestFields(fields: unknown): Promise<{ ok: boolean; stop?: boolean; kept?: string[] }> {
+  if (harvestStopped) return { ok: false, stop: true };
+  const token = await getStoredToken();
+  if (!token) return { ok: false };
+  try {
+    const res = await timeoutFetch(`${API_BASE}/profile/harvest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ fields }),
+    });
+    if (res.status === 403) {
+      harvestStopped = true;
+      return { ok: false, stop: true };
+    }
+    if (!res.ok) {
+      // A 400 here means the classifier produced a field the server refuses - i.e. the R-004
+      // guard failed somewhere upstream. Loud in the log, because it should be impossible:
+      // ProfileKey has no member for any denied field.
+      console.warn('[RoleQuick] harvest rejected', res.status, await res.text().catch(() => ''));
+      return { ok: false };
+    }
+    const body = (await res.json().catch(() => null)) as { kept?: string[] } | null;
+    return { ok: true, kept: body?.kept ?? [] };
+  } catch {
+    return { ok: false };
+  }
+}
+
 // A hung backend must never leave the caller waiting forever - the resume-fill card awaits
 // these responses, so an unbounded fetch strands the student on "Tailoring your resume...".
 // Resume generation is a real LLM round trip (tens of seconds), so it gets a longer budget
@@ -361,6 +402,17 @@ export default defineBackground(() => {
           }).catch(() => {});
         });
         return false;
+      }
+
+      // Fields the student typed by hand into a real application during onboarding. The content
+      // script has no token and no host_permissions, so every write goes through here.
+      //
+      // Answers { stop: true } when the backend says harvest is over (403 = onboarding complete),
+      // which latches the content script off for the page's lifetime. Without that the extension
+      // would keep POSTing into a 403 on every keystroke of every application, forever.
+      case 'HARVEST_FIELDS': {
+        harvestFields(message.fields).then(sendResponse);
+        return true; // async: see the convention note above - only async branches return true.
       }
 
       default:
