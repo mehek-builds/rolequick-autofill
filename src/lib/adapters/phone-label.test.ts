@@ -10,12 +10,19 @@ const tel = () => ({ type: 'tel' }) as unknown as Element;
 const text = () => ({ type: 'text' }) as unknown as Element;
 
 describe('isPhoneLabel', () => {
-  it('matches the labels seen live on real boards', () => {
+  // The full live matrix: 4 occurrences, 2 failing label variants, 2 companies. Only the exact
+  // string "Phone Number" worked before, so this was never an Enpal quirk - it was a matcher
+  // keying on the literal word "phone".
+  it('matches every label seen live on a real board', () => {
     // Espa Labs and Perplexity, which always worked.
     expect(isPhoneLabel('Phone Number', tel())).toBe(true);
     expect(isPhoneLabel('Phone Number', text())).toBe(true);
-    // Enpal, which did not. This is the regression.
+    // Enpal Low-Code + Enpal Business Analytics. This is the original regression.
     expect(isPhoneLabel('Number', tel())).toBe(true);
+    // Limetax Applied AI + Limetax Product Eng, found after the fix was written. Covered by the
+    // unambiguous-word tier rather than the type="tel" gate, so it holds on a text control too.
+    expect(isPhoneLabel('Mobile number', tel())).toBe(true);
+    expect(isPhoneLabel('Mobile number', text())).toBe(true);
   });
 
   it('matches unambiguous phone words regardless of control type', () => {
