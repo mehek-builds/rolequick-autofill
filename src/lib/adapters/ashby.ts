@@ -46,6 +46,7 @@ import {
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
 import { dateSkipReason, desiredAnswer, fillDateField, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 import { isDateControl } from './shared/dates';
+import { htmlToPlainText, JD_UNREADABLE, looksLikeJobDescription } from './shared/jd';
 
 // Resolves once the DOM has gone quiet for `quietMs`, or after `maxMs` regardless - Ashby's
 // React tree re-renders after most field changes, and firing the next fill mid-re-render risks
@@ -295,10 +296,137 @@ export function isAshbyApplicationPage(): boolean {
   return window.location.hostname.includes('ashbyhq.com') && (path.includes('/apply') || path.includes('/application'));
 }
 
+// ─── Job-description extraction (R-013) ─────────────────────────────────────
+//
+// On the Ashby Application tab - the only place the form and RoleQuick's card exist - the job
+// description is NOT in the DOM at all. It lives on the Overview tab and is swapped out on SPA
+// nav. The old extractor could not tell, so every Ashby resume was tailored to the job title and
+// some form labels. See shared/jd.ts for the full failure write-up.
+//
+// The fix is a chain of real sources, each sanity-checked, rather than one selector plus a body
+// fallback that hides its own failure:
+//
+//   1. Ashby's public posting API. Clean plaintext, a documented contract, no DOM archaeology and
+//      nothing to break when Ashby renames a CSS class (which is exactly what bit the old
+//      selector). Verified 2026-07-17 to send `access-control-allow-origin: *`, so it needs no
+//      host_permissions and the install warning is unchanged.
+//   2. The posting page's own bootstrap payload. The API does NOT resolve for every board (org
+//      slugs that 404 were measured live), but every posting page - INCLUDING the /application
+//      route - embeds `window.__appData` carrying `descriptionHtml`. A content script can't read
+//      that off the main world, so we re-fetch the page same-origin and pull it out of the source.
+//   3. The DOM, tightened. Last resort, and no longer able to pass off the body as a JD.
+//
+// If nothing yields something that reads like a job description, that is reported as its own
+// distinct failure. Tailoring to junk is worse than not tailoring.
+
+const MAX_JD_CHARS = 12000;
+
+export interface AshbyPostingRef {
+  org: string;
+  postingId: string;
+}
+
+// `jobs.ashbyhq.com/espa/<uuid>[/application]` -> { org: 'espa', postingId: '<uuid>' }
+export function parseAshbyPostingRef(url: string): AshbyPostingRef | null {
+  try {
+    const { hostname, pathname } = new URL(url);
+    if (!hostname.includes('ashbyhq.com')) return null;
+    const parts = pathname.split('/').filter(Boolean);
+    const org = parts[0];
+    const postingId = parts.find((p) => /^[0-9a-f-]{36}$/i.test(p));
+    return org && postingId ? { org, postingId } : null;
+  } catch {
+    return null;
+  }
+}
+
+// Pick this posting out of the board payload. Matching on the id already in the page URL is exact;
+// matching on title would break on a board running two postings with the same title.
+export function selectPostingJd(payload: unknown, postingId: string): string | null {
+  const jobs = (payload as { jobs?: Array<Record<string, unknown>> } | null)?.jobs;
+  if (!Array.isArray(jobs)) return null;
+  const job = jobs.find(
+    (j) => j.id === postingId || (typeof j.jobUrl === 'string' && j.jobUrl.includes(postingId)),
+  );
+  const text = job?.descriptionPlain;
+  return typeof text === 'string' && text.trim() ? text.trim() : null;
+}
+
+async function fetchAshbyJdFromApi(ref: AshbyPostingRef): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(ref.org)}?includeCompensation=true`,
+      { credentials: 'omit' },
+    );
+    if (!res.ok) return null; // a board whose slug doesn't resolve - fall through, don't fail
+    return selectPostingJd(await res.json(), ref.postingId);
+  } catch {
+    return null;
+  }
+}
+
+// Pull `descriptionHtml` out of a posting page's embedded bootstrap payload. Extracting the one
+// JSON string (rather than parsing the whole __appData object) keeps this robust to the rest of
+// that blob changing shape, which it is entirely free to do.
+export function extractDescriptionHtmlFromSource(source: string): string | null {
+  const m = /"descriptionHtml"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(source);
+  if (!m) return null;
+  try {
+    const html = JSON.parse(`"${m[1]}"`) as string;
+    const text = htmlToPlainText(html);
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchAshbyJdFromPage(url: string): Promise<string | null> {
+  try {
+    // Same-origin (we are on jobs.ashbyhq.com), and the /application route's own HTML carries the
+    // payload, so this needs no tab switching and no second window.
+    const res = await fetch(url, { credentials: 'omit' });
+    if (!res.ok) return null;
+    return extractDescriptionHtmlFromSource(await res.text());
+  } catch {
+    return null;
+  }
+}
+
+// DOM fallback. Two bugs were stacked in the old one-liner and both are closed here.
+//
+// 1. `[class*="job-posting"]` matched the HEADER, never the description: Ashby puts
+//    `ashby-job-posting-*` on many elements and querySelector returns the FIRST in DOM order. On
+//    Enpal that header's text was "Enpal" (5 chars, truthy) and BECAME the entire "JD"; on Cohere
+//    and Mistral it was empty, so the body fallback took over. The intended description element
+//    was never selected on any board tested. Taking the LARGEST match instead of the first is what
+//    makes a loose selector survivable.
+// 2. The `|| document.body.innerText` fallback hid the failure. It is gone: the body is the form
+//    on this route, and returning it is how a total failure passed for success. Callers get '' and
+//    the chain reports an unreadable JD instead.
 export function extractAshbyJdText(): string {
-  const desc = document.querySelector('[class*="job-posting"], [class*="description"]');
-  const descText = desc?.textContent?.trim();
-  return (descText || document.body.innerText).trim().slice(0, 12000);
+  const candidates = [...document.querySelectorAll('[class*="job-posting"], [class*="description"]')];
+  const best = candidates
+    .map((el) => el.textContent?.trim() ?? '')
+    .reduce((a, b) => (b.length > a.length ? b : a), '');
+  return best.slice(0, MAX_JD_CHARS);
+}
+
+// The real entry point: try each source in order and return the first that actually reads like a
+// job description. Returns JD_UNREADABLE when none does, so the caller can say so plainly rather
+// than tailoring a resume to form chrome.
+export async function extractAshbyJd(url: string = window.location.href): Promise<string> {
+  const ref = parseAshbyPostingRef(url);
+  const sources: Array<() => Promise<string | null>> = [
+    ...(ref ? [() => fetchAshbyJdFromApi(ref)] : []),
+    () => fetchAshbyJdFromPage(url),
+    async () => extractAshbyJdText(),
+  ];
+
+  for (const source of sources) {
+    const text = await source();
+    if (looksLikeJobDescription(text)) return text!.slice(0, MAX_JD_CHARS);
+  }
+  return JD_UNREADABLE;
 }
 
 export async function fillAshbyApplication(params: AshbyFillParams): Promise<AutofillResult> {
