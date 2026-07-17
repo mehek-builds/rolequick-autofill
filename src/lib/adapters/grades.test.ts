@@ -106,6 +106,43 @@ describe('gradeQuestion: classification independent of stored value', () => {
   });
 });
 
+describe('gradeQuestion: labels that merely CONTAIN a grade-adjacent word', () => {
+  // Every gradeQuestion match TERMINATES its block in the adapters, so a false positive is not a
+  // mislabel: it swallows the question away from the essay drafter and the known-answer path, and
+  // on the percent path it fills a number. These pin the matcher as default-deny (R-020's lesson).
+
+  it('leaves an essay about "a major project" for the drafter', () => {
+    // Matching these would leave the essay undrafted, with a bogus "major question left for you"
+    // reason holding auto-submit. "major" the adjective is not "major" the noun about the student.
+    expect(gradeQuestion('describe a major project you led', mehek)).toBeNull();
+    expect(gradeQuestion('tell us about a major challenge you overcame', mehek)).toBeNull();
+  });
+
+  it('does not answer a travel-percentage question with a converted grade', () => {
+    // The nastiest direction: with a GPA stored, the percent path FILLS. A loose percent match
+    // writes "70" into a willingness-to-travel field - a flagged but real mis-fill.
+    expect(gradeQuestion('what percentage of your time are you willing to travel?', mehek)).toBeNull();
+    expect(gradeQuestion('are you comfortable travelling for work? (up to 50%)', mehek)).toBeNull();
+  });
+
+  it('does not read a numbered section heading as a degree classification', () => {
+    expect(gradeQuestion('2.1 tell us why you want this role', mehek)).toBeNull();
+  });
+
+  it('does not read job-classification or honours-and-awards fields as a degree classification', () => {
+    expect(gradeQuestion('desired job classification', mehek)).toBeNull();
+    expect(gradeQuestion('honours and awards', mehek)).toBeNull();
+  });
+
+  it('still matches the same words in their academic positions', () => {
+    expect(gradeQuestion('major *', mehek)?.value).toBe('Computer Science');
+    expect(gradeQuestion('intended major', mehek)?.value).toBe('Computer Science');
+    expect(gradeQuestion('what honours classification do you expect?', mehek)?.value).toBe('First Class Honours');
+    expect(gradeQuestion('do you hold a first class degree?', mehek)?.value).toBe('First Class Honours');
+    expect(gradeQuestion('what classification are you expecting? (e.g. 2:1)', mehek)?.value).toBe('First Class Honours');
+  });
+});
+
 describe('the gate contract', () => {
   it('a converted grade HOLDS auto-submit', () => {
     // Built from the real builder: reword it out of REVIEW_FLAG and this fails HERE, rather than

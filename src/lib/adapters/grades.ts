@@ -35,12 +35,32 @@ export type GradeQuestion =
   | { field: 'gpa'; value: string; needsReview: true; disclosure: string };
 
 // ── Question shapes ──────────────────────────────────────────────────────────
-const MAJOR_QUESTION = /\bmajor\b|field of study|course of study|what.{0,10}(are|is) you studying|degree subject|programme of study|program of study/i;
+// Every branch below TERMINATES its block in the adapters (fill or flag, then continue), so a
+// false positive here does not merely mislabel a field: it swallows the question away from the
+// essay drafter and the known-answer path entirely, and on the percent path it FILLS a number.
+// That is R-020's lesson replayed (a matcher that fires on a word anywhere in a label is
+// default-allow), so each shape requires its word in an ACADEMIC position, not merely present.
+
+// "major" the noun about the student ("your major", "intended major", a bare "Major" label), never
+// the adjective: "describe a major project you led" is an essay, and matching it would leave the
+// essay undrafted with a bogus "major question left for you" reason holding auto-submit.
+const MAJOR_QUESTION = /\b(your|intended|declared|college|university|undergraduate|academic|current|primary|double)\s+majors?\b|^\s*majors?\s*[:*.?]?\s*$|field of study|course of study|area of study|what.{0,10}(are|is) you studying|degree subject|programme of study|program of study/i;
 // A GPA question in its own terms ("GPA", "grade point average", "cumulative average").
 const GPA_QUESTION = /\bgpa\b|grade.?point.?average|cumulative average|academic average/i;
-// A grade question posed on a scale we do NOT store: a percentage, or a UK degree classification.
-const PERCENT_QUESTION = /grade average|as a percentage|percentage|\bpercent\b|out of 100|%\)/i;
-const CLASSIFICATION_QUESTION = /degree classification|classification are you|predicted (degree|classification|grade)|honours|\bhons\b|first class|2:1|2\.1\b/i;
+// A grade question posed on a percentage scale. A percent word ALONE is not one: "willingness to
+// travel (percentage)" is a real and common intern-form field, and because the percent path fills
+// a converted number, a loose match here would write "70" into a travel question. A mis-fill is
+// strictly worse than the non-fill this module exists to cure, so the percent word only counts
+// beside a grade word. "grade average" alone also counts: that is the UK phrasing this was built
+// for (live on Abound, 2026-07-16), units or no units.
+const GRADE_AVERAGE = /grade average/i;
+const PERCENT_WORD = /percentage|\bpercent\b|out of 100|%\)/i;
+const GRADE_WORD = /\bgrades?\b|\baverage\b|\bgpa\b|\bmarks?\b|academic|classification/i;
+// A UK degree-classification question. Each alternative anchors the give-away word to a degree
+// context, because the words travel: bare "classification" is a job-classification field on
+// government forms, bare "honours" is the honours-and-awards section, and a bare "2.1" is a
+// numbered section heading ("2.1 Tell us why...").
+const CLASSIFICATION_QUESTION = /(degree|honours|hons|expected|predicted|anticipated|university) classification|classification (of your degree|are you|do you)|predicted (degree|classification|grade|class)\b|(first|second|third).class (honours|degree)|\b2:[12]\b/i;
 
 // US 4.0 -> UK degree classification. Bands, not a formula, because there IS no formula: the two
 // systems measure different things, and every credible mapping (WES and university admissions
@@ -67,7 +87,7 @@ function isFourPointScale(scale: string | undefined): boolean {
 export function gradeQuestion(label: string, ap: ApplicationProfile): GradeQuestion | null {
   if (MAJOR_QUESTION.test(label)) return { field: 'major', value: ap.major, needsReview: false };
 
-  const asksPercent = PERCENT_QUESTION.test(label);
+  const asksPercent = GRADE_AVERAGE.test(label) || (PERCENT_WORD.test(label) && GRADE_WORD.test(label));
   const asksClassification = CLASSIFICATION_QUESTION.test(label);
   const asksGpa = GPA_QUESTION.test(label);
   if (!asksGpa && !asksPercent && !asksClassification) return null;
