@@ -212,15 +212,26 @@ export function getGenericJobDetails(): { title: string; company: string } {
 // the option matcher; 'decline' matches an opt-out option; 'value' substring-matches.
 
 export type Desired =
-  | { mode: 'value'; value: string }
-  | { mode: 'oneof'; values: string[] }
+  | { mode: 'value'; value: string; exact?: true }
+  | { mode: 'oneof'; values: string[]; exact?: true }
   | { mode: 'yes' }
   | { mode: 'no' }
   | { mode: 'decline' }
   | null;
 
+// `exact: true` opts a question OUT of the single-hit widening in matchOption - only an exact
+// option match commits, anything else is left for the student. Set it wherever "close enough" is
+// the wrong answer rather than a helpful one. See eeoAnswer.
 export function eeoAnswer(pref: string | undefined): Desired {
-  return pref && pref.trim() ? { mode: 'value', value: pref.trim() } : { mode: 'decline' };
+  // Demographics are exact-match-only (Mehek's ruling, 2026-07-17, closing the R-018 judgement
+  // call). The widening that usefully turns "Korea" -> "Korea, Republic of" on a country dropdown
+  // is actively wrong on a protected characteristic: a student who stored "Male" must never be
+  // silently committed to "Male (cisgender)" on a form offering no plain "Male", because that is
+  // a different statement about them, not a formatting variant of the same one. A demographic
+  // field is exactly where a blank left for the student beats a confident near-miss - and an
+  // unmatched EEO option is safe to leave, since these questions are near-universally optional
+  // or carry a decline option. Country-style widening keeps its own rule, unchanged.
+  return pref && pref.trim() ? { mode: 'value', value: pref.trim(), exact: true } : { mode: 'decline' };
 }
 
 // Work-eligibility questions (work authorization AND visa sponsorship) are location-scoped
@@ -437,6 +448,10 @@ export function matchOption<T extends { text: string }>(options: T[], desired: D
   const matchValue = (raw: string): T | null => {
     const base = norm(raw);
     if (!base) return null;
+    // Exact-only questions (EEO/demographics) stop here: no widening, no nationality mapping, no
+    // reverse match. Either the form offers the student's own stored answer verbatim, or nobody
+    // answers it for them. See eeoAnswer for why demographics get this and countries don't.
+    if (desired.exact) return options.find((o) => norm(o.text) === base) ?? null;
     // A citizenship stored as a nationality adjective ("Indian") will never match a country
     // option ("India"), so also try the mapped country name - lets country / "which country do
     // you intend to work from" questions fill from a nationality-valued citizenship field.

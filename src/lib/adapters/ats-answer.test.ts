@@ -49,7 +49,7 @@ describe('desiredAnswer on ATS full-block label text', () => {
     expect(desiredAnswer('gender please select an option decline to self-identify', ap(), {}))
       .toEqual({ mode: 'decline' });
     expect(desiredAnswer('gender please select an option decline to self-identify', ap(), { gender: 'Woman' }))
-      .toEqual({ mode: 'value', value: 'Woman' });
+      .toEqual({ mode: 'value', value: 'Woman', exact: true });
   });
 
   it('answers an age-of-majority screening question inside block text', () => {
