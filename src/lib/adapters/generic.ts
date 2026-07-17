@@ -268,6 +268,119 @@ export function workEligibilitySkipReason(label: string): string {
   return `work-eligibility question left for you: "${label.slice(0, 60)}"`;
 }
 
+// EEO / voluntary self-identification. ashby.ts's variant, which is the broadest of the five
+// inline copies in the adapters, hoisted so classifyField does not become a sixth.
+// NOTE: lever/greenhouse/workday/linkedin still carry their own narrower
+// /gender|race|ethnicity|veteran|disability/i. Migrating them to this one is worth doing but is
+// NOT a no-op - it would route strictly more blocks to a decline - so it needs its own change
+// with its own live check, not a silent piggyback on harvest.
+// `\bgender\b` and not /gender/ is deliberate and predates this: "do you identify as transgender?"
+// is a distinct self-ID question we have no data for, and must not be pulled into the gender rule.
+export const EEO_QUESTION =
+  /\bgender\b|what is your sex\b|race|ethnicit|hispanic|latino|veteran|military|disab|sexual orientation|communities|identify with|current age|what is your age|age range|how old are you|\bage group\b/i;
+
+// Every profile field a real application form can legitimately teach us.
+//
+// READ THE ABSENCES. There is deliberately no `work_authorized`, no `needs_sponsorship` and no
+// `eeo_prefs` member. Harvest is driven entirely by this type, so those fields are not merely
+// checked for and rejected - they are UNREPRESENTABLE. No classifier bug, no regex edit, and no
+// future contributor adding a branch can produce one, because there is no value to return.
+// That is the strongest available form of the R-004 fix: the bug that put a false legal
+// declaration on a live application cannot be re-expressed here.
+export type ProfileKey =
+  | 'phone'
+  | 'address_city'
+  | 'address_state'
+  | 'address_zip'
+  | 'address_country'
+  | 'linkedin_url'
+  | 'github_url'
+  | 'portfolio_url'
+  | 'citizenship'
+  | 'date_of_birth'
+  | 'availability_date'
+  | 'availability_term'
+  | 'desired_salary'
+  | 'gpa'
+  | 'gpa_scale'
+  | 'major'
+  | 'referral_source_default';
+
+/**
+ * Is this a question RoleQuick must never answer AND never learn?
+ *
+ * The single source of refusal truth, exported because harvest has to ask the same question of a
+ * control's own label AND of its surrounding question stem: a work-auth question rendered as a
+ * textarea only reveals itself through the stem. Two copies of these regexes would drift, and the
+ * drift would silently re-open R-004.
+ */
+export function isRefusedQuestion(label: string): boolean {
+  const l = label ?? '';
+  return (
+    NEVER_FILL_PATTERNS.some((re) => re.test(l)) || WORK_ELIGIBILITY_QUESTION.test(l) || EEO_QUESTION.test(l)
+  );
+}
+
+/**
+ * What profile field is this control asking about? Returns the KEY, never a value.
+ *
+ * The single source of field identity, with two consumers that must never disagree:
+ * `desiredAnswer` (fill: key -> look up the stored value) and harvest (read: key -> store what the
+ * student typed). Two copies of these regexes would drift, and the drift would be invisible until
+ * RoleQuick filled one field and learned a different one.
+ *
+ * Why this exists rather than reusing desiredAnswer: desiredAnswer's branches are guarded on the
+ * value being present (`&& ap.desired_salary`), so on an empty profile - which is exactly the
+ * harvest case - it returns null for salary, DOB, citizenship and country alike. "No salary
+ * stored" and "not a salary question" collapse into one answer. linkQuestion was already
+ * refactored to this shape after that exact collapse shipped a bug; this generalises it.
+ *
+ * `label` must already be lowercased by the caller (questionLabel/controlIdentity both do).
+ * `type` is the input's type attribute, which beats label text where it exists.
+ */
+export function classifyField(label: string, type?: string): ProfileKey | null {
+  const l = label ?? '';
+
+  // Refusals first, and the order is load-bearing. A work-auth question CONTAINS words that map
+  // elsewhere - "authorized to work in the LOCATION where this role is based" would otherwise
+  // classify as address_city, and "...in the COUNTRY where this role is based" as
+  // address_country. That mis-mapping is R-004's exact shape. Refuse before mapping, always.
+  if (isRefusedQuestion(l)) return null;
+
+  // Input type beats label text where the browser already told us what this is.
+  if (type === 'tel') return 'phone';
+
+  // Citizenship before residence: "country of citizenship" contains "country".
+  if (CITIZENSHIP_QUESTION.test(l)) return 'citizenship';
+  if (RESIDENCE_QUESTION.test(l)) return 'address_country';
+
+  if (REFERRAL_QUESTION.test(l)) return 'referral_source_default';
+  if (SALARY_QUESTION.test(l)) return 'desired_salary';
+  if (DOB_QUESTION.test(l)) return 'date_of_birth';
+  // Term BEFORE start date, exactly as desiredAnswer orders them (R-014): "length or term/length
+  // of availability" and "how long are you available" both contain "availab", so a start-date
+  // rule that ran first would swallow them - which is the bug R-014 fixed on a live Espa form.
+  if (TERM_QUESTION.test(l)) return 'availability_term';
+  if (START_DATE_QUESTION.test(l)) return 'availability_date';
+
+  if (/linkedin/i.test(l)) return 'linkedin_url';
+  if (/github/i.test(l)) return 'github_url';
+  if (/portfolio|personal\s*(web)?site|\bwebsite\b/i.test(l)) return 'portfolio_url';
+
+  // Academic. "grade average" / "predicted classification" are what a UK intern form asks; a
+  // bare "gpa" is the US phrasing.
+  if (/\bgpa\b|grade average|grade point/i.test(l)) return 'gpa';
+  if (/gpa scale|out of.*(4\.0|100)|grading scale/i.test(l)) return 'gpa_scale';
+  if (/\bmajor\b|field of study|course of study|degree subject/i.test(l)) return 'major';
+
+  if (/phone|mobile/i.test(l)) return 'phone';
+  if (/\bcity\b|\blocation\b/i.test(l)) return 'address_city';
+  if (/\bstate\b|province/i.test(l)) return 'address_state';
+  if (/zip|postal/i.test(l)) return 'address_zip';
+
+  return null;
+}
+
 // A question asking for a profile LINK ("Please provide a link to your GitHub") must never reach
 // the open-ended AI drafter, which answers it with a prose paragraph instead of a URL (live QA
 // 2026-07-16, Xsolla/Lever). Two properties make that safe, and the adapters' old inline
@@ -291,6 +404,18 @@ export type LinkQuestion = { field: 'linkedin' | 'github' | 'portfolio'; url?: s
 // "How did you hear about us?" and friends. Shared by linkQuestion (to refuse them) and
 // desiredAnswer (to answer them), so the two can never drift apart on what counts as a referral.
 export const REFERRAL_QUESTION = /how did you hear|referral source|hear about (this|us|the)|source of/i;
+
+// "When can you start", broadened by R-014: "starting date" / "earliest possible starting date"
+// (Enpal's verbatim label) matched neither "start date" nor "earliest start". Hoisted out of
+// desiredAnswer so classifyField reads the SAME regex - two copies would drift, and the drift is
+// invisible: RoleQuick would fill one field and learn a different one.
+export const START_DATE_QUESTION =
+  /availab|start(ing)?\s+date|date.*you.*start|when can you start|earliest.*start/i;
+const SALARY_QUESTION = /salary|compensation|desired pay|expected pay|pay expectation/i;
+const DOB_QUESTION = /date of birth|birth\s*date|\bdob\b/i;
+const CITIZENSHIP_QUESTION = /citizen|nationalit/i;
+const RESIDENCE_QUESTION =
+  /country of residence|which country|country you.{0,15}(based|reside|work from|located)|where are you based|based in which country|current country|\bcountry\b/i;
 
 export function linkQuestion(label: string, ap: ApplicationProfile): LinkQuestion | null {
   // A referral question is NOT a link question, even though it routinely names LinkedIn or the
@@ -353,62 +478,68 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   // distinct from the "are you at least 18" eligibility check handled above, which stays a Yes.
   if (/current age|what is your age|age range|how old are you|\bage group\b/.test(l)) return { mode: 'decline' };
 
-  // CITIZENSHIP / nationality (checked first, most specific) -> the citizenship field. Matched on
-  // ANY "citizen"/"nationality" wording (e.g. "what country are you a citizen of?"), not just the
-  // literal "citizenship" token, so a citizenship question can never fall through to the residence
-  // rule below and get answered with the residence country (a high-stakes mis-fill for students
-  // whose citizenship differs from where they live). Citizenship is often stored as a nationality
-  // adjective ("Indian"), but a country dropdown lists the country ("India") and a combobox
-  // typeahead filters by what is typed, so map the adjective to the country up front; oneof still
-  // lets a plain-text or exact-country field accept the raw value. When citizenship is unset we
-  // leave it blank rather than guess (the residence guard below stops it filling the wrong value).
-  if (/citizen|nationalit/.test(l) && ap.citizenship) {
-    const c = ap.citizenship.trim().toLowerCase();
-    const country = NATIONALITY_TO_COUNTRY[c];
-    return country ? { mode: 'oneof', values: [country, ap.citizenship] } : { mode: 'value', value: ap.citizenship };
-  }
-  // Country of RESIDENCE / where you are based / where you intend to work from, and bare "country"
-  // location fields -> address_country (where the student lives), NOT citizenship. The leading
-  // !citizen/nationality guard enforces that split: a citizenship-worded question is handled above
-  // (or left blank when citizenship is unset), never answered with the residence country. "Which
-  // country do you intend to work from" asks about location, not nationality; the two differ.
-  if (
-    !/citizen|nationalit/.test(l) &&
-    /country of residence|which country|country you.{0,15}(based|reside|work from|located)|where are you based|based in which country|current country|\bcountry\b/.test(l) &&
-    ap.address_country
-  )
-    return { mode: 'value', value: ap.address_country };
-  // Referral / "how did you hear": the option set varies wildly per form (LinkedIn, Company
-  // website, Job board, Other, ...), so a single value rarely matches. Try the student's own
-  // answer first, then common near-synonyms, then "Other" as the safe catch-all - one of these
-  // almost always exists, so the question gets answered instead of left blank.
-  if (REFERRAL_QUESTION.test(l))
-    return {
-      mode: 'oneof',
-      values: [
-        ap.referral_source_default,
-        'company website',
-        'company careers',
-        'careers page',
-        'company site',
-        'other',
-      ].filter(Boolean) as string[],
-    };
-  if (/salary|compensation|desired pay|expected pay|pay expectation/.test(l) && ap.desired_salary)
-    return { mode: 'value', value: ap.desired_salary };
-  if (/date of birth|birth\s*date|\bdob\b/.test(l) && ap.date_of_birth)
-    return { mode: 'value', value: ap.date_of_birth };
-  // Term/duration BEFORE start date: "length or term/length of availability (10-14 weeks)" and
-  // "how long are you available" both contain "availab", so the old single /availab/ rule poured
-  // the start date into them. It answered when she can start in response to how long she can stay
-  // (R-014 facet b, live on Espa). These are two questions and now two fields.
-  if (TERM_QUESTION.test(l)) return ap.availability_term ? { mode: 'value', value: ap.availability_term } : null;
-  // "starting date" / "earliest possible starting date" (Enpal's verbatim label) matched neither
-  // "start date" nor "earliest start", so a required start-date field was never even a candidate.
-  if (/availab|start(ing)?\s+date|date.*you.*start|when can you start|earliest.*start/.test(l) && ap.availability_date)
-    return { mode: 'value', value: ap.availability_date };
+  // Everything below is a profile-field lookup, so the FIELD IDENTITY now comes from
+  // classifyField - the same classifier harvest reads with. Two copies of these regexes would
+  // drift, and the drift would be invisible: RoleQuick would fill one field and learn a different
+  // one. From here desiredAnswer's only job is shaping a stored value for the option matcher.
+  //
+  // Only the keys that were already answered here are handled. classifyField recognises more
+  // (phone, city, links, gpa, major), but those are filled by the identity-first chain in
+  // fillGenericApplication, and returning them here would start answering selects/radios that
+  // previously fell through. `default: null` keeps that behaviour exactly as it was.
+  switch (classifyField(l)) {
+    // Citizenship is often stored as a nationality adjective ("Indian") while a country dropdown
+    // lists the country ("India"), and a combobox typeahead filters by what is typed - so map the
+    // adjective up front; oneof still lets a plain-text or exact-country field take the raw value.
+    // Unset citizenship leaves the field BLANK rather than guessing: classifyField already routed
+    // this away from address_country, so a student whose citizenship differs from where they live
+    // can never have residence answered into a citizenship question.
+    case 'citizenship': {
+      if (!ap.citizenship) return null;
+      const c = ap.citizenship.trim().toLowerCase();
+      const country = NATIONALITY_TO_COUNTRY[c];
+      return country
+        ? { mode: 'oneof', values: [country, ap.citizenship] }
+        : { mode: 'value', value: ap.citizenship };
+    }
 
-  return null;
+    // Where the student LIVES, not their nationality. "Which country do you intend to work from"
+    // asks about location; the two differ and the split lives in classifyField now.
+    case 'address_country':
+      return ap.address_country ? { mode: 'value', value: ap.address_country } : null;
+
+    // The option set varies wildly per form (LinkedIn, Company website, Job board, Other, ...), so
+    // a single value rarely matches. Try the student's own answer, then near-synonyms, then
+    // "Other" as the safe catch-all. No value guard: the fallbacks stand on their own.
+    case 'referral_source_default':
+      return {
+        mode: 'oneof',
+        values: [
+          ap.referral_source_default,
+          'company website',
+          'company careers',
+          'careers page',
+          'company site',
+          'other',
+        ].filter(Boolean) as string[],
+      };
+
+    case 'desired_salary':
+      return ap.desired_salary ? { mode: 'value', value: ap.desired_salary } : null;
+    case 'date_of_birth':
+      return ap.date_of_birth ? { mode: 'value', value: ap.date_of_birth } : null;
+
+    // HOW LONG, not when (R-014). classifyField checks TERM_QUESTION before START_DATE_QUESTION
+    // for the same reason the if-chain did: both phrasings contain "availab", and answering a
+    // duration question with a start date is exactly what shipped on a live Espa form.
+    case 'availability_term':
+      return ap.availability_term ? { mode: 'value', value: ap.availability_term } : null;
+    case 'availability_date':
+      return ap.availability_date ? { mode: 'value', value: ap.availability_date } : null;
+
+    default:
+      return null;
+  }
 }
 
 // "How long", not "when". Deliberately narrow: it must beat the /availab/ rule below it without
