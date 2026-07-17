@@ -178,3 +178,34 @@ describe('classifyField (the harvest classifier)', () => {
     expect(classifyField('')).toBeNull();
   });
 });
+
+/* Merge guard. classifyField absorbed rules that landed on main while this branch was open, and
+ * the refactor could have silently reverted them: the switch replaced an if-chain wholesale, so
+ * any rule added to that chain in the meantime would have vanished with green tests. R-014 is the
+ * one that did. These pin it through the NEW code path.
+ *
+ * R-014 facet b, live on Espa: "length or term/length of availability (10-14 weeks)" and "how long
+ * are you available" both contain "availab", so a start-date rule running first poured her start
+ * date into a duration question. Two questions, two fields, and the order between them is the fix. */
+describe('classifyField preserves R-014 (term before start date)', () => {
+  it('a duration question is availability_term, not availability_date', () => {
+    expect(classifyField('length or term/length of availability (10-14 weeks)')).toBe('availability_term');
+    expect(classifyField('how long are you available?')).toBe('availability_term');
+    expect(classifyField('how many weeks are you available for the internship?')).toBe('availability_term');
+  });
+
+  it('a start-date question is still availability_date', () => {
+    expect(classifyField('when can you start?')).toBe('availability_date');
+    expect(classifyField('earliest possible starting date')).toBe('availability_date');
+    expect(classifyField('when are you available to start?')).toBe('availability_date');
+  });
+
+  it('desiredAnswer routes each to its own field, not the other', () => {
+    const ap = { availability_date: 'June 2027', availability_term: '14 weeks' } as ApplicationProfile;
+    expect(desiredAnswer('length or term/length of availability (10-14 weeks)', ap, {})).toEqual({
+      mode: 'value',
+      value: '14 weeks',
+    });
+    expect(desiredAnswer('when can you start?', ap, {})).toEqual({ mode: 'value', value: 'June 2027' });
+  });
+});
