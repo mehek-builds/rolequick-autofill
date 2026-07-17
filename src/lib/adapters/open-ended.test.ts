@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isOpenEndedQuestion, fitToBudget } from './generic';
+import { GENERIC_LINK_ASK, isOpenEndedQuestion, fitToBudget } from './generic';
 
 // R-033's pure halves: which labels count as prose questions, and how a drafted answer meets a
 // character budget. Both err toward "leave it for the student": a false negative here is a
@@ -101,5 +101,28 @@ describe('isOpenEndedQuestion: live Cresta phrasing (2026-07-17)', () => {
     expect(isOpenEndedQuestion('Note')).toBe(false);
     expect(isOpenEndedQuestion('Notes')).toBe(false);
     expect(isOpenEndedQuestion('Additional note')).toBe(false);
+  });
+});
+
+describe('GENERIC_LINK_ASK (the R-033 gate\'s link-ask veto, R-008 reopened through the drafter)', () => {
+  it('matches questions that ask for a link or URL, whatever the link is TO', () => {
+    // The audit case: fires isOpenEndedQuestion on `share\b`, names no platform, classifies to
+    // no profile field - so only this veto stands between it and a drafted prose paragraph.
+    expect(GENERIC_LINK_ASK.test("share a link to something you've built")).toBe(true);
+    expect(GENERIC_LINK_ASK.test('please provide a url to a project you are proud of')).toBe(true);
+    expect(GENERIC_LINK_ASK.test('links to relevant work*')).toBe(true);
+  });
+
+  it('does NOT match genuine essay asks (lighter than linkQuestion\'s asksForLink on purpose)', () => {
+    // "handle"/"profile"/"username" belong to linkQuestion\'s broader check; as a drafter veto
+    // they would flag real essays. These must all stay draftable.
+    expect(GENERIC_LINK_ASK.test('how do you handle conflict on a team?')).toBe(false);
+    expect(GENERIC_LINK_ASK.test('tell us how your profile fits this role')).toBe(false);
+    expect(GENERIC_LINK_ASK.test('why do you want to work at linkedin?')).toBe(false);
+    expect(
+      GENERIC_LINK_ASK.test(
+        'please share 3-5 sentences explaining your interest in the blockchain/web3 industry.*',
+      ),
+    ).toBe(false);
   });
 });

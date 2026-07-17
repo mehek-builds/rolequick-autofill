@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fillGreenhouseApplication } from './greenhouse';
+import { skippedReasonsNeedReview } from '../autosubmit-gate';
 import type { ApplicationProfile, Profile } from '../types';
 
 // R-032 + R-033 against the real adapter in a Greenhouse-shaped DOM. The R-032 half exercises the
@@ -472,5 +473,228 @@ describe('R-033: required open-ended input[type=text]', () => {
     expect(draftAnswer).toHaveBeenCalledTimes(1);
     expect(ta.value).toBe('Because the problem is real. I want to build for support teams.');
     expect(result.ai_drafted).toBe(1);
+  });
+});
+
+describe('language questions (declared-list authority), through the real Greenhouse loop', () => {
+  // The live ZURU phrasing, verbatim (2026-07-17). The whole preamble rides in the container
+  // text, which is exactly what labelTextFor hands the classifier.
+  const ZURU =
+    'This role involves working closely with our team in Mexico, so Spanish language skills are ' +
+    'preferred but not essential. Are you comfortable communicating in Spanish in a professional setting?';
+  const declared = ['English', 'Hindi', 'Arabic', 'French'];
+
+  function baseFormFields(): void {
+    const { first, last, email } = coreFields();
+    for (const el of [first, last, email]) markReactManaged(el);
+  }
+
+  function radioQuestion(labelText: string, name: string, options: string[]): Record<string, HTMLInputElement> {
+    const w = document.createElement('div');
+    w.className = 'field-wrapper';
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    w.appendChild(label);
+    const els: Record<string, HTMLInputElement> = {};
+    options.forEach((opt, i) => {
+      const r = document.createElement('input');
+      r.type = 'radio';
+      r.name = name;
+      r.id = `${name}_${i}`;
+      const optionLabel = document.createElement('label');
+      optionLabel.htmlFor = r.id;
+      optionLabel.textContent = opt;
+      w.appendChild(r);
+      w.appendChild(optionLabel);
+      els[opt] = r;
+    });
+    document.body.appendChild(w);
+    return els;
+  }
+
+  function selectQuestion(labelText: string, options: string[]): HTMLSelectElement {
+    const w = document.createElement('div');
+    w.className = 'field-wrapper';
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    w.appendChild(label);
+    const select = document.createElement('select');
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Select...';
+    select.appendChild(placeholder);
+    for (const opt of options) {
+      const o = document.createElement('option');
+      o.value = opt;
+      o.textContent = opt;
+      select.appendChild(o);
+    }
+    w.appendChild(select);
+    document.body.appendChild(w);
+    return select;
+  }
+
+  function run(languages?: string[], draftAnswer?: (q: string) => Promise<string | null>) {
+    return fillGreenhouseApplication({
+      fullName: 'Mehek Mandal',
+      email: 'mehekman@usc.edu',
+      profile,
+      applicationProfile: { languages } as ApplicationProfile,
+      draftAnswer,
+    });
+  }
+
+  it('ZURU radios, Spanish not declared: fills No, review-flagged, and the flag holds auto-submit', async () => {
+    baseFormFields();
+    const radios = radioQuestion(ZURU, 'zuru_spanish', ['Yes', 'No']);
+
+    const result = await run(declared);
+
+    expect(radios['No'].checked).toBe(true);
+    expect(radios['Yes'].checked).toBe(false);
+    expect(result.skipped_reasons.some((r) => /answered No \(spanish is not in your declared languages\)/.test(r))).toBe(true);
+    expect(skippedReasonsNeedReview(result.skipped_reasons)).toBe(true);
+  });
+
+  it('ZURU radios, Spanish declared: a clean Yes with no language flag', async () => {
+    baseFormFields();
+    const radios = radioQuestion(ZURU, 'zuru_spanish', ['Yes', 'No']);
+
+    const result = await run([...declared, 'Spanish']);
+
+    expect(radios['Yes'].checked).toBe(true);
+    expect(result.skipped_reasons.some((r) => /language|declared languages/.test(r))).toBe(false);
+  });
+
+  it('Enpal-style German level select, German not declared: lowest honest option + review flag', async () => {
+    baseFormFields();
+    const select = selectQuestion('Wie gut sind deine Deutschkenntnisse?', [
+      'Keine Kenntnisse',
+      'Grundkenntnisse',
+      'Fließend',
+      'Muttersprache',
+    ]);
+
+    const result = await run(declared);
+
+    expect(select.value).toBe('Keine Kenntnisse');
+    expect(result.skipped_reasons.some((r) => /picked the lowest german level.*review before submitting/.test(r))).toBe(true);
+    expect(skippedReasonsNeedReview(result.skipped_reasons)).toBe(true);
+  });
+
+  it('English level select, English declared: the fluent tier, never Native', async () => {
+    baseFormFields();
+    const select = selectQuestion('English level', ['Basic', 'Conversational', 'Fluent', 'Native']);
+
+    const result = await run(declared);
+
+    expect(select.value).toBe('Fluent');
+    expect(result.skipped_reasons.some((r) => /language|declared languages/.test(r))).toBe(false);
+  });
+
+  it('empty declared list: always-ask, nothing selected, and the reason holds auto-submit', async () => {
+    baseFormFields();
+    const radios = radioQuestion(ZURU, 'zuru_spanish', ['Yes', 'No']);
+
+    const result = await run(undefined);
+
+    expect(radios['Yes'].checked).toBe(false);
+    expect(radios['No'].checked).toBe(false);
+    expect(result.skipped_reasons.some((r) => /language question left for you \(no languages declared/.test(r))).toBe(true);
+    expect(skippedReasonsNeedReview(result.skipped_reasons)).toBe(true);
+  });
+
+  it('a language question rendered as a required text input is flagged, never drafted (the R-033 gate is behind the language branch)', async () => {
+    // ZURU's label ends in a question mark and is over 40 chars, so isOpenEndedQuestion fires on
+    // it: without the language branch terminating the block, the R-033 gate would draft a prose
+    // claim about her Spanish. It must flag instead.
+    baseFormFields();
+    const q = textInput('question_lang');
+    q.required = true;
+    markReactManaged(q);
+    wrapper(ZURU, q);
+    const draftAnswer = vi.fn(async (_q: string) => 'should never be called for a language question');
+
+    const result = await run(declared, draftAnswer);
+
+    expect(draftAnswer).not.toHaveBeenCalled();
+    expect(q.value).toBe('');
+    expect(result.skipped_reasons.some((r) => /language question left for you/.test(r))).toBe(true);
+  });
+});
+
+describe('R-033 drafter gate: generic link asks are never drafted as prose (R-008 reopened)', () => {
+  // The audit case: `share\b` fires isOpenEndedQuestion, no platform name for linkQuestion, no
+  // profile key for classifyField - before the GENERIC_LINK_ASK veto, this REQUIRED URL-expecting
+  // input received a drafted prose paragraph.
+  const LINK_ASK_LABEL = "Share a link to something you've built*";
+
+  function requiredInput(labelText: string): HTMLInputElement {
+    const q = textInput('question_link');
+    q.required = true;
+    markReactManaged(q);
+    wrapper(labelText, q);
+    return q;
+  }
+
+  function baseFormFields(): void {
+    const { first, last, email } = coreFields();
+    for (const el of [first, last, email]) markReactManaged(el);
+  }
+
+  it('flags the link-ask input via linkSkipReason and never calls the drafter', async () => {
+    baseFormFields();
+    const q = requiredInput(LINK_ASK_LABEL);
+    const draftAnswer = vi.fn(async (_q: string) => 'A prose paragraph that must never reach a URL field.');
+
+    const result = await fillGreenhouseApplication({
+      fullName: 'Mehek Mandal',
+      email: 'mehekman@usc.edu',
+      profile,
+      applicationProfile: {},
+      draftAnswer,
+    });
+
+    expect(draftAnswer).not.toHaveBeenCalled();
+    expect(q.value).toBe('');
+    // linkSkipReason's wording, and it must hold auto-submit.
+    expect(result.skipped_reasons.some((r) => /link question left for you/.test(r))).toBe(true);
+    expect(skippedReasonsNeedReview(result.skipped_reasons)).toBe(true);
+  });
+
+  it('still drafts a genuine open-ended input that merely uses the same verb (both directions)', async () => {
+    baseFormFields();
+    const q = requiredInput('Please share what excites you about this role.*');
+    q.maxLength = 255;
+    const draftAnswer = vi.fn(async (_q: string) => 'The product is real and the team ships. I want to build that.');
+
+    const result = await fillGreenhouseApplication({
+      fullName: 'Mehek Mandal',
+      email: 'mehekman@usc.edu',
+      profile,
+      applicationProfile: {},
+      draftAnswer,
+    });
+
+    expect(draftAnswer).toHaveBeenCalledTimes(1);
+    expect(q.value).toBe('The product is real and the team ships. I want to build that.');
+    expect(result.ai_drafted).toBe(1);
+  });
+
+  it('an OPTIONAL link-ask input is flagged with the link wording too, not the generic blank line', async () => {
+    baseFormFields();
+    const q = textInput('question_link_opt');
+    markReactManaged(q);
+    wrapper("Share a link to something you've built", q);
+
+    const result = await fillGreenhouseApplication({
+      fullName: 'Mehek Mandal',
+      email: 'mehekman@usc.edu',
+      profile,
+      applicationProfile: {},
+    });
+
+    expect(q.value).toBe('');
+    expect(result.skipped_reasons.some((r) => /link question left for you/.test(r))).toBe(true);
   });
 });
