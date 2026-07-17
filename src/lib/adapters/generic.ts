@@ -680,7 +680,13 @@ const LANG_KENNTNISSE_RE = new RegExp(`\\b(${LANG_ALT})[\\s-]*(?:sprach)?kenntni
 const LANG_LEVEL_SHAPE = new RegExp(
   `\\b(?:${LANG_ALT})\\s+(?:language\\s+)?(?:level|niveau)\\b` +
     `|\\b(?:level|niveau)\\s+(?:of|in|de)\\s+(?:\\w+\\s+){0,2}(?:${LANG_ALT})\\b` +
-    `|\\b(?:${LANG_ALT})[\\s-]*(?:sprach)?kenntnisse`,
+    `|\\b(?:${LANG_ALT})[\\s-]*(?:sprach)?kenntnisse` +
+    // "How would you describe your German language skills?" (Enpal, live 2026-07-17) is a LEVEL
+    // ask phrased without the word "level" - its radio options are CEFR bands. A describe/rate
+    // stem only counts as a level shape when a skills/proficiency/ability/level tail follows the
+    // language name; without that tail ("would you describe yourself as fluent in X") the yes/no
+    // shape below keeps it, so the ZURU comfort phrasing cannot be re-routed here.
+    `|\\b(?:describe|rate|assess|evaluate)\\b[^?.]*\\b(?:${LANG_ALT})\\b[^?.]*\\b(?:language\\s+)?(?:skills?|proficiency|ability|level)\\b`,
 );
 
 // (a) yes/no comfort/fluency questions naming a language: "comfortable communicating in X",
