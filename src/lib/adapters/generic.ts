@@ -6,6 +6,15 @@ import {
   pickComboOption,
   closeOpenCombobox,
 } from './shared/dom';
+import {
+  dateOrderCandidates,
+  formatDate,
+  isDateControl,
+  parseStoredDate,
+  valueHoldsDate,
+  type DateOrder,
+  type DateParts,
+} from './shared/dates';
 
 // Generic adapter for companies that build their OWN application form on their own domain
 // against an ATS's API (live-tested targets 2026-07-04: vercel.com/careers - Greenhouse API
@@ -212,15 +221,26 @@ export function getGenericJobDetails(): { title: string; company: string } {
 // the option matcher; 'decline' matches an opt-out option; 'value' substring-matches.
 
 export type Desired =
-  | { mode: 'value'; value: string }
-  | { mode: 'oneof'; values: string[] }
+  | { mode: 'value'; value: string; exact?: true }
+  | { mode: 'oneof'; values: string[]; exact?: true }
   | { mode: 'yes' }
   | { mode: 'no' }
   | { mode: 'decline' }
   | null;
 
+// `exact: true` opts a question OUT of the single-hit widening in matchOption - only an exact
+// option match commits, anything else is left for the student. Set it wherever "close enough" is
+// the wrong answer rather than a helpful one. See eeoAnswer.
 export function eeoAnswer(pref: string | undefined): Desired {
-  return pref && pref.trim() ? { mode: 'value', value: pref.trim() } : { mode: 'decline' };
+  // Demographics are exact-match-only (Mehek's ruling, 2026-07-17, closing the R-018 judgement
+  // call). The widening that usefully turns "Korea" -> "Korea, Republic of" on a country dropdown
+  // is actively wrong on a protected characteristic: a student who stored "Male" must never be
+  // silently committed to "Male (cisgender)" on a form offering no plain "Male", because that is
+  // a different statement about them, not a formatting variant of the same one. A demographic
+  // field is exactly where a blank left for the student beats a confident near-miss - and an
+  // unmatched EEO option is safe to leave, since these questions are near-universally optional
+  // or carry a decline option. Country-style widening keeps its own rule, unchanged.
+  return pref && pref.trim() ? { mode: 'value', value: pref.trim(), exact: true } : { mode: 'decline' };
 }
 
 // Work-eligibility questions (work authorization AND visa sponsorship) are location-scoped
@@ -378,11 +398,23 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
     return { mode: 'value', value: ap.desired_salary };
   if (/date of birth|birth\s*date|\bdob\b/.test(l) && ap.date_of_birth)
     return { mode: 'value', value: ap.date_of_birth };
-  if (/availab|start date|when can you start|earliest start/.test(l) && ap.availability_date)
+  // Term/duration BEFORE start date: "length or term/length of availability (10-14 weeks)" and
+  // "how long are you available" both contain "availab", so the old single /availab/ rule poured
+  // the start date into them. It answered when she can start in response to how long she can stay
+  // (R-014 facet b, live on Espa). These are two questions and now two fields.
+  if (TERM_QUESTION.test(l)) return ap.availability_term ? { mode: 'value', value: ap.availability_term } : null;
+  // "starting date" / "earliest possible starting date" (Enpal's verbatim label) matched neither
+  // "start date" nor "earliest start", so a required start-date field was never even a candidate.
+  if (/availab|start(ing)?\s+date|date.*you.*start|when can you start|earliest.*start/.test(l) && ap.availability_date)
     return { mode: 'value', value: ap.availability_date };
 
   return null;
 }
+
+// "How long", not "when". Deliberately narrow: it must beat the /availab/ rule below it without
+// swallowing a plain "When are you available to start?", which is a start-date question.
+const TERM_QUESTION =
+  /(length|duration|term)\b.*\bavailab|availab.*\b(length|duration|term)\b|how long.*(available|intern|stay|commit)|(weeks|months).*\b(available|internship|commit)|\bterm\s*\/?\s*length/i;
 
 // Opt-out wordings for EEO/demographic questions. Broadened beyond "decline/prefer not" to catch
 // the common "Choose not to disclose" / "I do not wish to identify" phrasings that ATSes use, so a
@@ -437,6 +469,10 @@ export function matchOption<T extends { text: string }>(options: T[], desired: D
   const matchValue = (raw: string): T | null => {
     const base = norm(raw);
     if (!base) return null;
+    // Exact-only questions (EEO/demographics) stop here: no widening, no nationality mapping, no
+    // reverse match. Either the form offers the student's own stored answer verbatim, or nobody
+    // answers it for them. See eeoAnswer for why demographics get this and countries don't.
+    if (desired.exact) return options.find((o) => norm(o.text) === base) ?? null;
     // A citizenship stored as a nationality adjective ("Indian") will never match a country
     // option ("India"), so also try the mapped country name - lets country / "which country do
     // you intend to work from" questions fill from a nationality-valued citizenship field.
@@ -473,6 +509,53 @@ export function matchOption<T extends { text: string }>(options: T[], desired: D
 }
 
 // ─── DOM fillers ────────────────────────────────────────────────────────────
+
+// Why the stored value could not be written as a date. The "left for" wording is load-bearing:
+// autosubmit-gate's REVIEW_FLAG matches it, so an unwritable date HOLDS auto-submit instead of
+// letting the countdown fire into a form the ATS will bounce (R-014).
+export function dateSkipReason(stored: string, label: string): string {
+  const why = parseStoredDate(stored)
+    ? 'the field would not accept it'
+    : `"${stored.slice(0, 24)}" is not an unambiguous date`;
+  return `date left for you: "${label}" (${why})`;
+}
+
+// Write `parts` in `order` and report whether the widget's own state kept that exact day.
+async function writeAndVerify(el: HTMLInputElement, parts: DateParts, order: DateOrder): Promise<boolean> {
+  await randomDelay();
+  el.focus();
+  setNativeValue(el, formatDate(parts, order));
+  el.blur();
+  // Let a controlled component re-render before reading: React may clear a value it rejected,
+  // and reading synchronously would see our own text still sitting in the box and call it a pass.
+  await new Promise((r) => setTimeout(r, 60));
+  return valueHoldsDate(el.value, parts, order);
+}
+
+// Write a date and PROVE it landed. Every attempt is read back, because the failure this exists to
+// stop is invisible: the widget shows the text while its state holds nothing, so a write that is
+// assumed to have worked is exactly how a required field reaches submit empty.
+//
+// Only ever writes HER date, in an order dateOrderCandidates has established is safe to try. A
+// version of this probed unmasked widgets first, by writing a date that was not hers and seeing
+// which order survived. It is deleted and must not come back: a controlled widget's state follows
+// only a successful parse while setNativeValue moves only text, so a probe that lands cannot be
+// withdrawn, and that one shipped a date from nowhere into a real application while reporting
+// success. See dateOrderCandidates for why it was also unreachable.
+export async function fillDateField(el: HTMLInputElement, stored: string): Promise<boolean> {
+  const parts = parseStoredDate(stored);
+  if (!parts) return false; // "Immediately", or an ambiguous 03/04/2026 - never guess into a date
+
+  for (const order of dateOrderCandidates(el, parts)) {
+    if (await writeAndVerify(el, parts, order)) return true;
+  }
+
+  // Nothing round-tripped. Leave the field genuinely empty rather than parked with a value the
+  // form has already rejected - a visibly-filled dead field is what made this bug cost 4 round
+  // trips to diagnose in the first place.
+  setNativeValue(el, '');
+  return false;
+}
 
 async function fillTextField(el: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
   await randomDelay();
@@ -589,6 +672,20 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
       } else if (id) {
         fields_skipped++;
         skipped_reasons.push(`unrecognized field left blank: "${short(id)}"`);
+      }
+      continue;
+    }
+
+    // Date fields go through the formatter, never the plain text filler: a raw locale string is
+    // silently dropped by a picker expecting the other order, leaving a field that LOOKS answered
+    // and blocks the submit (R-014). fillDateField reads the value back and only counts a write
+    // that actually committed.
+    if (value && isDateControl(el, id)) {
+      if (await fillDateField(el as HTMLInputElement, value)) {
+        fields_filled++;
+      } else {
+        fields_skipped++;
+        skipped_reasons.push(dateSkipReason(value, short(id)));
       }
       continue;
     }

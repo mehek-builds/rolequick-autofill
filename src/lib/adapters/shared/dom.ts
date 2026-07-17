@@ -54,6 +54,127 @@ export function splitName(fullName: string): { first: string; last: string } {
   return { first: parts[0] ?? '', last: parts.slice(1).join(' ') };
 }
 
+// ATS labels are author-written, so a phone field is not reliably labelled "Phone". Live-caught
+// 2026-07-17 (R-020): Enpal's Ashby board labels its REQUIRED phone field just "Number", which
+// `/\bphone\b/` misses, so the field came back empty on a form where the profile HAD the number.
+// That is the worst class of non-fill - not "we lack the data" but "we had it and missed".
+//
+// This matcher took four attempts. Each earlier one fixed its own bug and created the opposite one,
+// so the ORDER of the rules below is the design, not an accident:
+//
+//   0. Third-party veto, ahead of everything. Not her number, whatever else the label says.
+//   1. An unambiguous phone word, on any control type (plenty of boards use `type="text"`).
+//   2. The control's own `autocomplete`, the only attribute with spec-defined phone semantics.
+//   3. A number word on a tel control, with an ALLOWLISTED qualifier next to it. Default deny.
+//
+// Rule 3 is default-deny because the failure modes are not symmetric: a missed phone label is a
+// blank box the student fills in (recoverable), while a wrong match types her phone number into
+// someone else's field (not). Both a substring match and a denylist were tried and both leaked the
+// bad direction: a denylist of "what the number is for" cannot enumerate the world's ID systems, so
+// "National Insurance number", "Emirates ID number", "Aadhaar number" and "Fax number" all sailed
+// through into her phone number.
+
+// Rule 0. Beats every tier: these ask for someone else's number, so a phone word in the label is a
+// reason to REFUSE, not to fill. "Emergency contact phone" and "Reference's phone number" both
+// matched rule 1 and got hers.
+const THIRD_PARTY_RE = /\b(reference|references|referee|referees|emergency|guardian|next of kin|kin)\b/i;
+
+// Rule 1. `tel` is deliberately NOT here: it lived here for one commit and matched "Preferred
+// office: Tel Aviv or Berlin" on a plain text field. It survives in rule 3's qualifier list, where
+// the tel-control gate and the adjacent number word keep it honest.
+//
+// The optional German suffixes are load-bearing: `\btelefon\b` cannot match inside "Telefonnummer"
+// because a compound has no interior word boundary, so the standard German phone label was missed
+// outright - on Enpal, the German board R-020 came from. The trailing \b still rejects "Mobility"
+// and "Handyman", which is why the suffixes are spelled out rather than the boundary dropped.
+const PHONE_LABEL_RE =
+  /\b(phone|telephone|telnr|telefon(?:nummer|nr)?|mobil(?:e|nummer)?|cell(?:phone)?|handy(?:nummer)?)\b/i;
+
+// Rule 2. Tested per TOKEN, because autocomplete is a token list, not a value: the grammar is
+// `[section-*] [shipping|billing] [home|work|mobile|fax|pager] tel`, so `autocomplete="home tel"`
+// is the canonical way to mark a home phone and `"shipping tel"` is legal too. `name`/`id` were
+// tried here and dropped: they are author prose in an attribute, so a stray "mobile" in an id spoke
+// over the label entirely.
+const PHONE_AUTOCOMPLETE_TOKEN_RE = /^tel(-|$)/i;
+
+function declaresPhoneAutocomplete(value: string): boolean {
+  return value.trim().split(/\s+/).some((token) => PHONE_AUTOCOMPLETE_TOKEN_RE.test(token));
+}
+
+// Rule 3. The number word, and the qualifiers allowed to sit beside it.
+//
+// ADJACENCY is what makes an allowlist work. A bag-of-words allowlist leaks the bad direction just
+// like the denylist did: "Number of hours you can work per week" contains "work", and "work" is a
+// perfectly good phone qualifier - but only when it is touching the number word. "Work number"
+// fills; "Number of hours you can work" does not, because the token next to "number" is "of".
+// `nr` is deliberately NOT here, though `number` and `nummer` are. German address forms split the
+// street into `Straße` and `Nr.`, and a house-number box is exactly the numeric-keypad field that
+// gets `type="tel"` - so a bare `Nr.` on a tel control would take her phone number as her house
+// number, on Enpal, the German board BOTH R-014 and R-020 came from. `nr` was not in the original
+// matcher (`number|nummer|tel|no`); it was added during this work and is now walked back.
+const NUMBER_WORDS = new Set(['number', 'nummer']);
+// Tokens a label can be made ENTIRELY of and still just mean "your number": "Tel", "Tel No",
+// "Tel. Nr", "Nummer". Wider than NUMBER_WORDS, because a token can be part of a bare phone label
+// without being evidence of one on its own - a lone "No" or "Nr." means nothing, while "Tel Nr"
+// plainly does. Hence the second condition below: something here must be a real number word or
+// `tel` before any of this counts.
+const BARE_PHONE_TOKENS = new Set([...NUMBER_WORDS, 'no', 'nr', 'tel', 'telefon']);
+const PHONE_QUALIFIERS = new Set([
+  'contact', 'best', 'primary', 'secondary', 'alternate', 'alternative', 'preferred', 'main',
+  // `personal` is deliberately absent: "Personal number" is the standard English rendering of the
+  // Nordic personnummer, the national identity number, and Swedish/Norwegian boards ask for it in
+  // exactly those words. Losing "Personal number" as a phone label costs a blank box; keeping it
+  // costs her phone number in a national-ID field. `private` carries no such collision.
+  'private', 'your', 'my', 'work', 'home', 'daytime', 'evening', 'mobile', 'cell',
+  'tel', 'telephone', 'phone', 'whatsapp', 'sms', 'landline',
+]);
+// A label can also earn it by saying what the number is used FOR, when that use is contacting her.
+const PHONE_PURPOSE_RE = /\b(reach|call|contact|text|message)\s+(you|me)\b|\bschedule\b|\binterview/i;
+
+// Strip decoration so the tokens are the words the author actually wrote. "Number *", "Number:",
+// "Number ✱" and "Number (required)" are all the same label.
+const DECORATION_RE = /\b(required|optional|mandatory)\b/gi;
+
+function labelTokens(label: string): string[] {
+  return label
+    .toLowerCase()
+    .replace(DECORATION_RE, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+// Is the number word in this label qualified as HERS, or is it some other number entirely?
+function numberIsPhoneShaped(label: string): boolean {
+  const tokens = labelTokens(label);
+  if (tokens.length === 0) return false;
+
+  // The whole label is number-ish and nothing else: "Number" (Enpal's real field), "Tel", "Tel No".
+  // Requires a real number word or "tel" present, so a lone "No" does not qualify.
+  if (tokens.every((t) => BARE_PHONE_TOKENS.has(t)) && tokens.some((t) => NUMBER_WORDS.has(t) || t === 'tel')) {
+    return true;
+  }
+
+  const i = tokens.findIndex((t) => NUMBER_WORDS.has(t));
+  if (i === -1) return false;
+  // "Contact number", "Work number" - the qualifier must be TOUCHING the number word. "Number of
+  // hours you can work per week" also contains "work", three tokens away, and is not her phone.
+  if (i > 0 && PHONE_QUALIFIERS.has(tokens[i - 1])) return true;
+  // Or the label says the number is for contacting her: "Number to reach you on", "Number we will
+  // use to schedule interviews".
+  return PHONE_PURPOSE_RE.test(tokens.join(' '));
+}
+
+export function isPhoneLabel(label: string, el?: Element | null): boolean {
+  if (THIRD_PARTY_RE.test(label)) return false;
+  if (PHONE_LABEL_RE.test(label)) return true;
+  const input = el as HTMLInputElement | null;
+  if (!input) return false;
+  if (declaresPhoneAutocomplete(input.getAttribute?.('autocomplete') ?? '')) return true;
+  if (input.type !== 'tel') return false;
+  return numberIsPhoneShaped(label);
+}
+
 // Radios that carry no meaningful `value` (Ashby/LinkedIn use "on"): the real option text lives
 // in the associated `label[for=radio.id]`. Returns each radio paired with its label text.
 export function radioOptionsIn(block: Element): Array<{ radio: HTMLInputElement; text: string }> {

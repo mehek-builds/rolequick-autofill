@@ -42,8 +42,8 @@ describe('desiredAnswer', () => {
     expect(desiredAnswer('do you have a disability?', ap(), {})).toEqual({ mode: 'decline' });
   });
 
-  it('uses a stored EEO preference as a value when present', () => {
-    expect(desiredAnswer('what is your gender?', ap(), { gender: 'Woman' })).toEqual({ mode: 'value', value: 'Woman' });
+  it('uses a stored EEO preference as a value when present, exact-match-only', () => {
+    expect(desiredAnswer('what is your gender?', ap(), { gender: 'Woman' })).toEqual({ mode: 'value', value: 'Woman', exact: true });
   });
 
   it('does not pull "do you identify as transgender?" into the gender-value rule', () => {
@@ -72,7 +72,14 @@ describe('eeoAnswer', () => {
   it('declines on empty/whitespace, values otherwise', () => {
     expect(eeoAnswer(undefined)).toEqual({ mode: 'decline' });
     expect(eeoAnswer('   ')).toEqual({ mode: 'decline' });
-    expect(eeoAnswer('Woman')).toEqual({ mode: 'value', value: 'Woman' });
+    expect(eeoAnswer('Woman')).toEqual({ mode: 'value', value: 'Woman', exact: true });
+  });
+
+  // Mehek's ruling, 2026-07-17 (the R-018 judgement call). DO NOT drop `exact` to "make country
+  // dropdowns and EEO share one rule" - the widening is correct for countries and wrong here, and
+  // the exact-only tests below are what pin that difference.
+  it('marks demographics exact-match-only so a near-miss is never committed', () => {
+    expect(eeoAnswer('Male')).toEqual({ mode: 'value', value: 'Male', exact: true });
   });
 });
 
@@ -126,6 +133,31 @@ describe('matchOption', () => {
     expect(matchOption(opts('Female', 'Non-binary'), { mode: 'value', value: 'Male' })).toBeNull();
     // ...but a real exact/word-boundary match still works.
     expect(matchOption(opts('White/Caucasian', 'Asian', 'Hispanic'), { mode: 'value', value: 'Asian' })?.text).toBe('Asian');
+    expect(matchOption(opts('Korea, Republic of', 'Japan'), { mode: 'value', value: 'Korea' })?.text)
+      .toBe('Korea, Republic of');
+  });
+
+  // The other half of Mehek's R-018 ruling: word-boundary matching stops the "Male" -> "Female"
+  // class of mis-select, but it does NOT stop "Male" -> "Male (cisgender)", which is a real word
+  // -boundary hit on a genuinely different statement. `exact` is what stops that, and it is set
+  // only for demographics (eeoAnswer), never for countries.
+  it('commits an exact demographic option', () => {
+    expect(matchOption(opts('Male', 'Female', 'Non-binary'), { mode: 'value', value: 'Male', exact: true })?.text)
+      .toBe('Male');
+  });
+
+  it('leaves a demographic near-miss blank instead of widening to a variant', () => {
+    // A word-boundary match, and still the wrong answer: "Male (cisgender)" is a different claim
+    // about the student than "Male". Exact-only leaves it for them to answer themselves.
+    expect(matchOption(opts('Male (cisgender)', 'Female (cisgender)', 'Non-binary'),
+      { mode: 'value', value: 'Male', exact: true })).toBeNull();
+    expect(matchOption(opts('Asian or Pacific Islander', 'White'),
+      { mode: 'value', value: 'Asian', exact: true })).toBeNull();
+  });
+
+  it('keeps the country widening for non-exact values', () => {
+    // Guards the ruling's other side: exact-only must not leak into country/citizenship matching,
+    // where "Korea" -> "Korea, Republic of" is the helpful, correct answer.
     expect(matchOption(opts('Korea, Republic of', 'Japan'), { mode: 'value', value: 'Korea' })?.text)
       .toBe('Korea, Republic of');
   });

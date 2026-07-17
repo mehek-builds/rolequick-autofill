@@ -106,7 +106,14 @@ export interface ApplicationProfile {
   citizenship?: string;
   work_authorized?: boolean;
   needs_sponsorship?: boolean;
+  // WHEN she can start. Store ISO YYYY-MM-DD: a locale-shaped string ("18/07/2026") is silently
+  // dropped by an MM/DD/YYYY picker (R-014). Adapters format it at write time via shared/dates.
   availability_date?: string;
+  // HOW LONG she is available ("14 weeks"), a separate question from when she can start. These
+  // were one opaque string, so Espa's "Length or term/length of availability (10-14 weeks)" got
+  // answered "Immediately" - a start time in answer to a duration. Not blocking, but it reads as
+  // a careless application, which is the exact opposite of the product's promise.
+  availability_term?: string;
   desired_salary?: string;
   date_of_birth?: string;
   eeo_prefs?: Record<string, string> | null;
