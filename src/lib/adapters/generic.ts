@@ -454,8 +454,12 @@ export function isOpenEndedQuestion(label: string): boolean {
   // Essay-ish verbs and asks. Stems (describ\w+, explain\w*) rather than \b-bounded whole words,
   // because "explaining"/"describing" are how the live Gemini label was phrased and a boundary
   // after "explain" misses them.
+  // "include a brief note on the type of problems you most enjoy working on" is the live Cresta
+  // SWE Intern label (2026-07-17): no verb from the list below, no question mark, and a required
+  // 255-char input left undrafted. "brief note" and "you (most) enjoy" are prose asks the way
+  // "describe" is - a field label names a field, it does not invite a note about enjoyment.
   if (
-    /\b(why\b|describ\w+|explain\w*|tell (?:us|me)\b|share\b|elaborat\w+|discuss\b|sentences?\b|paragraphs?\b|in your own words|what interest\w*|what excit\w*|what motivat\w*|what makes\b|how (?:did|do|would|have) you)/.test(l)
+    /\b(why\b|describ\w+|explain\w*|tell (?:us|me)\b|share\b|elaborat\w+|discuss\b|sentences?\b|paragraphs?\b|in your own words|what interest\w*|what excit\w*|what motivat\w*|what makes\b|how (?:did|do|would|have) you|brief note\b|note on\b|you (?:most )?enjoy\b)/.test(l)
   )
     return true;
   // A long interrogative label is a question being asked, not a field being named. Short

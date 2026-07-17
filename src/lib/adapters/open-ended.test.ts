@@ -83,3 +83,23 @@ describe('fitToBudget', () => {
     expect(fitToBudget('   ', 255)).toBeNull();
   });
 });
+
+describe('isOpenEndedQuestion: live Cresta phrasing (2026-07-17)', () => {
+  it('recognises the exact Cresta SWE Intern label that shipped undrafted', () => {
+    // Verbatim from job-boards.greenhouse.io/cresta/jobs/4123841008, where the gate refused to
+    // draft: no listed verb, no question mark. "brief note" and "you most enjoy" are the signals.
+    expect(
+      isOpenEndedQuestion(
+        'To help us find the best team match, please include a brief note on the type of problems you most enjoy working on. For example: *',
+      ),
+    ).toBe(true);
+  });
+
+  it('does not turn short field labels into essays', () => {
+    // The widened vocabulary must not make a plain note/enjoyment field an essay invitation on
+    // its own; these stay closed because they are field names, not prose asks.
+    expect(isOpenEndedQuestion('Note')).toBe(false);
+    expect(isOpenEndedQuestion('Notes')).toBe(false);
+    expect(isOpenEndedQuestion('Additional note')).toBe(false);
+  });
+});
