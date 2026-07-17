@@ -49,7 +49,7 @@ import {
 import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { dateSkipReason, desiredAnswer, fillDateField, isDraftableQuestion, linkQuestion, linkSkipReason, locationComboQueries, locationQuestion, locationSkipReason, matchOption, unreadableQuestionSkipReason, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { dateSkipReason, desiredAnswer, fillDateField, isDraftableQuestion, languageAnswerPlan, languageSkipReason, linkQuestion, linkSkipReason, locationComboQueries, locationQuestion, locationSkipReason, matchOption, unreadableQuestionSkipReason, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 import { isDateControl } from './shared/dates';
 import { htmlToPlainText, JD_UNREADABLE, looksLikeJobDescription } from './shared/jd';
 
@@ -669,6 +669,34 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
       continue;
     }
 
+    // Language proficiency, via the one shared classifier (see languageQuestion in generic.ts).
+    // Answered ONLY from the student's declared list (declared-list authority, R-015's lesson).
+    // Placed AFTER the work-eligibility and EEO branches (refusal precedence, locationQuestion's
+    // ordering doctrine) - languageAnswerPlan re-checks those refusals internally, so a
+    // regression in either ordering alone cannot route a legal question to a language answer.
+    // ALWAYS terminates the block: fill (a not-declared No or lowest level also pushes a review
+    // reason that HOLDS auto-submit) or flag, never silence, and never the drafter - a drafted
+    // paragraph claiming comfort in an undeclared language is a fabricated claim in her voice.
+    const langPlan = languageAnswerPlan(label, applicationProfile);
+    if (langPlan && !blockAlreadyAnswered(block)) {
+      if (langPlan.kind === 'skip') {
+        fields_skipped++;
+        skipped_reasons.push(langPlan.reason);
+        continue;
+      }
+      if (await answerChoiceBlock(block, langPlan.desired)) {
+        fields_filled++;
+        if (langPlan.reviewReason) {
+          const reviewEl = block.querySelector<HTMLElement>('input, select, textarea');
+          if (reviewEl) markForReview(reviewEl, 'Language answer: review before submitting');
+          skipped_reasons.push(langPlan.reviewReason);
+        }
+      } else {
+        fields_skipped++;
+        skipped_reasons.push(languageSkipReason(label, 'no honest option to select'));
+      }
+      continue;
+    }
 
     // Academic record (R-005): GPA / grade average / degree classification / major. Placed with the
     // other known-answer classifiers and, like them, ALWAYS terminates the block so an unanswerable
