@@ -164,3 +164,72 @@ describe('German abbreviations kept alongside the compounds', () => {
     }
   });
 });
+
+// ─── Findings from the independent review of attempt 3 ───────────────────────────────────────
+//
+// Attempts 1-3 each fixed their own bug and created its opposite. These pin all three directions at
+// once, so the next change has to satisfy every one of them.
+describe('isPhoneLabel: default-deny, adjacency-scoped', () => {
+  const tel = () => ({ type: 'tel' }) as unknown as Element;
+  const text = () => ({ type: 'text' }) as unknown as Element;
+
+  it('never hands her phone number to an ID field (severity 1)', () => {
+    // The denylist could not enumerate the world's ID systems. Emirates ID is her own city; she
+    // applies in the UK and India too. Every one of these returned TRUE before.
+    for (const label of [
+      'National Insurance number', 'Emirates ID number', 'Aadhaar number', 'PAN number',
+      'Tax number', 'Fax number', 'Registration number', 'Matriculation number',
+      'Bank account number', 'Passport number', 'Student Number', 'Employee number',
+      'House number', 'Number of years of experience', 'Number of referrals',
+      'Notice period (number of weeks)', 'Number of dependents',
+    ]) {
+      expect(isPhoneLabel(label, tel())).toBe(false);
+    }
+  });
+
+  it('never fills a number that belongs to someone else (severity 1)', () => {
+    // Rule 0 beats every tier: these carry a phone word and used to match on it.
+    for (const label of [
+      "Reference's phone number", 'Emergency contact phone', 'Emergency contact number',
+      'Referee mobile', 'Next of kin phone number', 'Guardian phone',
+    ]) {
+      expect(isPhoneLabel(label, tel())).toBe(false);
+      expect(isPhoneLabel(label, text())).toBe(false);
+    }
+  });
+
+  it('an allowlisted word only counts when it TOUCHES the number word', () => {
+    // The trap in a bag-of-words allowlist: "work" is a fine phone qualifier, and this is not a
+    // phone field. Proved to fill her number under the naive allowlist.
+    expect(isPhoneLabel('Number of hours you can work per week', tel())).toBe(false);
+    expect(isPhoneLabel('Work number', tel())).toBe(true);
+    expect(isPhoneLabel('Number of days you can work from home', tel())).toBe(false);
+    expect(isPhoneLabel('Home number', tel())).toBe(true);
+  });
+
+  it('still fills every label from the live register matrix', () => {
+    for (const label of ['Phone Number', 'Number', 'Mobile number', 'Number *', 'Nummer']) {
+      expect(isPhoneLabel(label, tel())).toBe(true);
+    }
+    expect(isPhoneLabel('Phone Number', text())).toBe(true);
+    expect(isPhoneLabel('Mobile number', text())).toBe(true);
+  });
+
+  it('fills the qualified and purpose-stated labels anchoring had broken', () => {
+    for (const label of [
+      'Contact number', 'Best number to reach you during the day',
+      'Number where we can reach you during business hours',
+      'Number (we will only use this to schedule interviews)',
+      'Primary number', 'Personal number', 'Alternate number', 'WhatsApp number',
+    ]) {
+      expect(isPhoneLabel(label, tel())).toBe(true);
+    }
+  });
+
+  it('does not read a place name as a phone field', () => {
+    // `tel` in tier 1 fired on any control type: "Tel Aviv" on a plain text field got her number.
+    expect(isPhoneLabel('Preferred office: Tel Aviv or Berlin', text())).toBe(false);
+    expect(isPhoneLabel('Preferred office: Tel Aviv or Berlin', tel())).toBe(false);
+    expect(isPhoneLabel('Which Tel Aviv team interests you?', text())).toBe(false);
+  });
+});

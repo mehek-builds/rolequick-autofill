@@ -126,38 +126,31 @@ export function valueHoldsDate(written: string, parts: DateParts, order: DateOrd
 //                    move on to the next order (this is why "18/07/2026" was always safe).
 //   day === month  - both readings are the same day, so there is nothing to get wrong.
 //
-// Otherwise there is nothing safe to sweep, and this returns EMPTY rather than a guess. An empty
-// list means "ask the widget": the caller probes it with probeDateFor(parts) (see fillDateField),
-// because only the widget knows which order it parses, and a first cut that answered "just
-// write ISO" here silently stopped filling ~40% of dates on the commonest ATS shape there is - an
-// unmasked US month-first picker, which had been filling them correctly all along.
+// Otherwise ISO, and if the widget will not take ISO the field is reported as a skip and the
+// student answers it themselves. That is the honest end of the road, because for an ambiguous day
+// on an unmasked slash-only picker THE INFORMATION IS NOT IN THE PAGE. The only way to obtain it is
+// to write a date that is not hers and watch what happens, and a probe was built to do exactly that
+// and then deleted. Two reasons, both worth keeping written down:
+//
+//   1. It could not be made safe. A controlled widget's state only follows a SUCCESSFUL parse, and
+//      setNativeValue only moves text, so a probe that lands cannot be taken back: clear the box and
+//      the component still holds the probe date. It shipped 2026-07-13 - a date from nowhere - into
+//      a form and reported success.
+//   2. It was unreachable anyway. Onboarding captures dates as free text with an MM/DD/YYYY
+//      placeholder, and parseStoredDate only resolves a slash date when one component is > 12,
+//      assigning that component to `day`. So EVERY slash-typed date that parses has day > 12 and
+//      takes the sweep above. Checked exhaustively across 11,532 day/month/year/separator
+//      combinations: zero reach this branch. The "~40% of dates were being skipped" claim that
+//      justified the probe was measured over dates in general, not over dates this code can see.
+//
+// If the fill is wanted back, the fix is upstream and cheap: make the onboarding date fields
+// `<input type="date">` so storage is ISO with known semantics, and the widget's order stops
+// mattering. Do not re-add a probe.
 export function dateOrderCandidates(el: Element | null | undefined, parts: DateParts): DateOrder[] {
   const detected = detectDateOrder(el);
   if (detected) return [detected];
   const slashIsSelfVerifying = parts.day > 12 || parts.day === parts.month;
-  return slashIsSelfVerifying ? ['mdy', 'dmy', 'ymd'] : [];
-}
-
-// A date only ONE slash order can parse, used to ask an unmasked widget which order it wants.
-// For a real value of 8 July 2026 the probe is the 13th of that same month:
-//
-//   formatDate(probe, 'dmy') === "13/07/2026"  day-first: 13 July. month-first: month 13, dead.
-//   formatDate(probe, 'mdy') === "07/13/2026"  month-first: 13 July. day-first: month 13, dead.
-//
-// So exactly one surviving a write names the order outright, with no guessing. Both surviving means
-// the control validates nothing and has told us nothing.
-//
-// Day 13 is what makes it single-order (the other reading is month 13, which cannot exist), and
-// every month has a 13th, so this is always a real date.
-//
-// The probe MUST track the value being written rather than sit on a constant. A fixed 13 Jan 2026
-// was tried and is dead on any picker carrying a min or a max, which is the normal shape of exactly
-// the two fields this module exists for: "earliest start date" rejects the past, "date of birth"
-// rejects the future. Both probes then bounce, the order is never learned, and the skip regression
-// comes back on the very field R-014 was found on. A probe days away from the value the field is
-// about to accept is a probe that field will accept too.
-export function probeDateFor(parts: DateParts): DateParts {
-  return { year: parts.year, month: parts.month, day: 13 };
+  return slashIsSelfVerifying ? ['mdy', 'dmy', 'ymd'] : ['ymd'];
 }
 
 // Is this control a date field at all? Used to route a date-shaped answer through the formatter

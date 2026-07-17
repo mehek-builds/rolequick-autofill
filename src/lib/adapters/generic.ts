@@ -12,7 +12,6 @@ import {
   isDateControl,
   parseStoredDate,
   valueHoldsDate,
-  probeDateFor,
   type DateOrder,
   type DateParts,
 } from './shared/dates';
@@ -533,49 +532,21 @@ async function writeAndVerify(el: HTMLInputElement, parts: DateParts, order: Dat
   return valueHoldsDate(el.value, parts, order);
 }
 
-// Ask an unmasked widget which slash order it parses, instead of guessing.
-//
-// Needed because a read-back cannot judge an ambiguous date on its own: hand a day-first widget our
-// month-first "07/08/2026" and it reads 7 August, accepts it, and hands our text straight back, so
-// the check passes while the form holds the wrong day. The probe is built so only ONE order can
-// parse it (the 13th of the real date's month: the other reading is month 13), which turns a guess
-// into a question, and it sits beside the real date so a min/max-constrained picker accepts it.
-//
-// Exactly one probe surviving names the order. Both surviving means the control validates nothing,
-// so it has told us nothing and the caller falls back to ISO. Neither surviving means it wants
-// something other than slashes, which ISO also covers.
-async function probeDateOrder(el: HTMLInputElement, parts: DateParts): Promise<DateOrder | null> {
-  const probe = probeDateFor(parts);
-  const dmy = await writeAndVerify(el, probe, 'dmy');
-  const mdy = await writeAndVerify(el, probe, 'mdy');
-  setNativeValue(el, ''); // never leave a probe date sitting in a real application
-  if (dmy && !mdy) return 'dmy';
-  if (mdy && !dmy) return 'mdy';
-  return null;
-}
-
 // Write a date and PROVE it landed. Every attempt is read back, because the failure this exists to
 // stop is invisible: the widget shows the text while its state holds nothing, so a write that is
 // assumed to have worked is exactly how a required field reaches submit empty.
 //
-// `parts` reaches dateOrderCandidates because which orders are SAFE to try depends on the date
-// itself, not just on the control. When it can offer nothing safe (an ambiguous day on a widget
-// that publishes no mask) we probe rather than skip: skipping was measurably worse than the bug it
-// guarded against, silently dropping ~40% of dates on an unmasked US picker that had been filling
-// them correctly.
+// Only ever writes HER date, in an order dateOrderCandidates has established is safe to try. A
+// version of this probed unmasked widgets first, by writing a date that was not hers and seeing
+// which order survived. It is deleted and must not come back: a controlled widget's state follows
+// only a successful parse while setNativeValue moves only text, so a probe that lands cannot be
+// withdrawn, and that one shipped a date from nowhere into a real application while reporting
+// success. See dateOrderCandidates for why it was also unreachable.
 export async function fillDateField(el: HTMLInputElement, stored: string): Promise<boolean> {
   const parts = parseStoredDate(stored);
   if (!parts) return false; // "Immediately", or an ambiguous 03/04/2026 - never guess into a date
 
-  let orders = dateOrderCandidates(el, parts);
-  if (orders.length === 0) {
-    const probed = await probeDateOrder(el, parts);
-    // ISO last resort: unambiguous, so a widget that keeps or reformats it has demonstrably parsed
-    // the day we meant. Beats a coin-flip between two real days.
-    orders = probed ? [probed] : ['ymd'];
-  }
-
-  for (const order of orders) {
+  for (const order of dateOrderCandidates(el, parts)) {
     if (await writeAndVerify(el, parts, order)) return true;
   }
 

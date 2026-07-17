@@ -93,13 +93,17 @@ describe('dateOrderCandidates', () => {
     expect(dateOrderCandidates(unmasked(), { year: 2026, month: 7, day: 7 })).toEqual(['mdy', 'dmy', 'ymd']);
   });
 
-  it('offers NOTHING when an unmasked widget could misread a slash write, so the caller probes', () => {
+  it('offers ISO only when an unmasked widget could misread a slash write', () => {
     // 8 July: a day-first widget reads a month-first "07/08/2026" as 7 August, keeps our text
-    // verbatim, and the read-back cannot tell. There is no safe order to offer blind, so this
-    // returns empty and fillDateField asks the widget which order it parses (probeDateFor).
-    // It must NOT answer ['ymd'] here: that skipped ~40% of dates on an unmasked US picker that
-    // had been filling them correctly.
-    expect(dateOrderCandidates(unmasked(), dayCouldBeAMonth)).toEqual([]);
+    // verbatim, and no read-back can tell. ISO is unambiguous, so a widget that takes it has
+    // demonstrably parsed the day we meant; one that refuses it gets an honest skip.
+    //
+    // This must NOT try to be clever. A version that returned [] here so fillDateField could probe
+    // the widget with a not-her date stranded 2026-07-13 in a real form and reported success. The
+    // information needed to disambiguate is not in the page, and the probe was unreachable anyway:
+    // parseStoredDate only resolves slash dates with day > 12, so everything typed into onboarding
+    // takes the sweep above and never arrives here.
+    expect(dateOrderCandidates(unmasked(), dayCouldBeAMonth)).toEqual(['ymd']);
   });
 });
 
