@@ -35,11 +35,12 @@ import {
   pickComboOption,
   closeOpenCombobox,
   blockAlreadyAnswered,
+  firstNonEmptyText,
 } from './shared/dom';
 import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, linkQuestion, linkSkipReason, locationQuestion, locationSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { desiredAnswer, isDraftableQuestion, linkQuestion, linkSkipReason, locationQuestion, locationSkipReason, matchOption, unreadableQuestionSkipReason, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 // ─── Shared answer helpers (mirror generic.ts's engine) ───────────────────────
 
@@ -236,13 +237,14 @@ function labelTextFor(el: Element): string {
   // several questions, and gluing them into one string lets a control match a NEIGHBOURING
   // question's keywords (e.g. an EEO term bleeding into a work-auth block, or auth vs sponsorship
   // colliding). Fall back to full text only when no legend/label exists.
-  const legend = container?.querySelector('legend')?.textContent?.trim();
-  if (legend) return legend.toLowerCase();
-  const labelEl = container
-    ?.querySelector('label, [data-automation-id="formLabel"], [data-automation-id="richText"]')
-    ?.textContent?.trim();
-  if (labelEl) return labelEl.toLowerCase();
-  return (container?.textContent ?? '').trim().toLowerCase();
+  // Workday already had the empty-source fall-through right (it tests the TRIMMED string, not the
+  // element), which is why it escaped R-006. Routed through the shared helper anyway so the one
+  // adapter that got it right cannot drift back to the `??` form the others were fixed out of.
+  return firstNonEmptyText(
+    container?.querySelector('legend')?.textContent,
+    container?.querySelector('label, [data-automation-id="formLabel"], [data-automation-id="richText"]')?.textContent,
+    container?.textContent,
+  );
 }
 
 function isNeverFillField(el: Element): boolean {
@@ -482,7 +484,13 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
     // review), else leave it blank. Short text inputs we couldn't map stay blank for the student.
     const textarea = block.querySelector<HTMLTextAreaElement>('textarea');
     if (textarea && !textarea.value) {
-      if (draftAnswer) {
+      if (!isDraftableQuestion(label)) {
+        // An unreadable label must never reach the drafter: the backend requires a non-empty
+        // question (z.string().min(1)), so "" is a guaranteed 400, a null draft, and a REQUIRED
+        // essay left blank with nobody told. Flag it so auto-submit holds (R-006).
+        fields_skipped++;
+        skipped_reasons.push(unreadableQuestionSkipReason());
+      } else if (draftAnswer) {
         pendingDrafts.push({ el: textarea, question: label.slice(0, 200) });
       } else {
         fields_skipped++;

@@ -20,7 +20,7 @@ import {
 import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, linkQuestion, linkSkipReason, locationQuestion, locationSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { desiredAnswer, isDraftableQuestion, linkQuestion, linkSkipReason, locationQuestion, locationSkipReason, matchOption, unreadableQuestionSkipReason, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 function labelTextFor(el: Element): string {
   const container = el.closest('.application-question, .card, li') ?? el.parentElement;
@@ -369,7 +369,13 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
     // review), else leave it blank. Short text inputs we couldn't map stay blank for the student.
     const textarea = block.querySelector<HTMLTextAreaElement>('textarea');
     if (textarea && !textarea.value) {
-      if (draftAnswer) {
+      if (!isDraftableQuestion(label)) {
+        // An unreadable label must never reach the drafter: the backend requires a non-empty
+        // question (z.string().min(1)), so "" is a guaranteed 400, a null draft, and a REQUIRED
+        // essay left blank with nobody told. Flag it so auto-submit holds (R-006).
+        fields_skipped++;
+        skipped_reasons.push(unreadableQuestionSkipReason());
+      } else if (draftAnswer) {
         pendingDrafts.push({ el: textarea, question: label.slice(0, 200) });
       } else {
         fields_skipped++;
