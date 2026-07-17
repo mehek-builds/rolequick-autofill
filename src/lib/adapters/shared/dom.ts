@@ -77,7 +77,21 @@ export function splitName(fullName: string): { first: string; last: string } {
 // Rule 0. Beats every tier: these ask for someone else's number, so a phone word in the label is a
 // reason to REFUSE, not to fill. "Emergency contact phone" and "Reference's phone number" both
 // matched rule 1 and got hers.
-const THIRD_PARTY_RE = /\b(reference|references|referee|referees|emergency|guardian|next of kin|kin)\b/i;
+//
+// This veto must speak every language rule 1 does, or it is not a veto. Rule 1's vocabulary was
+// widened to German on purpose (telefon(?:nummer|nr)?, handy(?:nummer)?, mobil(?:e|nummer)?) for
+// Enpal, the German board R-014 and R-020 both came from - and while rule 0 stayed English-only,
+// "Telefonnummer des Notfallkontakts" sailed past it and took her personal number, on exactly the
+// board the German support exists for. The English twin was already forbidden by test. A veto that
+// refuses in one language and fills in another is worse than no veto, because it reads as covered.
+//
+// The German alternatives are matched WITHOUT \b, for the same reason rule 1 spells out its
+// suffixes: a German compound has no interior word boundary, so \bnotfall\b cannot match inside
+// "Notfallkontakts". Over-refusing here is cheap and deliberate - "Referenznummer" (an application
+// reference number) is not her phone either, and rule 0's whole job is to prefer a blank box over
+// someone else's field.
+const THIRD_PARTY_RE =
+  /\b(reference|references|referee|referees|emergency|guardian|next of kin|kin)\b|notfall|referenz|erziehungsberechtigt|angeh(?:ö|oe)rig|vormund/i;
 
 // Rule 1. `tel` is deliberately NOT here: it lived here for one commit and matched "Preferred
 // office: Tel Aviv or Berlin" on a plain text field. It survives in rule 3's qualifier list, where

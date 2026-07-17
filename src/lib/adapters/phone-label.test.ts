@@ -384,6 +384,39 @@ describe('isPhoneLabel: bare tokens that are NOT evidence of a phone', () => {
       expect(isPhoneLabel('Handynummer (mobil)', text())).toBe(true);
     });
 
+    it('refuses a THIRD-PARTY phone label in German, not only in English', () => {
+      // Caught in pre-merge review of this very branch. Rule 1's vocabulary was widened to German
+      // for Enpal; rule 0's veto was not. So the English label was forbidden (asserted below) while
+      // its German twin filled her personal number into an emergency-contact box, on the exact
+      // board the German support exists for. Branch (b) returns on the head alone and never looks
+      // at the tail, so ONLY rule 0 can stop these.
+      for (const label of [
+        'Telefonnummer des Notfallkontakts',
+        'Telefonnummer der Referenzperson',
+        'Telefonnummer Ihrer Referenz',
+        'Handynummer des Notfallkontakts',
+        'Mobilnummer Ihres Notfallkontakts',
+        'Telnr des Notfallkontakts',
+        'Telefonnummer des Erziehungsberechtigten',
+        'Notfallnummer',
+      ]) {
+        expect(isPhoneLabel(label, text())).toBe(false);
+        expect(isPhoneLabel(label, tel())).toBe(false);
+      }
+      // The English twins this branch already forbade, re-asserted as the pair.
+      expect(isPhoneLabel('Phone number of your emergency contact', text())).toBe(false);
+      expect(isPhoneLabel("Reference's phone number", text())).toBe(false);
+    });
+
+    it('still fills HER German phone label, which rule 0 must not swallow', () => {
+      // The veto is deliberately broad, so this is the line it must not cross: these are her own
+      // number, in the same language, and must keep filling.
+      expect(isPhoneLabel('Telefonnummer, unter der wir Sie erreichen koennen', text())).toBe(true);
+      expect(isPhoneLabel('Telefonnummer', text())).toBe(true);
+      expect(isPhoneLabel('Handynummer (mobil)', text())).toBe(true);
+      expect(isPhoneLabel('Mobilnummer', text())).toBe(true);
+    });
+
     it('leaves every previously-passing label alone', () => {
       // The R-020 matrix, re-asserted through the new rule: it must cost nothing that already
       // worked, or it has traded one live bug for another.
