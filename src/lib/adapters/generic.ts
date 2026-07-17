@@ -521,11 +521,15 @@ export function dateSkipReason(stored: string, label: string): string {
 // Write a date and PROVE it landed. Every attempt is read back, because the failure this exists to
 // stop is invisible: the widget shows the text while its state holds nothing, so a write that is
 // assumed to have worked is exactly how a required field reaches submit empty.
+//
+// `parts` is passed to dateOrderCandidates because which orders are SAFE to try depends on the date
+// itself, not just on the control: a read-back cannot catch a widget that accepts our text and
+// reads it in the other order. See dateOrderCandidates for the full argument.
 export async function fillDateField(el: HTMLInputElement, stored: string): Promise<boolean> {
   const parts = parseStoredDate(stored);
   if (!parts) return false; // "Immediately", or an ambiguous 03/04/2026 - never guess into a date
 
-  for (const order of dateOrderCandidates(el)) {
+  for (const order of dateOrderCandidates(el, parts)) {
     await randomDelay();
     el.focus();
     setNativeValue(el, formatDate(parts, order));

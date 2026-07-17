@@ -76,12 +76,27 @@ describe('detectDateOrder', () => {
 });
 
 describe('dateOrderCandidates', () => {
+  const unmasked = () => input({ placeholder: 'Type here...' });
+  const dayOver12 = { year: 2026, month: 7, day: 18 };
+  const dayCouldBeAMonth = { year: 2026, month: 7, day: 8 };
+
   it('trusts a detected order alone', () => {
-    expect(dateOrderCandidates(input({ placeholder: 'DD/MM/YYYY' }))).toEqual(['dmy']);
+    expect(dateOrderCandidates(input({ placeholder: 'DD/MM/YYYY' }), dayCouldBeAMonth)).toEqual(['dmy']);
   });
 
-  it('falls back to a verified sweep, US-hosted order first', () => {
-    expect(dateOrderCandidates(input({ placeholder: 'Type here...' }))).toEqual(['mdy', 'dmy', 'ymd']);
+  it('sweeps slash orders when the date itself rules out the wrong reading', () => {
+    // day 18 cannot be a month, so a month-first write is rejected rather than misread.
+    expect(dateOrderCandidates(unmasked(), dayOver12)).toEqual(['mdy', 'dmy', 'ymd']);
+  });
+
+  it('sweeps when both readings are the same day', () => {
+    expect(dateOrderCandidates(unmasked(), { year: 2026, month: 7, day: 7 })).toEqual(['mdy', 'dmy', 'ymd']);
+  });
+
+  it('offers ISO only when an unmasked widget could misread a slash write', () => {
+    // 8 July: a day-first widget reads a month-first "07/08/2026" as 7 August, keeps our text
+    // verbatim, and the read-back cannot tell. ISO is the only order that proves what it parsed.
+    expect(dateOrderCandidates(unmasked(), dayCouldBeAMonth)).toEqual(['ymd']);
   });
 });
 

@@ -111,13 +111,30 @@ export function valueHoldsDate(written: string, parts: DateParts, order: DateOrd
   return (['ymd', 'dmy', 'mdy'] as DateOrder[]).some((o) => s === formatDate(parts, o));
 }
 
-// The orders to try, most-confident first. A detected order is used alone: the hint is the
-// widget's own statement of what it wants. With no hint, mdy leads because the ATS market is
-// US-hosted, then dmy, then ISO - and each attempt is verified by read-back, so an order that
-// does not take is discarded rather than left sitting in the field.
-export function dateOrderCandidates(el: Element | null | undefined): DateOrder[] {
+// The orders to try, most-confident first.
+//
+// A detected order is used alone: the hint is the widget's own statement of what it wants.
+//
+// With no hint we can only sweep, and a read-back is NOT enough to make an arbitrary sweep safe. It
+// proves the string is in the box; it does not prove the widget read it the way we meant. Hand a
+// day-first widget our month-first "07/08/2026" and it reads 7 August, accepts it, and keeps our
+// text verbatim - so the read-back passes while the form holds the wrong day, silently, which is
+// the whole failure class this module exists to close. A slash write is only self-verifying when
+// the date itself rules the other reading out:
+//
+//   day > 12       - the wrong reading is an impossible month, so the widget rejects it and we
+//                    move on to the next order (this is why "18/07/2026" was always safe).
+//   day === month  - both readings are the same day, so there is nothing to get wrong.
+//
+// Otherwise ISO is the only order we can verify. It is unambiguous, so a widget that keeps or
+// reformats it has demonstrably parsed the day we meant. If ISO does not round-trip, fillDateField
+// reports a skip and the student answers it themselves - which is the honest outcome, and the one
+// this module already prefers everywhere else, rather than a coin-flip between two real dates.
+export function dateOrderCandidates(el: Element | null | undefined, parts: DateParts): DateOrder[] {
   const detected = detectDateOrder(el);
-  return detected ? [detected] : ['mdy', 'dmy', 'ymd'];
+  if (detected) return [detected];
+  const slashIsSelfVerifying = parts.day > 12 || parts.day === parts.month;
+  return slashIsSelfVerifying ? ['mdy', 'dmy', 'ymd'] : ['ymd'];
 }
 
 // Is this control a date field at all? Used to route a date-shaped answer through the formatter
