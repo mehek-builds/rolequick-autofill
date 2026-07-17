@@ -93,10 +93,13 @@ describe('dateOrderCandidates', () => {
     expect(dateOrderCandidates(unmasked(), { year: 2026, month: 7, day: 7 })).toEqual(['mdy', 'dmy', 'ymd']);
   });
 
-  it('offers ISO only when an unmasked widget could misread a slash write', () => {
+  it('offers NOTHING when an unmasked widget could misread a slash write, so the caller probes', () => {
     // 8 July: a day-first widget reads a month-first "07/08/2026" as 7 August, keeps our text
-    // verbatim, and the read-back cannot tell. ISO is the only order that proves what it parsed.
-    expect(dateOrderCandidates(unmasked(), dayCouldBeAMonth)).toEqual(['ymd']);
+    // verbatim, and the read-back cannot tell. There is no safe order to offer blind, so this
+    // returns empty and fillDateField asks the widget which order it parses (PROBE_DATE).
+    // It must NOT answer ['ymd'] here: that skipped ~40% of dates on an unmasked US picker that
+    // had been filling them correctly.
+    expect(dateOrderCandidates(unmasked(), dayCouldBeAMonth)).toEqual([]);
   });
 });
 

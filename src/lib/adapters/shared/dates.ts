@@ -126,16 +126,26 @@ export function valueHoldsDate(written: string, parts: DateParts, order: DateOrd
 //                    move on to the next order (this is why "18/07/2026" was always safe).
 //   day === month  - both readings are the same day, so there is nothing to get wrong.
 //
-// Otherwise ISO is the only order we can verify. It is unambiguous, so a widget that keeps or
-// reformats it has demonstrably parsed the day we meant. If ISO does not round-trip, fillDateField
-// reports a skip and the student answers it themselves - which is the honest outcome, and the one
-// this module already prefers everywhere else, rather than a coin-flip between two real dates.
+// Otherwise there is nothing safe to sweep, and this returns EMPTY rather than a guess. An empty
+// list means "ask the widget": the caller probes it with PROBE_DATE (see fillDateField), because
+// only the widget knows which order it parses, and a first cut of this fix that answered "just
+// write ISO" here silently stopped filling ~40% of dates on the commonest ATS shape there is - an
+// unmasked US month-first picker, which had been filling them correctly all along.
 export function dateOrderCandidates(el: Element | null | undefined, parts: DateParts): DateOrder[] {
   const detected = detectDateOrder(el);
   if (detected) return [detected];
   const slashIsSelfVerifying = parts.day > 12 || parts.day === parts.month;
-  return slashIsSelfVerifying ? ['mdy', 'dmy', 'ymd'] : ['ymd'];
+  return slashIsSelfVerifying ? ['mdy', 'dmy', 'ymd'] : [];
 }
+
+// A date only ONE slash order can parse, used to ask an unmasked widget which order it wants.
+//
+//   formatDate(PROBE_DATE, 'dmy') === "13/01/2026"  day-first: 13 Jan. month-first: month 13, dead.
+//   formatDate(PROBE_DATE, 'mdy') === "01/13/2026"  month-first: 13 Jan. day-first: month 13, dead.
+//
+// So exactly one surviving a write identifies the order outright, with no guessing. Both surviving
+// means the control validates nothing and has told us nothing.
+export const PROBE_DATE: DateParts = { year: 2026, month: 1, day: 13 };
 
 // Is this control a date field at all? Used to route a date-shaped answer through the formatter
 // instead of the plain text filler.

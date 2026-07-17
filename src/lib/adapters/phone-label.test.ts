@@ -72,9 +72,70 @@ describe('isPhoneLabel', () => {
   it('trusts the control\'s own declaration over the label prose', () => {
     const declared = (attrs: Record<string, string>) =>
       ({ type: 'text', getAttribute: (k: string) => attrs[k] ?? null }) as unknown as Element;
+    // autocomplete is spec-defined and is trusted, on any control type.
     expect(isPhoneLabel('Number', declared({ autocomplete: 'tel' }))).toBe(true);
-    expect(isPhoneLabel('Contact', declared({ name: 'phone' }))).toBe(true);
-    expect(isPhoneLabel('Contact', declared({ id: 'candidate-mobile' }))).toBe(true);
+    expect(isPhoneLabel('Anything at all', declared({ autocomplete: 'tel-national' }))).toBe(true);
+    // name/id are NOT trusted: they are author prose in an attribute, so a stray "phone"/"mobile"
+    // in an id would speak over the label entirely.
+    expect(isPhoneLabel('How did you hear about us?', declared({ id: 'mobile-2' }))).toBe(false);
+    expect(isPhoneLabel('Preferred contact time', declared({ name: 'phone_pref_window' }))).toBe(false);
     expect(isPhoneLabel('Number of referrals', declared({ name: 'referral_count' }))).toBe(false);
+  });
+});
+
+// ─── Caught reviewing the R-020 fix itself ───────────────────────────────────────────────────
+//
+// Anchoring the bare-number tier on the WHOLE label traded R-020's non-fill for a different
+// non-fill: every one of these had been filling before the "fix" and stopped. R-020 IS the
+// non-fill bug, so the fix reintroduced the thing it exists to prevent, one door over.
+describe('isPhoneLabel: labels the anchored version wrongly stopped filling', () => {
+  const tel = () => ({ type: 'tel' }) as unknown as Element;
+
+  it('fills a qualified or decorated number label on a tel control', () => {
+    for (const label of [
+      'Contact number',
+      'Number (we will only use this to schedule interviews)',
+      'Number ✱',
+      'Number †',
+      'Best number to reach you',
+      'Primary number',
+      'Number:',
+      'Number *',
+    ]) {
+      expect(isPhoneLabel(label, tel())).toBe(true);
+    }
+  });
+
+  it('still refuses a number label that says what the number is FOR', () => {
+    // The disqualifier list is what replaces the anchoring. Each of these is a noun the label had
+    // to spell out, which is exactly what a phone label never does.
+    for (const label of [
+      'Number of years of experience',
+      'Student Number',
+      'Employee number',
+      'House number',
+      'Notice period (number of weeks)',
+      'Number of referrals',
+      'Account number',
+      'Passport number',
+      'Number of dependents',
+    ]) {
+      expect(isPhoneLabel(label, tel())).toBe(false);
+    }
+  });
+
+  it('reads German compound phone labels, which the board that caused R-020 uses', () => {
+    // `\btelefon\b` cannot match inside a compound, so these were missed outright. Enpal is German.
+    for (const label of ['Telefonnummer', 'Handynummer', 'Mobilnummer', 'Telefon', 'Handy']) {
+      expect(isPhoneLabel(label, tel())).toBe(true);
+      expect(isPhoneLabel(label, { type: 'text' } as unknown as Element)).toBe(true);
+    }
+  });
+
+  it('does not let the German suffix widen into unrelated words', () => {
+    // The trailing \b is why the suffixes are spelled out instead of the boundary dropped.
+    for (const label of ['Mobility preferences', 'Handyman experience', 'Hotel booking reference']) {
+      expect(isPhoneLabel(label, tel())).toBe(false);
+    }
   });
 });

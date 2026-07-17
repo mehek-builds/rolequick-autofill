@@ -111,15 +111,14 @@ function dmyPickerNoMask() {
 }
 
 describe('fillDateField against an unmasked day-first picker', () => {
-  it('never commits a different day than the one stored', async () => {
+  it('probes the order and commits the RIGHT day, rather than guessing or skipping', async () => {
     const { el, committed } = dmyPickerNoMask();
-    // 8 July 2026, stored ISO exactly as types.ts instructs. A month-first "07/08/2026" would be
-    // accepted here as 7 AUGUST and read back verbatim, passing verification with the wrong day on
-    // a real application. ISO is the only write that can be proven, and this picker rejects it, so
-    // the honest outcome is a skip.
-    expect(await fillDateField(el, '2026-07-08')).toBe(false);
-    expect(el.value).toBe('');
-    expect(committed()).toBeNull();
+    // 8 July 2026. A month-first "07/08/2026" would be accepted here as 7 AUGUST and read back
+    // verbatim, so a blind sweep passes verification with the wrong day. The probe settles it:
+    // "13/01/2026" survives this picker and "01/13/2026" does not, which names it day-first, so
+    // the real write goes in day-first and the widget's own state holds 8 July.
+    expect(await fillDateField(el, '2026-07-08')).toBe(true);
+    expect(committed()).toBe('2026-07-08');
   });
 
   it('still fills when the day cannot pass for a month', async () => {
@@ -132,5 +131,65 @@ describe('fillDateField against an unmasked day-first picker', () => {
     const el = isoOnlyPicker();
     expect(await fillDateField(el, '2026-07-08')).toBe(true);
     expect(el.value).toBe('2026-07-08');
+  });
+});
+
+// ─── Caught reviewing the R-014 fix itself ───────────────────────────────────────────────────
+//
+// The first cut answered an ambiguous day + unmasked widget with "write ISO or skip". That was
+// safe and wrong: on an unmasked US month-first picker, the commonest ATS shape there is, dates
+// with day <= 12 (~40% of them) had been filling CORRECTLY and started coming back blank. The
+// probe recovers the fill without reintroducing the guess.
+
+// A US month-first picker that publishes NO mask: accepts only mm/dd/yyyy, advertises nothing.
+function mdyPickerNoMask() {
+  const el = document.createElement('input');
+  el.type = 'text';
+  const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  let committed: string | null = null;
+  el.addEventListener('input', () => {
+    const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(el.value);
+    if (m && +m[1] >= 1 && +m[1] <= 12 && +m[2] >= 1 && +m[2] <= 31) {
+      committed = `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; // parsed MONTH-first
+    } else {
+      committed = null;
+      nativeSet.call(el, '');
+    }
+  });
+  return { el, committed: () => committed };
+}
+
+describe('fillDateField probes an unmasked picker instead of guessing or skipping', () => {
+  it('fills an ambiguous day on an unmasked MONTH-first picker (the regression)', async () => {
+    const { el, committed } = mdyPickerNoMask();
+    expect(await fillDateField(el, '2026-07-08')).toBe(true);
+    expect(committed()).toBe('2026-07-08'); // 8 July, not 7 August
+  });
+
+  it('fills the same date on an unmasked DAY-first picker, the opposite order', async () => {
+    const { el, committed } = dmyPickerNoMask();
+    expect(await fillDateField(el, '2026-07-08')).toBe(true);
+    expect(committed()).toBe('2026-07-08');
+  });
+
+  it('leaves no probe date behind when it gives up', async () => {
+    // A control that accepts nothing: both probes fail, ISO fails, and the field must end EMPTY,
+    // never parked with 13/01/2026 on a real application.
+    const el = pickerThatAccepts(() => false);
+    expect(await fillDateField(el, '2026-07-08')).toBe(false);
+    expect(el.value).toBe('');
+  });
+
+  it('falls back to ISO when the widget validates nothing, rather than coin-flipping', async () => {
+    // Both probes survive, so the control has told us nothing about its order. ISO is unambiguous.
+    const el = pickerThatAccepts(() => true);
+    expect(await fillDateField(el, '2026-07-08')).toBe(true);
+    expect(el.value).toBe('2026-07-08');
+  });
+
+  it('still trusts a published mask over any probing', async () => {
+    const el = monthFirstPicker(); // placeholder MM/DD/YYYY
+    expect(await fillDateField(el, '2026-07-08')).toBe(true);
+    expect(el.value).toBe('07/08/2026');
   });
 });

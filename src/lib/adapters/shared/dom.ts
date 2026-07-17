@@ -63,39 +63,50 @@ export function splitName(fullName: string): { first: string; last: string } {
 //
 // 1. An unambiguous phone word anywhere in the label, on any control type - plenty of boards render
 //    a phone field as `type="text"`, so this tier must not depend on the type.
-// 2. The control's own machine-readable declaration, which beats any reading of author-written
-//    label prose.
-// 3. A label that is ENTIRELY a bare number word, on a tel control.
-const PHONE_LABEL_RE = /\b(phone|telephone|telefon|mobile|cell|handy)\b/i;
-const PHONE_ATTR_RE = /\b(tel|telephone|phone|mobile)\b/i;
-// Tier 3 is anchored on the WHOLE label rather than a word inside it, because `type="tel"` is not
-// the phone signal it looks like: forms routinely set it on plain numeric fields purely to summon
-// the mobile numeric keypad. Under a substring test, "Number of years of experience", "Student
-// Number", "Notice period (number of weeks)" and "House number" are all hits on a tel control and
-// would each be handed her phone number - the wrong-data-into-a-real-application failure this
-// matcher exists to avoid, arriving by a different door than the R-020 non-fill. A standalone "no"
-// is gone for the same reason (it matched any label containing the word "no" at all); it survives
-// only in the tel-qualified "Tel No" form, where nothing else is being asked for. Enpal's real
-// field is labelled exactly "Number", so the bare form is all this tier ever needed.
-const BARE_NUMBER_LABEL_RE = /^(number|nummer|tel|telnr)$|^tel\s*(no|nr|number|nummer)$/i;
+// 2. The control's own `autocomplete`, the one attribute with standardised phone semantics.
+// 3. A number-ish word on a tel control, unless the label says what the number is FOR.
+//
+// The optional German suffixes are load-bearing, not decoration: `\btelefon\b` cannot match inside
+// "Telefonnummer", because a compound has no word boundary in the middle, so the standard German
+// label for a phone field was missed outright - on Enpal, the German board whose "Number" label is
+// what R-020 is about. The trailing \b still rejects "Mobility" and "Handyman", which is why the
+// suffix is spelled out rather than the boundary simply dropped.
+const PHONE_LABEL_RE =
+  /\b(phone|telephone|tel|telefon(?:nummer)?|mobil(?:e|nummer)?|cell(?:phone)?|handy(?:nummer)?)\b/i;
 
-// Strip the decoration ATSes hang off a label ("Number *", "Number:", "Number (required)") so the
-// bare-token test sees the label the author actually wrote.
-function bareLabel(label: string): string {
-  return label
-    .replace(/\((?:required|optional)\)/gi, '')
-    .replace(/[*:. ]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+// Only `autocomplete`: `tel`, `tel-national`, `tel-local` and friends are a spec-defined statement
+// that this field wants a phone number. `name`/`id` were tried here and dropped - they are
+// author-chosen prose in an attribute, so `id="mobile-2"` on "Do you own a mobile device?" would
+// have answered a yes/no question with her phone number, with the label getting no say at all.
+const PHONE_AUTOCOMPLETE_RE = /^tel(-|$)/i;
+
+// Tier 3: a number word, on a tel control, not disqualified by the label itself.
+//
+// Both halves are needed, and getting either wrong breaks a real board.
+//
+// `type="tel"` alone is NOT a phone signal: forms set it on plain numeric fields purely to summon
+// the mobile numeric keypad, so "Number of years of experience" on a tel control would otherwise be
+// handed her phone number.
+//
+// Anchoring the whole label instead was tried and was measurably worse: it silently stopped filling
+// "Contact number", "Number (we will only use this to schedule interviews)" and "Number *", all of
+// which had been filling. That is R-020's own non-fill, reintroduced by R-020's fix, and the
+// decoration you must strip to make anchoring work is an open-ended list.
+//
+// So match the word, then disqualify on what the label says the number is FOR. This errs in the
+// recoverable direction: every disqualifier is a NOUN the label had to spell out, whereas a phone
+// label's distinguishing feature is that it says nothing else at all.
+const NUMBER_WORD_RE = /\b(number|nummer|nr)\b/i;
+const NOT_A_PHONE_RE =
+  /\b(year|years|experience|student|employee|staff|house|street|address|apartment|apt|flat|unit|door|week|weeks|month|months|hour|hours|day|days|people|team|size|referral|referrals|reference|references|ssn|social|passport|licence|license|visa|account|badge|room|floor|building|zip|postal|salary|amount|quantity|count|age|dependents|children)\b/i;
 
 export function isPhoneLabel(label: string, el?: Element | null): boolean {
   if (PHONE_LABEL_RE.test(label)) return true;
   const input = el as HTMLInputElement | null;
   if (!input) return false;
-  const attr = (name: string) => input.getAttribute?.(name) ?? '';
-  if (PHONE_ATTR_RE.test(`${attr('autocomplete')} ${attr('name')} ${attr('id')}`)) return true;
-  return input.type === 'tel' && BARE_NUMBER_LABEL_RE.test(bareLabel(label));
+  if (PHONE_AUTOCOMPLETE_RE.test(input.getAttribute?.('autocomplete') ?? '')) return true;
+  if (input.type !== 'tel') return false;
+  return NUMBER_WORD_RE.test(label) && !NOT_A_PHONE_RE.test(label);
 }
 
 // Radios that carry no meaningful `value` (Ashby/LinkedIn use "on"): the real option text lives

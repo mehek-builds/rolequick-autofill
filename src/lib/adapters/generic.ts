@@ -12,6 +12,9 @@ import {
   isDateControl,
   parseStoredDate,
   valueHoldsDate,
+  PROBE_DATE,
+  type DateOrder,
+  type DateParts,
 } from './shared/dates';
 
 // Generic adapter for companies that build their OWN application form on their own domain
@@ -518,26 +521,60 @@ export function dateSkipReason(stored: string, label: string): string {
   return `date left for you: "${label}" (${why})`;
 }
 
+// Write `parts` in `order` and report whether the widget's own state kept that exact day.
+async function writeAndVerify(el: HTMLInputElement, parts: DateParts, order: DateOrder): Promise<boolean> {
+  await randomDelay();
+  el.focus();
+  setNativeValue(el, formatDate(parts, order));
+  el.blur();
+  // Let a controlled component re-render before reading: React may clear a value it rejected,
+  // and reading synchronously would see our own text still sitting in the box and call it a pass.
+  await new Promise((r) => setTimeout(r, 60));
+  return valueHoldsDate(el.value, parts, order);
+}
+
+// Ask an unmasked widget which slash order it parses, instead of guessing.
+//
+// Needed because a read-back cannot judge an ambiguous date on its own: hand a day-first widget our
+// month-first "07/08/2026" and it reads 7 August, accepts it, and hands our text straight back, so
+// the check passes while the form holds the wrong day. PROBE_DATE is built so only ONE order can
+// parse it (13 Jan: the other reading is month 13), which turns a guess into a question.
+//
+// Exactly one probe surviving names the order. Both surviving means the control validates nothing,
+// so it has told us nothing and the caller falls back to ISO. Neither surviving means it wants
+// something other than slashes, which ISO also covers.
+async function probeDateOrder(el: HTMLInputElement): Promise<DateOrder | null> {
+  const dmy = await writeAndVerify(el, PROBE_DATE, 'dmy');
+  const mdy = await writeAndVerify(el, PROBE_DATE, 'mdy');
+  setNativeValue(el, ''); // never leave a probe date sitting in a real application
+  if (dmy && !mdy) return 'dmy';
+  if (mdy && !dmy) return 'mdy';
+  return null;
+}
+
 // Write a date and PROVE it landed. Every attempt is read back, because the failure this exists to
 // stop is invisible: the widget shows the text while its state holds nothing, so a write that is
 // assumed to have worked is exactly how a required field reaches submit empty.
 //
-// `parts` is passed to dateOrderCandidates because which orders are SAFE to try depends on the date
-// itself, not just on the control: a read-back cannot catch a widget that accepts our text and
-// reads it in the other order. See dateOrderCandidates for the full argument.
+// `parts` reaches dateOrderCandidates because which orders are SAFE to try depends on the date
+// itself, not just on the control. When it can offer nothing safe (an ambiguous day on a widget
+// that publishes no mask) we probe rather than skip: skipping was measurably worse than the bug it
+// guarded against, silently dropping ~40% of dates on an unmasked US picker that had been filling
+// them correctly.
 export async function fillDateField(el: HTMLInputElement, stored: string): Promise<boolean> {
   const parts = parseStoredDate(stored);
   if (!parts) return false; // "Immediately", or an ambiguous 03/04/2026 - never guess into a date
 
-  for (const order of dateOrderCandidates(el, parts)) {
-    await randomDelay();
-    el.focus();
-    setNativeValue(el, formatDate(parts, order));
-    el.blur();
-    // Let a controlled component re-render before reading: React may clear a value it rejected,
-    // and reading synchronously would see our own text still sitting in the box and call it a pass.
-    await new Promise((r) => setTimeout(r, 60));
-    if (valueHoldsDate(el.value, parts, order)) return true;
+  let orders = dateOrderCandidates(el, parts);
+  if (orders.length === 0) {
+    const probed = await probeDateOrder(el);
+    // ISO last resort: unambiguous, so a widget that keeps or reformats it has demonstrably parsed
+    // the day we meant. Beats a coin-flip between two real days.
+    orders = probed ? [probed] : ['ymd'];
+  }
+
+  for (const order of orders) {
+    if (await writeAndVerify(el, parts, order)) return true;
   }
 
   // Nothing round-tripped. Leave the field genuinely empty rather than parked with a value the
