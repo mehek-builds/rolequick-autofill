@@ -688,6 +688,15 @@ export default defineContentScript({
         if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Tailoring your resume...'; }
 
         const result = await startResumeGen();
+        // This await can now resolve minutes after the click: the background retries a model
+        // overload for up to 150s (R-003), and the retry status above tells the student it will
+        // be a while, which is an open invitation to give up, dismiss the card, and fill the form
+        // by hand. A dismissed card is the student saying "leave this application alone", so a
+        // late success must not fill over whatever they have typed since, and must never lead to
+        // an auto-submit countdown for a card that no longer exists. isConnected is the dismissal
+        // signal: every dismiss path ends in card.remove(). The generation result itself stays
+        // cached per job, so nothing paid for is thrown away; re-opening the card reuses it.
+        if (!card.isConnected) return;
         if (!result || result.error || !result.profile || !result.applicationProfile || !result.resume) {
           if (statusEl) statusEl.textContent = result?.error || 'Could not generate a resume - fill this one manually.';
           return;
@@ -786,6 +795,17 @@ export default defineContentScript({
             },
           });
         };
+
+        // Same dismissal check as after the generation await, for the stretch the fill itself
+        // takes (legitimately up to 90s on an essay-heavy form). A dismissal that lands while the
+        // fill is running must not be followed by an auto-submit countdown: the card is the
+        // student's only handle on that countdown's context, and an application they closed the
+        // card on is one they chose to finish themselves. The fill above already happened, so
+        // report it honestly and hand the form back without submitting.
+        if (!card.isConnected) {
+          reportEvent(false);
+          return;
+        }
 
         // Auto-submit is opt-in (AutofillSetupScreen toggle, off by default) AND only fires when it
         // is actually safe: a real FINAL-submit button exists (not a "Next"/"Continue" step button,
