@@ -457,6 +457,34 @@ export function linkSkipReason(label: string): string {
   return `link question left for you (no URL in your profile): "${label.slice(0, 60)}"`;
 }
 
+// ── R-030 instrumentation: observation ONLY, never a behavior change ──
+// linkQuestion commits on a keyword anywhere in the label, so "Do you have experience with GitHub
+// Actions?" rendered as a text input would get the GitHub URL (R-030, zero live reproductions so
+// far). The register forbids guessing a guard here: two guards in a row invented against
+// hypotheticals each produced the opposite bug, and asksForLink is provably not the discriminator
+// (see the R-030 entry). Its cheapest next step is exactly this: record the labels of the
+// population that fills a URL unconditionally - linkQuestion non-null AND asksForLink false AND
+// the control is input[type=text] - ship them with the autofill telemetry, and let one real label
+// decide what the fix even is. Do NOT grow this into a veto or a gate; that is the documented trap.
+const r030CandidateLabels: string[] = [];
+
+// Called by each adapter right where it resolves the control for a link question. Pure recording:
+// it must never influence what fills. (input[type=url] is excluded on purpose - the browser typed
+// it as a URL field, so filling a URL there is not R-030's shape.)
+export function noteLinkFillCandidate(label: string, link: LinkQuestion, control: Element | null): void {
+  if (link.asksForLink) return;
+  if (!control || control.tagName !== 'INPUT') return;
+  if ((control as HTMLInputElement).type !== 'text') return;
+  r030CandidateLabels.push(label.slice(0, 200));
+}
+
+// Drained by content.ts once per fill run and attached to the AUTOFILL_EVENT payload only when
+// non-empty. Drain-and-clear, so labels from one application can never leak into the next run's
+// telemetry.
+export function drainR030CandidateLabels(): string[] {
+  return r030CandidateLabels.splice(0, r030CandidateLabels.length);
+}
+
 // A question asking WHERE the student lives (city / state / country of residence). Live QA
 // 2026-07-16 left a required location field blank on 3 of 12 real forms (Monzo "Location (City)*",
 // ElevenLabs "Location* / Country you're currently residing in", Global Relay "Country*") while

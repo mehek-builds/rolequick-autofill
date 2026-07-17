@@ -103,20 +103,27 @@ function YesNoDecline({
   );
 }
 
-function seedExperienceBank(profile: Profile): ExperienceBankEntry[] {
+// Seeded entries carry NO tags (R-027). This used to stamp the whole `profile.skills` array onto
+// EVERY entry, which is the actual root cause of R-015's "seeded junk": a tag is supposed to say
+// what THIS entry demonstrates, and copying one global array onto a Product Management internship
+// and a VP of Finance role alike says nothing while poisoning everything grounded against it. The
+// UI collects no per-entry tags, so seeding none is the only honest value. Entries already stored
+// on the server keep whatever tags they have: handleSave passes stored tags through untouched,
+// and this seed only runs when the bank is empty. Exported for the test that pins this.
+export function seedExperienceBank(profile: Profile): ExperienceBankEntry[] {
   const jobs: ExperienceBankEntry[] = profile.experience.map((e) => ({
     type: 'job',
     org: e.company,
     title: e.title,
     date_range: `${e.start} - ${e.end}`,
     bullet_variants: e.description ? [e.description] : [''],
-    tags: profile.skills,
+    tags: [],
   }));
   const projects: ExperienceBankEntry[] = (profile.projects ?? []).map((p) => ({
     type: 'project',
     org: p.name,
     bullet_variants: p.description ? [p.description] : [''],
-    tags: profile.skills,
+    tags: [],
   }));
   return [...jobs, ...projects];
 }
