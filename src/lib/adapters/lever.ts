@@ -16,6 +16,7 @@ import {
   pickComboOption,
   closeOpenCombobox,
   blockAlreadyAnswered,
+  unattachableDocumentReasons,
 } from './shared/dom';
 import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
@@ -214,6 +215,13 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
     fields_skipped++;
     skipped_reasons.push('resume: no generated resume file available');
   }
+
+  // Documents this form requires that RoleQuick cannot produce (R-010). Reported at fill time, in
+  // the card, so the student learns the form wants a transcript NOW rather than at submit; the
+  // "left for" wording holds auto-submit while it sits unattached.
+  const documentReasons = unattachableDocumentReasons(resumeEl);
+  fields_skipped += documentReasons.length;
+  skipped_reasons.push(...documentReasons);
 
   // Eligibility and screening questions (PRD-v2 Section 4B). Work authorization AND sponsorship
   // are deliberately NEVER answered and hold auto-submit (see WORK_ELIGIBILITY_QUESTION in

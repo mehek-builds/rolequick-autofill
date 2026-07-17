@@ -44,6 +44,7 @@ import {
   blockAlreadyAnswered,
   driveAsyncLocationCombobox,
   firstNonEmptyText,
+  unattachableDocumentReasons,
 } from './shared/dom';
 import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
@@ -500,6 +501,13 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
     fields_skipped++;
     skipped_reasons.push('resume: no generated resume file available');
   }
+
+  // Documents this form requires that RoleQuick cannot produce (R-010). Reported at fill time, in
+  // the card, so the student learns the form wants a transcript NOW rather than at submit; the
+  // "left for" wording holds auto-submit while it sits unattached.
+  const documentReasons = unattachableDocumentReasons();
+  fields_skipped += documentReasons.length;
+  skipped_reasons.push(...documentReasons);
 
   // Custom questions (links, work-auth, sponsorship, EEO) get per-posting generated names, so
   // match by label text. Two container shapes exist (live-tested 2026-07-04 on the Notion
