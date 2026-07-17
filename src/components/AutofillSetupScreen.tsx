@@ -7,8 +7,26 @@ import {
 } from '../lib/api';
 import { getAutoSubmitEnabled, setAutoSubmitEnabled } from '../lib/storage';
 import type { ExperienceBankEntry, ApplicationProfile, Profile } from '../lib/types';
+import { parseStoredDate, formatDate } from '../lib/adapters/shared/dates';
 import WarningBanner from './WarningBanner';
 import LoadingSpinner from './LoadingSpinner';
+
+// An <input type="date"> renders NOTHING unless its value is ISO, so switching these fields to a
+// date picker would have made every existing value vanish from the screen: "18/07/2026" and
+// "Summer 2027" would both just look unset, and a student would reasonably conclude the app had
+// lost their data. Reuse the filler's own parser so anything resolvable is shown as the day it
+// means, and say so plainly when it is not.
+function isoForDateInput(stored: string | null | undefined): string {
+  const parts = parseStoredDate(stored);
+  return parts ? formatDate(parts, 'ymd') : '';
+}
+
+// A saved value that exists but cannot be shown. Never silently swallow it: it is the student's
+// data and the reason the field looks empty.
+function unreadableStoredDate(stored: string | null | undefined): string | null {
+  const raw = (stored ?? '').trim();
+  return raw && !parseStoredDate(raw) ? raw : null;
+}
 
 // Onboarding for RoleQuick v2's resume-gen + application-autofill flow (PRD-v2-resume-autofill.md
 // Section 4-5). Sequenced fast-confirm-first, sensitive-last (Section 5's ordering rationale):
@@ -368,14 +386,55 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
               </p>
             </div>
 
+            {/*
+              type="date" is the actual fix for R-014, and it is here rather than in the filler on
+              purpose. A free-text box cannot say which number is the month: "03/04/2026" is 3 April
+              in Dubai and 4 March in California, and nothing in the string resolves it. The filler
+              spent five attempts trying to work it out at write time and the honest answer is that
+              THE INFORMATION IS NOT IN THE PAGE - the only ways to get it are to guess, or to write
+              a date that is not hers and watch. Both were tried; both shipped a wrong date into a
+              real application.
+
+              A date input ends the argument at the source: the browser hands back ISO
+              (YYYY-MM-DD) whatever the locale shows the student, so storage has known semantics and
+              the picker's order stops mattering. The old placeholder made it worse than free text -
+              it said "e.g. Summer 2027", inviting a value parseStoredDate cannot resolve, which is
+              a guaranteed skip.
+            */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-gray-600">Availability date (optional)</label>
+              <label className="text-xs font-medium text-gray-600">Earliest start date (optional)</label>
               <input
-                value={appProfile.availability_date ?? ''}
+                type="date"
+                value={isoForDateInput(appProfile.availability_date)}
                 onChange={(e) => setAppProfile((p) => ({ ...p, availability_date: e.target.value }))}
-                placeholder="e.g. Summer 2027"
                 className={inputClass}
               />
+              {unreadableStoredDate(appProfile.availability_date) ? (
+                <p className="text-[11px] text-amber-600">
+                  Your saved value ("{unreadableStoredDate(appProfile.availability_date)}") isn't a date we can read, so
+                  forms asking when you can start are left for you. Pick a date to fix that.
+                </p>
+              ) : (
+                <p className="text-[11px] text-gray-400">When you can start. Stored as YYYY-MM-DD.</p>
+              )}
+            </div>
+
+            {/*
+              A separate question from the one above, and the reason it exists: "Length or
+              term/length of availability (10-14 weeks)" and "When can you start?" both contain
+              "availab", so one field answering both meant a duration question got answered with a
+              start time ("Immediately"). Free text, not a date: "14 weeks", "3 months" and "a
+              semester" are all real answers and none of them parse.
+            */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-gray-600">How long you are available (optional)</label>
+              <input
+                value={appProfile.availability_term ?? ''}
+                onChange={(e) => setAppProfile((p) => ({ ...p, availability_term: e.target.value }))}
+                placeholder="e.g. 14 weeks"
+                className={inputClass}
+              />
+              <p className="text-[11px] text-gray-400">Only for forms that ask how long, not when.</p>
             </div>
 
             <div className="flex flex-col gap-1.5">
@@ -391,11 +450,19 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-gray-600">Date of birth (optional)</label>
               <input
-                value={appProfile.date_of_birth ?? ''}
+                type="date"
+                value={isoForDateInput(appProfile.date_of_birth)}
                 onChange={(e) => setAppProfile((p) => ({ ...p, date_of_birth: e.target.value }))}
-                placeholder="MM/DD/YYYY - only used when a form asks, never for SSN"
                 className={inputClass}
               />
+              {unreadableStoredDate(appProfile.date_of_birth) ? (
+                <p className="text-[11px] text-amber-600">
+                  Your saved value ("{unreadableStoredDate(appProfile.date_of_birth)}") isn't a date we can read. Pick one
+                  to fix that.
+                </p>
+              ) : (
+                <p className="text-[11px] text-gray-400">Only used when a form asks, never for SSN. Stored as YYYY-MM-DD.</p>
+              )}
             </div>
 
             <div className="rounded-xl border border-gray-100 bg-gray-50/50 p-3">
