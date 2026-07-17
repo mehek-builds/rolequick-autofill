@@ -9,7 +9,7 @@ import {
 import { isLinkedInApplicationPage, extractLinkedInJdText, fillLinkedInApplication } from '../lib/adapters/linkedin';
 import { isLikelyApplicationForm, extractGenericJdText, getGenericJobDetails, fillGenericApplication } from '../lib/adapters/generic';
 import { getAutoSubmitEnabled } from '../lib/storage';
-import { skippedReasonsNeedReview } from '../lib/autosubmit-gate';
+import { selectNeedsYouReasons, skippedReasonsNeedReview } from '../lib/autosubmit-gate';
 import { startHarvest } from '../lib/harvest';
 import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
 
@@ -309,11 +309,11 @@ export default defineContentScript({
       if (opts.resumeMissing) head.push('⚠ Resume not attached - add it yourself.');
       if (opts.autoSubmitHeld) head.push('Auto-submit held: finish the flagged items, then submit.');
       // Keep the reasons that actually need a human: resume, agreements, unmatched/never-fill,
-      // required blanks. Drop the resume line here (already surfaced above) and cap the list.
-      const needsYou = fillResult.skipped_reasons
-        .filter((r) => /agreement|never-fill|no matching|left for you|left blank|required|no unambiguous/i.test(r))
-        .filter((r) => !/^resume:/i.test(r))
-        .slice(0, 4);
+      // required blanks. Selection + ordering live in the pure selectNeedsYouReasons (autosubmit-
+      // gate.ts) so it stays unit-tested: required blanks sort ahead of the cap, because a card
+      // that truncated a REQUIRED blank off its list read as complete over an empty required
+      // field (R-033's second half).
+      const needsYou = selectNeedsYouReasons(fillResult.skipped_reasons);
       statusEl.style.display = 'block';
       statusEl.innerHTML =
         head.map((l) => `<div>${escapeHtml(l)}</div>`).join('') +
@@ -604,10 +604,17 @@ export default defineContentScript({
       let jdCache: string | null = null;
       const getJd = (): string => (jdCache ??= extractJdText());
 
-      // Slightly longer than the background's own resume-fetch budget (60s) so its descriptive
-      // error surfaces first; this is the backstop for the worse case where the service worker
-      // is torn down and the callback never fires at all.
-      const RESUME_GEN_TIMEOUT_MS = 65000;
+      // Must stay longer than the background's WHOLE budget so its descriptive error surfaces
+      // first; this is only the backstop for the worse case where the service worker is torn down
+      // and the callback never fires at all.
+      // This was 65s, sized against a single 60s resume fetch. That cap is now load-bearing in a
+      // way it wasn't: the background retries a transient model overload for up to 150s across
+      // fresh requests (R-003, live QA 2026-07-16 - the backend can't retry past Vercel's 60s
+      // function ceiling, so only the client can outlive an incident). Leaving this at 65s would
+      // have made that retry unreachable - the card would declare a timeout while the retry that
+      // was about to succeed was still in flight, which is just the old hard failure with extra
+      // steps. So: the background's 150s budget + one final 60s fetch + slack.
+      const RESUME_GEN_TIMEOUT_MS = 215000;
       const jobKey = `${company}\u0000${title}`;
       const startResumeGen = (): Promise<ResumeGenResult> => {
         const cached = resumeGenByJob.get(jobKey);
@@ -644,11 +651,34 @@ export default defineContentScript({
       };
       card.addEventListener('mouseenter', () => void startResumeGen(), { once: true });
 
+      // Tell the student when generation is waiting on model capacity rather than hung. Without
+      // this the card sits on "Tailoring your resume..." for up to two minutes, which reads
+      // exactly like a freeze - and a student who thinks it froze fills the form by hand or
+      // re-clicks, which is what the live incident actually produced (6+ re-clicks). The card
+      // stays dismissable throughout, so this is information, not a trap.
+      // Scoped to THIS card's job: a background retry for another tab's posting must not repaint
+      // this one's status.
+      const onRetryPing = (msg: { type?: string; payload?: { company?: string; role?: string; attempt?: number } }) => {
+        if (msg?.type !== 'RESUME_GEN_RETRYING') return;
+        if (msg.payload?.company !== company || msg.payload?.role !== title) return;
+        const statusEl = card.querySelector<HTMLElement>('#wp-resume-status');
+        if (!statusEl || statusEl.style.display === 'none') return;
+        const attempt = msg.payload?.attempt ?? 1;
+        statusEl.textContent = `The AI is busy right now. Retrying... (attempt ${attempt + 1})`;
+      };
+      chrome.runtime.onMessage.addListener(onRetryPing);
+
       // If an auto-submit countdown is mid-flight, dismissing the card (the x or "No") must cancel
       // it too: the countdown's overlay and ticking interval live on document.body, OUTSIDE this
       // card, so just removing the card would leave them running and still fire ~15s later after the
       // student thought they'd dismissed everything. No-op when no countdown is active.
-      const dismiss = () => { activeAutoSubmitCancel?.(); card.remove(); };
+      // The retry listener is torn down here for the same reason it is registered at all: a
+      // dismissed card must stop reacting to a generation that is still running in the background.
+      const dismiss = () => {
+        activeAutoSubmitCancel?.();
+        chrome.runtime.onMessage.removeListener(onRetryPing);
+        card.remove();
+      };
       card.querySelector('#wp-resume-close')?.addEventListener('click', dismiss);
       card.querySelector('#wp-resume-no')?.addEventListener('click', dismiss);
       card.querySelector('#wp-resume-yes')?.addEventListener('click', async () => {
@@ -658,6 +688,15 @@ export default defineContentScript({
         if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Tailoring your resume...'; }
 
         const result = await startResumeGen();
+        // This await can now resolve minutes after the click: the background retries a model
+        // overload for up to 150s (R-003), and the retry status above tells the student it will
+        // be a while, which is an open invitation to give up, dismiss the card, and fill the form
+        // by hand. A dismissed card is the student saying "leave this application alone", so a
+        // late success must not fill over whatever they have typed since, and must never lead to
+        // an auto-submit countdown for a card that no longer exists. isConnected is the dismissal
+        // signal: every dismiss path ends in card.remove(). The generation result itself stays
+        // cached per job, so nothing paid for is thrown away; re-opening the card reuses it.
+        if (!card.isConnected) return;
         if (!result || result.error || !result.profile || !result.applicationProfile || !result.resume) {
           if (statusEl) statusEl.textContent = result?.error || 'Could not generate a resume - fill this one manually.';
           return;
@@ -756,6 +795,17 @@ export default defineContentScript({
             },
           });
         };
+
+        // Same dismissal check as after the generation await, for the stretch the fill itself
+        // takes (legitimately up to 90s on an essay-heavy form). A dismissal that lands while the
+        // fill is running must not be followed by an auto-submit countdown: the card is the
+        // student's only handle on that countdown's context, and an application they closed the
+        // card on is one they chose to finish themselves. The fill above already happened, so
+        // report it honestly and hand the form back without submitting.
+        if (!card.isConnected) {
+          reportEvent(false);
+          return;
+        }
 
         // Auto-submit is opt-in (AutofillSetupScreen toggle, off by default) AND only fires when it
         // is actually safe: a real FINAL-submit button exists (not a "Next"/"Continue" step button,

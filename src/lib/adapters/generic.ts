@@ -5,6 +5,7 @@ import {
   openCombobox,
   pickComboOption,
   closeOpenCombobox,
+  unattachableDocumentReasons,
 } from './shared/dom';
 import {
   dateOrderCandidates,
@@ -374,8 +375,20 @@ export function classifyField(label: string, type?: string): ProfileKey | null {
   if (/\bmajor\b|field of study|course of study|degree subject/i.test(l)) return 'major';
 
   if (/phone|mobile/i.test(l)) return 'phone';
-  if (/\bcity\b|\blocation\b/i.test(l)) return 'address_city';
-  if (/\bstate\b|province/i.test(l)) return 'address_state';
+  // State before city, because the shapes overlap and the MOST specific unit wins: a bare
+  // "Location" only means city when no more specific unit is named, so "Location / State /
+  // Province" must land on state, not on the \blocation\b alternative below. Same doctrine as
+  // country before state (RESIDENCE_QUESTION runs well above) and citizenship before residence.
+  // The lookahead keeps "state" the NOUN: "please state your current location" is a city question
+  // that merely uses the verb, and without the guard it would classify as address_state. No
+  // plural: "are you located in the United States?" names a country, not a state field.
+  if (/\b(state|province|prefecture)\b(?!\s+(?:your|the|you|it|why|how|what|when|where))|state\s*\/\s*province/i.test(l))
+    return 'address_state';
+  // The phrase alternatives are R-002's: live misses were question-shaped labels ("where are you
+  // currently living?") that a bare \bcity\b never matched. "where are you based" classifies as
+  // address_country first (RESIDENCE_QUESTION), which is also the order the R-002 branch chose.
+  if (/\b(city|town)\b|\blocation\b|where are you (currently )?(located|living|based)|current location|where do you live/i.test(l))
+    return 'address_city';
   if (/zip|postal/i.test(l)) return 'address_zip';
 
   return null;
@@ -414,8 +427,12 @@ export const START_DATE_QUESTION =
 const SALARY_QUESTION = /salary|compensation|desired pay|expected pay|pay expectation/i;
 const DOB_QUESTION = /date of birth|birth\s*date|\bdob\b/i;
 const CITIZENSHIP_QUESTION = /citizen|nationalit/i;
+// The gap is {0,20} and the verb stem is `resid`, both for ElevenLabs' live "Country you're
+// currently residing in" family: the contraction plus an adverb eats most of a 15-char gap, and
+// "residing"/"residence" share no full word with "reside". The bare `country.{0,20}(residing|
+// residence)` alternative catches the same phrasing with the pronoun dropped (R-002).
 const RESIDENCE_QUESTION =
-  /country of residence|which country|country you.{0,15}(based|reside|work from|located)|where are you based|based in which country|current country|\bcountry\b/i;
+  /country of residence|which country|country you.{0,20}(based|resid|work from|located)|where are you based|based in which country|current country|country.{0,20}(residing|residence)|\bcountry\b/i;
 
 export function linkQuestion(label: string, ap: ApplicationProfile): LinkQuestion | null {
   // A referral question is NOT a link question, even though it routinely names LinkedIn or the
@@ -438,6 +455,172 @@ export function linkQuestion(label: string, ap: ApplicationProfile): LinkQuestio
 // link question we could not fill HOLDS the countdown rather than submitting an empty field.
 export function linkSkipReason(label: string): string {
   return `link question left for you (no URL in your profile): "${label.slice(0, 60)}"`;
+}
+
+// A question asking WHERE the student lives (city / state / country of residence). Live QA
+// 2026-07-16 left a required location field blank on 3 of 12 real forms (Monzo "Location (City)*",
+// ElevenLabs "Location* / Country you're currently residing in", Global Relay "Country*") while
+// filling it on Abound - so the misses were about label and control SHAPE, not a missing profile.
+// The same two holes that produced the link bug (R-008) produced this one, which is why this
+// classifier is shaped exactly like linkQuestion:
+//   1. The QUESTION is classified independently of whether a value is stored. An unset
+//      address_country must still terminate the block (blank + flagged), not fall through - the
+//      old inline rules required `ap.address_country` to even recognise a country question, so an
+//      unset value looked identical to "not a location question" and the field was left blank
+//      SILENTLY, with no skip reason. That silence is the actual defect: with nothing flagged the
+//      auto-submit gate does not hold, and the student first learns of the empty required field
+//      when the form bounces at submit.
+//   2. Callers must handle the combobox shape. Every one of the three live misses was a
+//      react-select / autocomplete control, and the old label rules were anchored to plain inputs
+//      (Ashby's `/^(location|city)\b/` could not even match a label that opens with "Country").
+// Returns the resolved value (possibly undefined) so the caller can fill it or flag it, or null
+// when this is not a location question at all.
+export type LocationQuestion = { field: 'city' | 'state' | 'country'; value?: string };
+
+export function locationQuestion(label: string, ap: ApplicationProfile): LocationQuestion | null {
+  // Citizenship is a DIFFERENT question with a different answer, and desiredAnswer already owns it
+  // (a student whose citizenship differs from where she lives is the whole reason that split
+  // exists). Guard first so "what country are you a citizen of?" can never resolve to residence.
+  if (/citizen|nationalit/i.test(label)) return null;
+  // A location-scoped work-eligibility question ("which country are you authorized to work in?")
+  // names a country but is an always-ask LEGAL question, not a location field. Answering it from
+  // address_country is precisely the R-004 CRITICAL failure (a global profile flag mapped onto a
+  // location-scoped legal question, shipping a false declaration). It must fall through to
+  // WORK_ELIGIBILITY_QUESTION and be left for the student.
+  if (WORK_ELIGIBILITY_QUESTION.test(label)) return null;
+  // Field identity is delegated to classifyField, the same classifier harvest reads with, so a
+  // label RoleQuick fills as a city can never be harvested back as a country. classifyField
+  // re-checks the two refusals above internally (plus EEO and never-fill), so the delegation
+  // cannot weaken them; they stay spelled out here, first, because this ordering is the R-004
+  // lock and must survive any future classifyField edit.
+  switch (classifyField(label.toLowerCase())) {
+    case 'address_country':
+      return { field: 'country', value: ap.address_country };
+    case 'address_state':
+      return { field: 'state', value: ap.address_state };
+    case 'address_city':
+      return { field: 'city', value: ap.address_city };
+    default:
+      return null;
+  }
+}
+
+// "left for" is load-bearing (auto-submit gate REVIEW_FLAG), same as the other two builders. Two
+// distinct reasons, because they are two distinct user actions: we have no value to fill vs. we
+// have one but the picker would not take it and a human must select the option.
+export function locationSkipReason(field: LocationQuestion['field'], label: string, reason: 'no-value' | 'no-option'): string {
+  const detail =
+    reason === 'no-value'
+      ? `no ${field} in your profile`
+      : `couldn't select it in this picker`;
+  return `location question left for you (${detail}): "${label.slice(0, 60)}"`;
+}
+
+// The typeahead queries for an ASYNC location combobox, fullest first. Ashby's picker runs a
+// network lookup on what was typed, and the query must be SPECIFIC enough for it to return
+// anything: typing "Dubai" alone rendered NO listbox on the live Espa Labs form (2026-07-17),
+// while "Dubai, United Arab Emirates" returned exactly the right option. So the first query is
+// the stored unit widened with every LESS specific stored unit after it, comma-joined the way a
+// human types a place. The bare unit follows as a fallback for pickers with preloaded options,
+// which filter by containment and would find nothing containing the fuller string.
+//
+// Composed ONLY from stored profile values - no unit is ever invented, defaulted, or completed,
+// and an unset primary unit returns [] so a caller cannot type a query for a value the profile
+// does not hold. That is the same never-fabricate line the GPA rule (R-005) draws.
+export function locationComboQueries(field: LocationQuestion['field'], ap: ApplicationProfile): string[] {
+  const units =
+    field === 'city'
+      ? [ap.address_city, ap.address_state, ap.address_country]
+      : field === 'state'
+        ? [ap.address_state, ap.address_country]
+        : [ap.address_country];
+  if (!units[0]?.trim()) return [];
+  const seen = new Set<string>();
+  const parts = units
+    .map((u) => u?.trim() ?? '')
+    .filter((u) => {
+      const key = u.toLowerCase();
+      if (!u || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  const fuller = parts.join(', ');
+  return fuller === parts[0] ? [fuller] : [fuller, parts[0]];
+}
+
+// The essay drafter must never be handed a question it cannot answer. This is the second half of
+// R-006 (live QA 2026-07-16: a required "Why Abound?" left undrafted while "Why Cohere?" drafted
+// fine on another Ashby form), and the whole chain is worth stating, because every link failed
+// quietly:
+//   labelTextFor returned "" (an existing-but-empty <legend> short-circuited the fall-through)
+//     -> desiredAnswer("") matched no rule, so the block fell through to the drafter
+//       -> the drafter was asked to answer ""
+//         -> the backend rejects it outright (question: z.string().min(1) -> 400)
+//           -> drafted = null -> a REQUIRED essay left blank.
+// The label fall-through is fixed at the source (shared/dom.ts firstNonEmptyText). This guard is
+// the backstop for any OTHER way a label can come back unreadable: never spend a round trip on a
+// question we cannot state, and flag it so the student is told in the card instead of meeting an
+// empty required essay at submit.
+// 3 chars, because no real question is shorter and the cost of being wrong is asymmetric: flagging
+// a legitimate question merely asks for a human, while drafting an unreadable one burns a metered
+// LLM call to answer nothing.
+const MIN_DRAFTABLE_QUESTION_CHARS = 3;
+
+export function isDraftableQuestion(label: string): boolean {
+  return label.trim().length >= MIN_DRAFTABLE_QUESTION_CHARS;
+}
+
+// "left for" again: an essay we declined to draft must hold auto-submit, not sail through blank.
+export function unreadableQuestionSkipReason(): string {
+  return "open-ended question left for you: RoleQuick could not read this question's label";
+}
+
+// ─── Open-ended question shape (R-033) ──────────────────────────────────────
+// The essay drafter's reach used to be textarea-shaped, but Greenhouse lets an author render a
+// free-text question as a single-line input[type=text] - Gemini asked for "3-5 sentences" in a
+// 255-char input, and the question was silently never drafted. Widening the drafter to every
+// text input would be its own bug (every name field becomes an essay), so the gate keys on the
+// QUESTION, not the control: does the label read like a prompt for prose? Callers must ALSO
+// check that the label maps to no profile field and no refused question before drafting -
+// this predicate only answers "is this asking for sentences", nothing about whether we should.
+export function isOpenEndedQuestion(label: string): boolean {
+  const l = clean(label ?? '').toLowerCase();
+  if (!l) return false;
+  // Essay-ish verbs and asks. Stems (describ\w+, explain\w*) rather than \b-bounded whole words,
+  // because "explaining"/"describing" are how the live Gemini label was phrased and a boundary
+  // after "explain" misses them.
+  // "include a brief note on the type of problems you most enjoy working on" is the live Cresta
+  // SWE Intern label (2026-07-17): no verb from the list below, no question mark, and a required
+  // 255-char input left undrafted. "brief note" and "you (most) enjoy" are prose asks the way
+  // "describe" is - a field label names a field, it does not invite a note about enjoyment.
+  if (
+    /\b(why\b|describ\w+|explain\w*|tell (?:us|me)\b|share\b|elaborat\w+|discuss\b|sentences?\b|paragraphs?\b|in your own words|what interest\w*|what excit\w*|what motivat\w*|what makes\b|how (?:did|do|would|have) you|brief note\b|note on\b|you (?:most )?enjoy\b)/.test(l)
+  )
+    return true;
+  // A long interrogative label is a question being asked, not a field being named. Short
+  // interrogatives without the verbs above ("Preferred name?") stay out on purpose.
+  return l.includes('?') && l.length >= 40;
+}
+
+/**
+ * Fit a drafted answer into a control's character budget WITHOUT misrepresenting the student.
+ * Returns the largest whole-sentence prefix that fits, or null when no real sentence does - and
+ * null must mean "leave it blank and flag it", never "clip mid-word". A sentence that ends
+ * mid-clause is the R-029 family: text in her voice saying something she didn't. The sentence
+ * boundary is a terminator FOLLOWED by space-or-end, so "3.89 GPA" and "web3.0" can't be cut at
+ * their decimal points.
+ */
+export function fitToBudget(text: string, maxLen: number): string | null {
+  const t = text.trim();
+  if (maxLen <= 0 || t.length <= maxLen) return t || null;
+  const slice = t.slice(0, maxLen);
+  let lastEnd = -1;
+  const re = /[.!?](?=\s|$)/g;
+  for (let m = re.exec(slice); m; m = re.exec(slice)) lastEnd = m.index;
+  // Under ~40 chars the "sentence" is almost certainly a fragment of the first clause, not an
+  // answer; a blank flagged for the student beats a confident non-answer.
+  if (lastEnd < 40) return null;
+  return slice.slice(0, lastEnd + 1).trim();
 }
 
 export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record<string, string>): Desired {
@@ -484,9 +667,12 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   // one. From here desiredAnswer's only job is shaping a stored value for the option matcher.
   //
   // Only the keys that were already answered here are handled. classifyField recognises more
-  // (phone, city, links, gpa, major), but those are filled by the identity-first chain in
+  // (phone, links, gpa, major), but those are filled by the identity-first chain in
   // fillGenericApplication, and returning them here would start answering selects/radios that
-  // previously fell through. `default: null` keeps that behaviour exactly as it was.
+  // previously fell through. `default: null` keeps that behaviour exactly as it was - EXCEPT for
+  // address_state/address_city, which now answer deliberately (R-002): a location question
+  // rendered as a select/radio/combobox previously fell through and was left silently blank, and
+  // three of twelve live forms bounced at submit on exactly that.
   switch (classifyField(l)) {
     // Citizenship is often stored as a nationality adjective ("Indian") while a country dropdown
     // lists the country ("India"), and a combobox typeahead filters by what is typed - so map the
@@ -504,9 +690,18 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
     }
 
     // Where the student LIVES, not their nationality. "Which country do you intend to work from"
-    // asks about location; the two differ and the split lives in classifyField now.
+    // asks about location; the two differ and the split lives in classifyField now. These three
+    // cases mirror locationQuestion exactly (both funnel through classifyField for identity), so
+    // an adapter that resolves the question via locationQuestion and one that resolves it here
+    // cannot disagree on which stored value answers it. Only a RESOLVED value answers; an unset
+    // field returns null and falls through. Adapters that call locationQuestion directly get the
+    // stronger guarantee - an unset value is flagged rather than left silently blank (R-002).
     case 'address_country':
       return ap.address_country ? { mode: 'value', value: ap.address_country } : null;
+    case 'address_state':
+      return ap.address_state ? { mode: 'value', value: ap.address_state } : null;
+    case 'address_city':
+      return ap.address_city ? { mode: 'value', value: ap.address_city } : null;
 
     // The option set varies wildly per form (LinkedIn, Company website, Job board, Other, ...), so
     // a single value rarely matches. Try the student's own answer, then near-synonyms, then
@@ -972,6 +1167,13 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     skipped_reasons.push('resume: no generated resume file available');
   }
 
+  // Documents this form requires that RoleQuick cannot produce (R-010). Reported at fill time, in
+  // the card, so the student learns the form wants a transcript NOW rather than at submit; the
+  // "left for" wording holds auto-submit while it sits unattached.
+  const documentReasons = unattachableDocumentReasons();
+  fields_skipped += documentReasons.length;
+  skipped_reasons.push(...documentReasons);
+
   // ── Open-ended answers: all instant fields are filled by now, so draft every textarea
   //    CONCURRENTLY (each is an independent LLM round trip). Wall-clock is the slowest single
   //    draft, not the sum - a form with 4 essay boxes takes ~1 draft's time, not 4. Each result
@@ -1014,11 +1216,14 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
 }
 
 // Visually mark an AI-drafted field so the student can't miss that it needs review.
-function markForReview(el: HTMLElement) {
+// `note` exists because not everything flagged for review is an AI draft. A converted
+// grade (R-005) is a deterministic band mapping, not model output, and calling it an "AI
+// draft" would tell the student an LLM invented their GPA.
+function markForReview(el: HTMLElement, note = '✎ AI draft: review before submitting') {
   el.style.outline = '2px solid #f59e0b';
   el.style.outlineOffset = '1px';
   const badge = document.createElement('div');
-  badge.textContent = '✎ AI draft: review before submitting';
+  badge.textContent = note;
   badge.style.cssText =
     'font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;color:#b45309;margin-top:4px;';
   el.insertAdjacentElement('afterend', badge);

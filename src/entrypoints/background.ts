@@ -1,6 +1,7 @@
 // Token access goes through lib/storage, so the background reads the exact key the popup
 // writes, including the backward-compatible fallback to the legacy Volley-era key name.
 import { getToken as getStoredToken, migrateLegacyStorage, setToken, setAutoSubmitEnabled } from '../lib/storage';
+import { overloadWaitMs, overloadBudgetRemains, RESUME_OVERLOAD_BUDGET_MS } from '../lib/overload';
 
 // Set VITE_API_BASE at build time (e.g. your Vercel URL) to point at the deployed backend;
 // defaults to the local dev server.
@@ -55,6 +56,35 @@ const FETCH_TIMEOUT_MS = 20000;
 const RESUME_FETCH_TIMEOUT_MS = 60000;
 function timeoutFetch(input: string, init: RequestInit = {}, ms = FETCH_TIMEOUT_MS): Promise<Response> {
   return fetch(input, { ...init, signal: AbortSignal.timeout(ms) });
+}
+
+// ─── Transient model-capacity retry (live QA 2026-07-16, R-003) ──────────────
+// A real Anthropic overload incident hard-failed a whole fill: the card said "Failed to generate
+// resume spec" and the student's only recovery was re-clicking "Yes, fill it" (6+ times on Global
+// Relay, never succeeding while it lasted). It blocked a submission outright.
+//
+// The retry has to live HERE, on the client, and that is not a stylistic choice. The backend cannot
+// retry its way out: Vercel kills the function at 60s (vercel.json maxDuration) and the incident
+// needed ~6 attempts over ~2.5 minutes to get a 200. Only a FRESH REQUEST escapes that ceiling, so
+// only the client can outlive an incident longer than one function. The backend's job is to say
+// which failures are worth coming back for; it now returns 503 + `code: 'llm_overloaded'` for
+// exactly those, which is what this loop keys on. Anything else still fails fast: retrying a bad JD
+// against a healthy API just reproduces the same error more slowly.
+//
+// 150s covers the observed incident (the manual poll that eventually got a 200 took ~2.5 min).
+// The student is never trapped by it: the card stays dismissable throughout and reports each retry,
+// and because generation pre-warms on card hover, most or all of this window is usually spent
+// before they ever click "Yes, fill it".
+//
+// Known risk, deliberately accepted: an MV3 service worker can be torn down mid-loop. The pending
+// sendResponse port keeps it alive in practice (and this file already awaits a 60s fetch the same
+// way), and content.ts already treats a dead worker as a recoverable error and offers a manual fill,
+// so the worst case degrades to today's behavior rather than to a hang.
+// The wait policy itself lives in lib/overload.ts, where it can be unit-tested: background.ts can't
+// be imported by a test (chrome.* and defineBackground at module load), and a silently-wrong
+// backoff is exactly the kind of bug that only shows up during the next incident.
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // Shape returned by GET /profile (the resume-parsed JSON, sent unwrapped by the backend).
@@ -181,6 +211,12 @@ interface ApplicationProfileResponse {
   desired_salary?: string;
   eeo_prefs?: Record<string, string> | null;
   referral_source_default?: string;
+  // Academic record (R-005). The backend serves these from GET /profile/application under exactly
+  // these names, and this object is handed to the adapters as-is, so listing them here is what
+  // keeps this passthrough honest rather than fields that only exist at runtime.
+  gpa?: string;
+  gpa_scale?: string;
+  major?: string;
 }
 
 // Fetches everything a client-side autofill adapter needs in one round trip: the resume
@@ -192,6 +228,11 @@ async function generateResumeAndProfile(
   role: string,
   jdText: string,
   token: string,
+  // Called before each capacity backoff so the caller can tell the student what is happening.
+  // "Tailoring your resume..." sitting frozen for two minutes is indistinguishable from a hang, and
+  // a student who thinks it hung fills the form by hand or re-clicks (which is what the live
+  // incident produced). Optional: a caller that has nowhere to show it still gets the retry.
+  onOverloadRetry?: (attempt: number, waitMs: number) => void,
 ) {
   // The two profile fetches are independent, so run them together instead of one-after-another -
   // this is on the pre-warm critical path, so a saved round trip is a saved round trip.
@@ -202,29 +243,58 @@ async function generateResumeAndProfile(
   const profile: UserProfile & { full_name?: string; email?: string } = profileRes.ok ? await profileRes.json() : EMPTY_PROFILE;
   const applicationProfile: ApplicationProfileResponse = appProfileRes.ok ? await appProfileRes.json() : {};
 
-  const resumeRes = await timeoutFetch(`${API_BASE}/resume/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({
-      company,
-      role,
-      jd_text: jdText,
-      contact: {
-        full_name: profile.full_name || 'Applicant',
-        email: profile.email,
-        linkedin_url: applicationProfile.linkedin_url,
-        github_url: applicationProfile.github_url,
-        portfolio_url: applicationProfile.portfolio_url,
-        phone: applicationProfile.phone,
-      },
-    }),
-  }, RESUME_FETCH_TIMEOUT_MS);
-  if (!resumeRes.ok) {
-    const body: { error?: string; detail?: string[] } | null = await resumeRes.json().catch(() => null);
+  // Only the resume POST retries. The profile reads above are cheap, already done, and unaffected
+  // by a model overload; re-running them per attempt would add round trips to a backend that is
+  // already telling us it is busy.
+  const overloadDeadline = Date.now() + RESUME_OVERLOAD_BUDGET_MS;
+  let resume: { resume_url: string; file_name: string; spec: unknown } | undefined;
+  for (let attempt = 1; ; attempt++) {
+    const resumeRes = await timeoutFetch(`${API_BASE}/resume/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        company,
+        role,
+        jd_text: jdText,
+        contact: {
+          full_name: profile.full_name || 'Applicant',
+          email: profile.email,
+          linkedin_url: applicationProfile.linkedin_url,
+          github_url: applicationProfile.github_url,
+          portfolio_url: applicationProfile.portfolio_url,
+          phone: applicationProfile.phone,
+        },
+      }),
+    }, RESUME_FETCH_TIMEOUT_MS);
+
+    if (resumeRes.ok) {
+      resume = await resumeRes.json();
+      break;
+    }
+
+    const body: { error?: string; detail?: string[]; code?: string; retry_after_ms?: number } | null =
+      await resumeRes.json().catch(() => null);
+
+    // The one retryable case, and it is retryable only because the SERVER said so. Keying on the
+    // explicit code rather than the bare 503 matters: the route returns 503 for "taking too long"
+    // as well, which is a budget failure that retrying identically would just reproduce.
+    const overloaded = resumeRes.status === 503 && body?.code === 'llm_overloaded';
+    if (overloaded && overloadBudgetRemains(overloadDeadline)) {
+      const waitMs = overloadWaitMs(body?.retry_after_ms);
+      onOverloadRetry?.(attempt, waitMs);
+      await sleep(waitMs);
+      continue;
+    }
+
     const message = body?.detail?.length ? `${body.error}: ${body.detail.join(', ')}` : body?.error;
+    if (overloaded) {
+      // Budget spent on a still-ongoing incident. Say what actually happened rather than the
+      // generic failure: this is a capacity problem that will pass, not a broken resume, and the
+      // student should know re-clicking later is worth it.
+      throw new Error('The model stayed busy for too long. Try "Yes, fill it" again in a minute, or fill this one manually.');
+    }
     throw new Error(message || 'resume generation failed');
   }
-  const resume: { resume_url: string; file_name: string; spec: unknown } = await resumeRes.json();
 
   return { profile, applicationProfile, resume };
 }
@@ -326,13 +396,25 @@ export default defineBackground(() => {
 
       case 'GENERATE_RESUME_AND_FILL_DATA': {
         const { company, role, jd_text } = message.payload;
+        // The card lives in the sending tab, so a capacity-retry notice has to go back to that tab
+        // specifically: chrome.runtime.sendMessage from the background reaches the popup, never a
+        // content script (that is why DRAFTS_READY works but this would not). Best-effort by
+        // design - a closed tab or a card already dismissed just means nobody is listening, which
+        // must never take down the generation itself.
+        const tabId = _sender.tab?.id;
+        const notifyRetry = (attempt: number, waitMs: number) => {
+          if (tabId === undefined) return;
+          chrome.tabs
+            .sendMessage(tabId, { type: 'RESUME_GEN_RETRYING', payload: { company, role, attempt, waitMs } })
+            .catch(() => {});
+        };
         getStoredToken().then(async (token) => {
           if (!token) {
             sendResponse({ error: 'not signed in' });
             return;
           }
           try {
-            const result = await generateResumeAndProfile(company, role, jd_text, token);
+            const result = await generateResumeAndProfile(company, role, jd_text, token, notifyRetry);
             sendResponse(result);
           } catch (err) {
             sendResponse({ error: err instanceof Error ? err.message : 'resume generation failed' });

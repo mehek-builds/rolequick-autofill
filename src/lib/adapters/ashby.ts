@@ -41,10 +41,15 @@ import {
   openCombobox,
   pickComboOption,
   closeOpenCombobox,
+  blockAlreadyAnswered,
+  driveAsyncLocationCombobox,
+  firstNonEmptyText,
+  unattachableDocumentReasons,
 } from './shared/dom';
+import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { dateSkipReason, desiredAnswer, fillDateField, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { dateSkipReason, desiredAnswer, fillDateField, isDraftableQuestion, linkQuestion, linkSkipReason, locationComboQueries, locationQuestion, locationSkipReason, matchOption, unreadableQuestionSkipReason, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 import { isDateControl } from './shared/dates';
 import { htmlToPlainText, JD_UNREADABLE, looksLikeJobDescription } from './shared/jd';
 
@@ -78,19 +83,33 @@ function waitForStableDom(quietMs = 200, maxMs = 1500): Promise<void> {
 // label text glued onto the question text.
 function labelTextFor(el: Element): string {
   const entry = el.closest('fieldset[class*="_fieldEntry_"], div[class*="_fieldEntry_"]');
-  const legend = entry?.querySelector('legend');
-  if (legend) return legend.textContent?.trim().toLowerCase() ?? '';
-  // div-based entries (text questions) carry a real <label>; fall back to full text only when
-  // neither a legend nor a label exists.
-  const label = entry?.querySelector('label');
-  if (label) return label.textContent?.trim().toLowerCase() ?? '';
   const container = entry ?? el.closest('[class*="_container_"], li') ?? el.parentElement;
-  return (container?.textContent ?? '').trim().toLowerCase();
+  // Prefer a discrete <legend> (radio-group fieldsets), then a real <label> (div-based text
+  // entries), then the container's full text. Each source now falls through when it renders EMPTY,
+  // not only when it is absent: an entry whose <legend> exists but is blank used to resolve the
+  // whole question to "" and never look at the <label> beneath it (R-006, live QA 2026-07-16).
+  return firstNonEmptyText(
+    entry?.querySelector('legend')?.textContent,
+    entry?.querySelector('label')?.textContent,
+    container?.textContent,
+  );
 }
 
 function isNeverFillField(el: Element): boolean {
   const label = labelTextFor(el);
   return NEVER_FILL_LABEL_PATTERNS.some((re) => re.test(label));
+}
+
+// Write text into an Ashby (React-controlled) input the way the rest of this adapter does: pace it,
+// focus, set through the native setter, blur, then let the re-render settle before the next write.
+// Deliberately NOT shared/dom's fillField, which omits the waitForStableDom - Ashby re-renders
+// after most field changes and the next fill can land in a node that is about to be replaced.
+async function writeReactText(el: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
+  await randomDelay();
+  el.focus();
+  setNativeValue(el, value);
+  el.blur();
+  await waitForStableDom();
 }
 
 // ─── Shared answer helpers (mirror generic.ts's engine) ───────────────────────
@@ -229,11 +248,14 @@ async function answerChoiceBlock(block: Element, desired: Desired): Promise<bool
 }
 
 // Visually flag an AI-drafted field so the student can't miss that it needs review.
-function markForReview(el: HTMLElement): void {
+// `note` exists because not everything flagged for review is an AI draft. A converted
+// grade (R-005) is a deterministic band mapping, not model output, and calling it an "AI
+// draft" would tell the student an LLM invented their GPA.
+function markForReview(el: HTMLElement, note = 'AI draft: review before submitting'): void {
   el.style.outline = '2px solid #f59e0b';
   el.style.outlineOffset = '1px';
   const badge = document.createElement('div');
-  badge.textContent = 'AI draft: review before submitting';
+  badge.textContent = note;
   badge.style.cssText = 'font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;color:#b45309;margin-top:4px;';
   el.insertAdjacentElement('afterend', badge);
 }
@@ -272,6 +294,19 @@ async function fillResumeFile(blob: Blob, fileName: string): Promise<boolean> {
   input.dispatchEvent(new Event('change', { bubbles: true }));
   await waitForStableDom();
   return true;
+}
+
+// Has this block already been answered? The grade branch needs it for the same reason the location
+// branch does: an earlier pass or a pre-filled form must not be overwritten.
+function blockAlreadyAnsweredForGrade(block: Element): boolean {
+  const text = block.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+    'input[type="text"], input[type="number"], textarea',
+  );
+  if (text?.value.trim()) return true;
+  if (block.querySelector('input[type="radio"]:checked, input[type="checkbox"]:checked')) return true;
+  const select = block.querySelector<HTMLSelectElement>('select');
+  if (select?.value) return true;
+  return !!block.querySelector('[class*="singleValue"], [class*="multiValue"]');
 }
 
 export interface AshbyFillParams {
@@ -467,6 +502,13 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
     skipped_reasons.push('resume: no generated resume file available');
   }
 
+  // Documents this form requires that RoleQuick cannot produce (R-010). Reported at fill time, in
+  // the card, so the student learns the form wants a transcript NOW rather than at submit; the
+  // "left for" wording holds auto-submit while it sits unattached.
+  const documentReasons = unattachableDocumentReasons();
+  fields_skipped += documentReasons.length;
+  skipped_reasons.push(...documentReasons);
+
   // Custom questions (links, work-auth, sponsorship, EEO) get per-posting generated names, so
   // match by label text. Two container shapes exist (live-tested 2026-07-04 on the Notion
   // board): the EEO survey section renders each radio group as `fieldset[class*="_fieldEntry_"]`,
@@ -518,28 +560,22 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
       }
     }
 
-    // Phone/location are `_systemfield_*` inputs on some boards (filled above) but per-posting
-    // UUID-named custom fields on others (live-tested 2026-07-04: Notion's board), where only
-    // the label identifies them.
+    // Phone is a `_systemfield_*` input on some boards (filled above) but a per-posting UUID-named
+    // custom field on others (live-tested 2026-07-04: Notion's board), where only the label
+    // identifies it. Terminates the block either way, so an unset phone is flagged rather than
+    // falling through to the essay drafter. Location used to share this rule; it now has its own
+    // block below (R-002), because the inline `/^(location|city)\b/` shape is exactly what left
+    // three live required location fields silently blank.
     //
     // The input is resolved BEFORE the label match because `isPhoneLabel` needs the control type
     // to read a bare "Number" label as a phone (R-020) - the label text alone is ambiguous there.
     const input = block.querySelector<HTMLInputElement>('input[type="text"], input[type="tel"]');
-    const textTarget =
-      isPhoneLabel(label, input) ? applicationProfile.phone :
-      /^(location|city)\b/.test(label) ? applicationProfile.address_city :
-      undefined;
-    if (textTarget !== undefined) {
-      // Skip autocomplete comboboxes (Location on most boards): a typed value that never
-      // selects a suggestion doesn't register as an answer, it just blocks the field.
-      const isCombobox = input?.getAttribute('role') === 'combobox' || !!input?.getAttribute('aria-autocomplete');
-      if (input && !input.value && !isCombobox) {
-        if (textTarget) {
-          await randomDelay();
-          input.focus();
-          setNativeValue(input, textTarget);
-          input.blur();
-          await waitForStableDom();
+    if (isPhoneLabel(label, input) && !blockAlreadyAnswered(block)) {
+      // Skip autocomplete comboboxes: a typed value that never selects a suggestion doesn't
+      // register as an answer, it just blocks the field.
+      if (input && !isComboboxControl(input)) {
+        if (applicationProfile.phone) {
+          await writeReactText(input, applicationProfile.phone);
           fields_filled++;
         } else {
           fields_skipped++;
@@ -547,18 +583,63 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
         }
         continue;
       }
-      if (input && !input.value && isCombobox) {
-        // Ashby's location field is a react-select combobox: drive it through the shared helpers
-        // rather than skipping it, since a typed value that never selects a suggestion doesn't
-        // register as an answer.
-        if (textTarget && (await fillCombobox(input, { mode: 'value', value: textTarget }))) {
-          fields_filled++;
-        } else {
-          fields_skipped++;
-          skipped_reasons.push(`${label.slice(0, 40)}: autocomplete field, left for manual selection`);
-        }
+    }
+
+    // Location of residence (city/state/country), via the one shared classifier (see
+    // locationQuestion in generic.ts). This replaces an inline `/^(location|city)\b/` rule that
+    // carried BOTH of the holes behind the link bug (R-008), and lost the same way:
+    //   1. It was anchored to the start of the label, so ElevenLabs' "Location* / Country you're
+    //      currently residing in" never matched - and it had no country branch to match anyway.
+    //   2. Its `textTarget !== undefined` guard collapsed "no city stored" and "not a location
+    //      question" into one value, so an unset field fell through to the generic paths and was
+    //      left blank with NO reason - the auto-submit gate saw nothing to hold on, and the student
+    //      met the empty required field at submit instead of in the card (R-002, 3/12 live forms).
+    const loc = locationQuestion(label, applicationProfile);
+    if (loc && !blockAlreadyAnswered(block)) {
+      if (!loc.value) {
+        fields_skipped++;
+        skipped_reasons.push(locationSkipReason(loc.field, label, 'no-value'));
         continue;
       }
+      // Ashby's location picker is an ASYNC combobox, and classifying the question is only half
+      // the fix: the live verdict on the exact form R-002 was logged on (Espa Labs, 2026-07-17)
+      // was that the silent blank became a flag, but Location itself stayed EMPTY while the
+      // profile held the value. Flagging "couldn't select it in this picker" on a field we can
+      // drive is the product politely declining to do the one thing it promised. So the combobox
+      // shape gets driven first, with the sequence the QA session proved by hand on five forms:
+      // type the FULLER stored query (typing just the city renders no listbox), poll for the
+      // async options, click the match with a real element click, and claim the fill only after
+      // reading the committed value back. Anything short of a verified commit falls to the flag
+      // path below - a flag, never a guess.
+      const comboTrigger = comboControlIn(block);
+      const comboInput =
+        comboTrigger instanceof HTMLInputElement ? comboTrigger : (comboTrigger?.querySelector('input') ?? null);
+      if (comboInput && isComboboxControl(comboInput)) {
+        const queries = locationComboQueries(loc.field, applicationProfile);
+        if (await driveAsyncLocationCombobox(comboInput, queries, block)) {
+          await waitForStableDom();
+          fields_filled++;
+          continue;
+        }
+        fields_skipped++;
+        skipped_reasons.push(locationSkipReason(loc.field, label, 'no-option'));
+        continue;
+      }
+      // Non-combobox shapes: native select / radios via the option matcher, then a plain input.
+      const desired: Desired = { mode: 'value', value: loc.value };
+      if (await answerChoiceBlock(block, desired)) {
+        fields_filled++;
+        continue;
+      }
+      const locEl = block.querySelector<HTMLInputElement>('input[type="text"], input[type="tel"]');
+      if (locEl && !isComboboxControl(locEl)) {
+        await writeReactText(locEl, loc.value);
+        fields_filled++;
+        continue;
+      }
+      fields_skipped++;
+      skipped_reasons.push(locationSkipReason(loc.field, label, 'no-option'));
+      continue;
     }
 
     // Never answer work-eligibility questions (work authorization AND sponsorship), on any
@@ -584,6 +665,48 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
       } else {
         fields_skipped++;
         skipped_reasons.push('EEO field: no matching option found, left blank');
+      }
+      continue;
+    }
+
+
+    // Academic record (R-005): GPA / grade average / degree classification / major. Placed with the
+    // other known-answer classifiers and, like them, ALWAYS terminates the block so an unanswerable
+    // one is flagged rather than silently left blank.
+    // A CONVERTED answer (a form asking for a scale we don't store) is filled AND flagged: the
+    // review flag is the whole reason converting is defensible at all, so it is not optional here.
+    const grade = gradeQuestion(label, applicationProfile);
+    if (grade && !blockAlreadyAnsweredForGrade(block)) {
+      if (!grade.value) {
+        fields_skipped++;
+        skipped_reasons.push(gradeSkipReason(grade.field, label));
+        continue;
+      }
+      const gradeDesired: Desired = { mode: 'value', value: grade.value };
+      let wrote = await answerChoiceBlock(block, gradeDesired);
+      if (!wrote) {
+        const gradeEl = block.querySelector<HTMLInputElement>('input[type="text"], input[type="number"]');
+        if (gradeEl && !isComboboxControl(gradeEl)) {
+          // Ashby's own React-safe write (focus / native setter / blur / let the re-render settle),
+          // not shared/dom's fillField: these are controlled inputs that re-render on input.
+          await randomDelay();
+          gradeEl.focus();
+          setNativeValue(gradeEl, grade.value);
+          gradeEl.blur();
+          await waitForStableDom();
+          wrote = true;
+        }
+      }
+      if (!wrote) {
+        fields_skipped++;
+        skipped_reasons.push(gradeSkipReason(grade.field, label));
+        continue;
+      }
+      fields_filled++;
+      if (grade.needsReview) {
+        const reviewEl = block.querySelector<HTMLElement>('input, select, textarea');
+        if (reviewEl) markForReview(reviewEl, 'Converted grade: check this before submitting');
+        skipped_reasons.push(gradeReviewReason(label, grade.disclosure));
       }
       continue;
     }
@@ -636,7 +759,13 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
     // review), else leave it blank. Short text inputs we couldn't map stay blank for the student.
     const textarea = block.querySelector<HTMLTextAreaElement>('textarea');
     if (textarea && !textarea.value) {
-      if (draftAnswer) {
+      if (!isDraftableQuestion(label)) {
+        // An unreadable label must never reach the drafter: the backend requires a non-empty
+        // question (z.string().min(1)), so "" is a guaranteed 400, a null draft, and a REQUIRED
+        // essay left blank with nobody told. Flag it so auto-submit holds (R-006).
+        fields_skipped++;
+        skipped_reasons.push(unreadableQuestionSkipReason());
+      } else if (draftAnswer) {
         pendingDrafts.push({ el: textarea, question: label.slice(0, 200) });
       } else {
         fields_skipped++;

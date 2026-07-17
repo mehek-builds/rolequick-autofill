@@ -34,10 +34,14 @@ import {
   openCombobox,
   pickComboOption,
   closeOpenCombobox,
+  blockAlreadyAnswered,
+  firstNonEmptyText,
+  unattachableDocumentReasons,
 } from './shared/dom';
+import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
-import { desiredAnswer, linkQuestion, linkSkipReason, matchOption, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
+import { desiredAnswer, isDraftableQuestion, linkQuestion, linkSkipReason, locationQuestion, locationSkipReason, matchOption, unreadableQuestionSkipReason, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
 
 // ─── Shared answer helpers (mirror generic.ts's engine) ───────────────────────
 
@@ -98,11 +102,14 @@ async function answerChoiceBlock(block: Element, desired: Desired): Promise<bool
 }
 
 // Visually flag an AI-drafted field so the student can't miss that it needs review.
-function markForReview(el: HTMLElement): void {
+// `note` exists because not everything flagged for review is an AI draft. A converted
+// grade (R-005) is a deterministic band mapping, not model output, and calling it an "AI
+// draft" would tell the student an LLM invented their GPA.
+function markForReview(el: HTMLElement, note = 'AI draft: review before submitting'): void {
   el.style.outline = '2px solid #f59e0b';
   el.style.outlineOffset = '1px';
   const badge = document.createElement('div');
-  badge.textContent = 'AI draft: review before submitting';
+  badge.textContent = note;
   badge.style.cssText = 'font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;color:#b45309;margin-top:4px;';
   el.insertAdjacentElement('afterend', badge);
 }
@@ -231,17 +238,31 @@ function labelTextFor(el: Element): string {
   // several questions, and gluing them into one string lets a control match a NEIGHBOURING
   // question's keywords (e.g. an EEO term bleeding into a work-auth block, or auth vs sponsorship
   // colliding). Fall back to full text only when no legend/label exists.
-  const legend = container?.querySelector('legend')?.textContent?.trim();
-  if (legend) return legend.toLowerCase();
-  const labelEl = container
-    ?.querySelector('label, [data-automation-id="formLabel"], [data-automation-id="richText"]')
-    ?.textContent?.trim();
-  if (labelEl) return labelEl.toLowerCase();
-  return (container?.textContent ?? '').trim().toLowerCase();
+  // Workday already had the empty-source fall-through right (it tests the TRIMMED string, not the
+  // element), which is why it escaped R-006. Routed through the shared helper anyway so the one
+  // adapter that got it right cannot drift back to the `??` form the others were fixed out of.
+  return firstNonEmptyText(
+    container?.querySelector('legend')?.textContent,
+    container?.querySelector('label, [data-automation-id="formLabel"], [data-automation-id="richText"]')?.textContent,
+    container?.textContent,
+  );
 }
 
 function isNeverFillField(el: Element): boolean {
   return NEVER_FILL_LABEL_PATTERNS.some((re) => re.test(labelTextFor(el)));
+}
+
+// Has this block already been answered? The grade branch needs it for the same reason the location
+// branch does: an earlier pass or a pre-filled form must not be overwritten.
+function blockAlreadyAnsweredForGrade(block: Element): boolean {
+  const text = block.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+    'input[type="text"], input[type="number"], textarea',
+  );
+  if (text?.value.trim()) return true;
+  if (block.querySelector('input[type="radio"]:checked, input[type="checkbox"]:checked')) return true;
+  const select = block.querySelector<HTMLSelectElement>('select');
+  if (select?.value) return true;
+  return !!block.querySelector('[class*="singleValue"], [class*="multiValue"]');
 }
 
 export interface WorkdayFillParams {
@@ -313,6 +334,13 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
     skipped_reasons.push('resume: no generated resume file available');
   }
 
+  // Documents this form requires that RoleQuick cannot produce (R-010). Reported at fill time, in
+  // the card, so the student learns the form wants a transcript NOW rather than at submit; the
+  // "left for" wording holds auto-submit while it sits unattached.
+  const documentReasons = unattachableDocumentReasons();
+  fields_skipped += documentReasons.length;
+  skipped_reasons.push(...documentReasons);
+
   // Everything else (links, work-auth, sponsorship, EEO, screening questions) is
   // tenant-specific with no stable automation-id, so match by label text - same
   // defensive pattern as the other three adapters - and skip+flag rather than guess.
@@ -359,6 +387,36 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
       skipped_reasons.push(workEligibilitySkipReason(label));
       continue;
     }
+
+    // Location of residence (city/state/country), via the one shared classifier (see
+    // locationQuestion in generic.ts). Placed AFTER the work-eligibility branch so a legal
+    // "authorized to work in X?" question is already gone by the time we look for a country -
+    // locationQuestion guards that internally too, but the ordering means a regression in either
+    // one alone cannot resurrect the R-004 false declaration.
+    // ALWAYS terminates the block, which is the fix: a location question we cannot answer now
+    // leaves a "left for you" reason that HOLDS auto-submit and shows in the card, instead of
+    // falling through to be left blank silently and bounce at submit (R-002, 3/12 live forms).
+    const loc = locationQuestion(label, applicationProfile);
+    if (loc && !blockAlreadyAnswered(block)) {
+      if (!loc.value) {
+        fields_skipped++;
+        skipped_reasons.push(locationSkipReason(loc.field, label, 'no-value'));
+        continue;
+      }
+      if (await answerChoiceBlock(block, { mode: 'value', value: loc.value })) {
+        fields_filled++;
+        continue;
+      }
+      const locEl = block.querySelector<HTMLInputElement>('input[type="text"]');
+      if (locEl && !isComboboxControl(locEl)) {
+        await fillField(locEl, loc.value);
+        fields_filled++;
+        continue;
+      }
+      fields_skipped++;
+      skipped_reasons.push(locationSkipReason(loc.field, label, 'no-option'));
+      continue;
+    }
     const isEeo = /gender|race|ethnicity|veteran|disability/i.test(label);
     if (isEeo) {
       // Real answer when the student stored one (eeo prefs), else decline. Works whether the
@@ -369,6 +427,42 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
       } else {
         fields_skipped++;
         skipped_reasons.push('EEO field: no matching option found, left blank');
+      }
+      continue;
+    }
+
+
+    // Academic record (R-005): GPA / grade average / degree classification / major. Placed with the
+    // other known-answer classifiers and, like them, ALWAYS terminates the block so an unanswerable
+    // one is flagged rather than silently left blank.
+    // A CONVERTED answer (a form asking for a scale we don't store) is filled AND flagged: the
+    // review flag is the whole reason converting is defensible at all, so it is not optional here.
+    const grade = gradeQuestion(label, applicationProfile);
+    if (grade && !blockAlreadyAnsweredForGrade(block)) {
+      if (!grade.value) {
+        fields_skipped++;
+        skipped_reasons.push(gradeSkipReason(grade.field, label));
+        continue;
+      }
+      const gradeDesired: Desired = { mode: 'value', value: grade.value };
+      let wrote = await answerChoiceBlock(block, gradeDesired);
+      if (!wrote) {
+        const gradeEl = block.querySelector<HTMLInputElement>('input[type="text"], input[type="number"]');
+        if (gradeEl && !isComboboxControl(gradeEl)) {
+          await fillField(gradeEl, grade.value);
+          wrote = true;
+        }
+      }
+      if (!wrote) {
+        fields_skipped++;
+        skipped_reasons.push(gradeSkipReason(grade.field, label));
+        continue;
+      }
+      fields_filled++;
+      if (grade.needsReview) {
+        const reviewEl = block.querySelector<HTMLElement>('input, select, textarea');
+        if (reviewEl) markForReview(reviewEl, 'Converted grade: check this before submitting');
+        skipped_reasons.push(gradeReviewReason(label, grade.disclosure));
       }
       continue;
     }
@@ -398,7 +492,13 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
     // review), else leave it blank. Short text inputs we couldn't map stay blank for the student.
     const textarea = block.querySelector<HTMLTextAreaElement>('textarea');
     if (textarea && !textarea.value) {
-      if (draftAnswer) {
+      if (!isDraftableQuestion(label)) {
+        // An unreadable label must never reach the drafter: the backend requires a non-empty
+        // question (z.string().min(1)), so "" is a guaranteed 400, a null draft, and a REQUIRED
+        // essay left blank with nobody told. Flag it so auto-submit holds (R-006).
+        fields_skipped++;
+        skipped_reasons.push(unreadableQuestionSkipReason());
+      } else if (draftAnswer) {
         pendingDrafts.push({ el: textarea, question: label.slice(0, 200) });
       } else {
         fields_skipped++;
