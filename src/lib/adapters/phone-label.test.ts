@@ -47,4 +47,34 @@ describe('isPhoneLabel', () => {
     expect(isPhoneLabel('Full name', text())).toBe(false);
     expect(isPhoneLabel('LinkedIn URL', text())).toBe(false);
   });
+
+  // type="tel" is NOT a phone signal on its own: forms set it on plain numeric fields purely to
+  // summon the mobile numeric keypad. So the bare-number tier matches the WHOLE label, never a word
+  // inside it - otherwise each of these hands her phone number to a field asking for something
+  // else, which is the same wrong-data-on-a-real-application failure as the R-020 non-fill, just
+  // arriving from the opposite direction.
+  it('does not read a qualified "number" label as a phone, even on a tel control', () => {
+    expect(isPhoneLabel('Number of years of experience', tel())).toBe(false);
+    expect(isPhoneLabel('Student Number', tel())).toBe(false);
+    expect(isPhoneLabel('Notice period (number of weeks)', tel())).toBe(false);
+    expect(isPhoneLabel('House number', tel())).toBe(false);
+    // `no` as a standalone token matched any label containing the word "no" at all.
+    expect(isPhoneLabel('No', tel())).toBe(false);
+    expect(isPhoneLabel('Do you have no notice period?', tel())).toBe(false);
+  });
+
+  it('still matches the bare and tel-qualified number labels the tier exists for', () => {
+    for (const label of ['Number', 'Number *', 'Number:', 'Number (required)', 'Nummer', 'Tel', 'Tel No', 'Tel. Nr']) {
+      expect(isPhoneLabel(label, tel())).toBe(true);
+    }
+  });
+
+  it('trusts the control\'s own declaration over the label prose', () => {
+    const declared = (attrs: Record<string, string>) =>
+      ({ type: 'text', getAttribute: (k: string) => attrs[k] ?? null }) as unknown as Element;
+    expect(isPhoneLabel('Number', declared({ autocomplete: 'tel' }))).toBe(true);
+    expect(isPhoneLabel('Contact', declared({ name: 'phone' }))).toBe(true);
+    expect(isPhoneLabel('Contact', declared({ id: 'candidate-mobile' }))).toBe(true);
+    expect(isPhoneLabel('Number of referrals', declared({ name: 'referral_count' }))).toBe(false);
+  });
 });

@@ -59,17 +59,43 @@ export function splitName(fullName: string): { first: string; last: string } {
 // `/\bphone\b/` misses, so the field came back empty on a form where the profile HAD the number.
 // That is the worst class of non-fill - not "we lack the data" but "we had it and missed".
 //
-// The widening is deliberately gated on `type="tel"` for the ambiguous words. "Number" alone is
-// meaningless (a form could ask for a student number, a house number); "Number" on a tel control
-// is a phone, and the control type settles it with no guessing. Unambiguous words match on the
-// label alone, because plenty of boards render a phone field as `type="text"`.
+// Three tiers, each needing a signal the one above it lacked:
+//
+// 1. An unambiguous phone word anywhere in the label, on any control type - plenty of boards render
+//    a phone field as `type="text"`, so this tier must not depend on the type.
+// 2. The control's own machine-readable declaration, which beats any reading of author-written
+//    label prose.
+// 3. A label that is ENTIRELY a bare number word, on a tel control.
 const PHONE_LABEL_RE = /\b(phone|telephone|telefon|mobile|cell|handy)\b/i;
-const TEL_ONLY_LABEL_RE = /\b(number|nummer|tel|no)\b/i;
+const PHONE_ATTR_RE = /\b(tel|telephone|phone|mobile)\b/i;
+// Tier 3 is anchored on the WHOLE label rather than a word inside it, because `type="tel"` is not
+// the phone signal it looks like: forms routinely set it on plain numeric fields purely to summon
+// the mobile numeric keypad. Under a substring test, "Number of years of experience", "Student
+// Number", "Notice period (number of weeks)" and "House number" are all hits on a tel control and
+// would each be handed her phone number - the wrong-data-into-a-real-application failure this
+// matcher exists to avoid, arriving by a different door than the R-020 non-fill. A standalone "no"
+// is gone for the same reason (it matched any label containing the word "no" at all); it survives
+// only in the tel-qualified "Tel No" form, where nothing else is being asked for. Enpal's real
+// field is labelled exactly "Number", so the bare form is all this tier ever needed.
+const BARE_NUMBER_LABEL_RE = /^(number|nummer|tel|telnr)$|^tel\s*(no|nr|number|nummer)$/i;
+
+// Strip the decoration ATSes hang off a label ("Number *", "Number:", "Number (required)") so the
+// bare-token test sees the label the author actually wrote.
+function bareLabel(label: string): string {
+  return label
+    .replace(/\((?:required|optional)\)/gi, '')
+    .replace(/[*:. ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 export function isPhoneLabel(label: string, el?: Element | null): boolean {
   if (PHONE_LABEL_RE.test(label)) return true;
-  const isTel = (el as HTMLInputElement | null)?.type === 'tel';
-  return isTel && TEL_ONLY_LABEL_RE.test(label);
+  const input = el as HTMLInputElement | null;
+  if (!input) return false;
+  const attr = (name: string) => input.getAttribute?.(name) ?? '';
+  if (PHONE_ATTR_RE.test(`${attr('autocomplete')} ${attr('name')} ${attr('id')}`)) return true;
+  return input.type === 'tel' && BARE_NUMBER_LABEL_RE.test(bareLabel(label));
 }
 
 // Radios that carry no meaningful `value` (Ashby/LinkedIn use "on"): the real option text lives
