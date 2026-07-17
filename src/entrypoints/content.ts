@@ -331,18 +331,20 @@ export default defineContentScript({
         `<div style="margin-top:4px;">Review, then submit yourself.</div>`;
     }
 
-    // E-015 watcher. One capture-phase click listener for the tab's life; the latest fill's card
-    // state rides module vars so a second fill (SPA nav, refill) redirects the same listener
-    // instead of stacking new ones. On a click that hits the final submit control, wait for the
-    // ATS to render its verdict, then read the form's own validation list - the authoritative
-    // required-field enumeration - and re-render the card from it, uncapped. Re-arms itself on
-    // every attempt: the second refusal after a partial fix must re-read too.
+    // E-015 watcher. A MutationObserver, deliberately NOT an event listener: a capture-phase
+    // click listener on document measurably broke keyboard input into Ashby's React fields on
+    // the live QA build (typed characters vanished with the input focused; removing the listener
+    // restored typing; bisected 2026-07-18). Watching for the ATS's own error nodes appearing is
+    // passive with respect to the page's input pipeline and needs no knowledge of when submit was
+    // clicked - validation errors only exist after a refusal. Re-fires on later refusals too; the
+    // latest fill's card state rides module vars so a refill redirects the same observer.
     let validationCardState: {
       statusEl: HTMLElement | null;
       fillResult: AutofillResult;
       resumeMissing: boolean;
     } | null = null;
-    let validationListenerInstalled = false;
+    let validationObserver: MutationObserver | null = null;
+    let validationDebounce: ReturnType<typeof setTimeout> | null = null;
 
     function armValidationAuthority(
       statusEl: HTMLElement | null,
@@ -350,50 +352,43 @@ export default defineContentScript({
       resumeMissing: boolean,
     ): void {
       validationCardState = { statusEl, fillResult, resumeMissing };
-      if (validationListenerInstalled) return;
-      validationListenerInstalled = true;
-      document.addEventListener(
-        'click',
-        (ev) => {
+      if (validationObserver) return;
+      validationObserver = new MutationObserver(() => {
+        // Debounce: refusals render many nodes in one burst, and the extract walks the DOM.
+        if (validationDebounce) clearTimeout(validationDebounce);
+        validationDebounce = setTimeout(() => {
           const state = validationCardState;
           if (!state) return;
-          const btn = findSubmitButton();
-          if (!btn || !(ev.target instanceof Node) || !btn.contains(ev.target)) return;
-          // The refusal renders asynchronously; sample twice so a slow validator still lands.
-          for (const delay of [1800, 4000]) {
-            setTimeout(() => {
-              const errors = extractValidationErrors(document);
-              if (!errors.length) return;
-              const merged = mergeValidationReasons(
-                state.fillResult.skipped_reasons,
-                validationErrorsToReasons(errors),
-              );
-              if (merged.length === state.fillResult.skipped_reasons.length) return;
-              state.fillResult.skipped_reasons = merged;
-              // The summary card self-dismisses ~9s after the fill, so by the time the student
-              // submits, statusEl is usually detached. The refusal verdict needs somewhere to
-              // land: re-inject a minimal status host rather than rendering into a ghost node.
-              if (!state.statusEl || !state.statusEl.isConnected) {
-                document.getElementById('rolequick-validation-card')?.remove();
-                const host = document.createElement('div');
-                host.id = 'rolequick-validation-card';
-                host.style.cssText =
-                  'position:fixed;right:16px;bottom:16px;z-index:2147483646;max-width:340px;' +
-                  'background:#fff;border:1px solid #c7c9d1;border-radius:10px;box-shadow:0 4px 18px rgba(0,0,0,.18);' +
-                  'padding:12px 14px;font:13px/1.45 system-ui,sans-serif;color:#111;';
-                document.documentElement.appendChild(host);
-                state.statusEl = host;
-              }
-              renderFillSummary(state.statusEl, state.fillResult, {
-                resumeMissing: state.resumeMissing,
-                autoSubmitHeld: true,
-                capOverride: merged.length,
-              });
-            }, delay);
+          const errors = extractValidationErrors(document);
+          if (!errors.length) return;
+          const merged = mergeValidationReasons(
+            state.fillResult.skipped_reasons,
+            validationErrorsToReasons(errors),
+          );
+          if (merged.length === state.fillResult.skipped_reasons.length) return;
+          state.fillResult.skipped_reasons = merged;
+          // The summary card self-dismisses ~9s after the fill, so by the time the student
+          // submits, statusEl is usually detached. The refusal verdict needs somewhere to
+          // land: re-inject a minimal status host rather than rendering into a ghost node.
+          if (!state.statusEl || !state.statusEl.isConnected) {
+            document.getElementById('rolequick-validation-card')?.remove();
+            const host = document.createElement('div');
+            host.id = 'rolequick-validation-card';
+            host.style.cssText =
+              'position:fixed;right:16px;bottom:16px;z-index:2147483646;max-width:340px;' +
+              'background:#fff;border:1px solid #c7c9d1;border-radius:10px;box-shadow:0 4px 18px rgba(0,0,0,.18);' +
+              'padding:12px 14px;font:13px/1.45 system-ui,sans-serif;color:#111;';
+            document.documentElement.appendChild(host);
+            state.statusEl = host;
           }
-        },
-        true,
-      );
+          renderFillSummary(state.statusEl, state.fillResult, {
+            resumeMissing: state.resumeMissing,
+            autoSubmitHeld: true,
+            capOverride: merged.length,
+          });
+        }, 700);
+      });
+      validationObserver.observe(document.body, { childList: true, subtree: true });
     }
 
     // Result of the background resume-gen round trip, cached per job (company|role) for the tab's
