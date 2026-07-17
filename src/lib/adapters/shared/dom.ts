@@ -72,13 +72,23 @@ export function splitName(fullName: string): { first: string; last: string } {
 // what R-020 is about. The trailing \b still rejects "Mobility" and "Handyman", which is why the
 // suffix is spelled out rather than the boundary simply dropped.
 const PHONE_LABEL_RE =
-  /\b(phone|telephone|tel|telefon(?:nummer)?|mobil(?:e|nummer)?|cell(?:phone)?|handy(?:nummer)?)\b/i;
+  /\b(phone|telephone|tel|telnr|telefon(?:nummer|nr)?|mobil(?:e|nummer)?|cell(?:phone)?|handy(?:nummer)?)\b/i;
 
 // Only `autocomplete`: `tel`, `tel-national`, `tel-local` and friends are a spec-defined statement
 // that this field wants a phone number. `name`/`id` were tried here and dropped - they are
 // author-chosen prose in an attribute, so `id="mobile-2"` on "Do you own a mobile device?" would
 // have answered a yes/no question with her phone number, with the label getting no say at all.
-const PHONE_AUTOCOMPLETE_RE = /^tel(-|$)/i;
+//
+// Tested per TOKEN, because autocomplete is a token list, not a value: the grammar is
+// `[section-*] [shipping|billing] [home|work|mobile|fax|pager] tel`, so `autocomplete="home tel"`
+// is the canonical way to mark a home phone and `"shipping tel"` is legal too. Anchoring the whole
+// attribute with /^tel(-|$)/ rejected every one of those, which left this tier matching only the
+// least common spelling of the one signal it exists to read.
+const PHONE_AUTOCOMPLETE_TOKEN_RE = /^tel(-|$)/i;
+
+function declaresPhoneAutocomplete(value: string): boolean {
+  return value.trim().split(/\s+/).some((token) => PHONE_AUTOCOMPLETE_TOKEN_RE.test(token));
+}
 
 // Tier 3: a number word, on a tel control, not disqualified by the label itself.
 //
@@ -104,7 +114,7 @@ export function isPhoneLabel(label: string, el?: Element | null): boolean {
   if (PHONE_LABEL_RE.test(label)) return true;
   const input = el as HTMLInputElement | null;
   if (!input) return false;
-  if (PHONE_AUTOCOMPLETE_RE.test(input.getAttribute?.('autocomplete') ?? '')) return true;
+  if (declaresPhoneAutocomplete(input.getAttribute?.('autocomplete') ?? '')) return true;
   if (input.type !== 'tel') return false;
   return NUMBER_WORD_RE.test(label) && !NOT_A_PHONE_RE.test(label);
 }

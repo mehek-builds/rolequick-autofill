@@ -193,3 +193,44 @@ describe('fillDateField probes an unmasked picker instead of guessing or skippin
     expect(el.value).toBe('07/08/2026');
   });
 });
+
+// A picker that rejects dates outside a range: "earliest start date" refuses the past, "date of
+// birth" refuses the future. This is the shape a FIXED probe date dies on, and it is the shape of
+// the exact field R-014 was found on.
+function rangedMdyPicker(minISO: string, maxISO = '9999-12-31') {
+  const el = document.createElement('input');
+  el.type = 'text';
+  const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  let committed: string | null = null;
+  el.addEventListener('input', () => {
+    const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(el.value);
+    const parses = m && +m[1] >= 1 && +m[1] <= 12 && +m[2] >= 1 && +m[2] <= 31; // month-first
+    const iso = parses ? `${m![3]}-${m![1].padStart(2, '0')}-${m![2].padStart(2, '0')}` : null;
+    if (!iso || iso < minISO || iso > maxISO) { committed = null; nativeSet.call(el, ''); return; }
+    committed = iso;
+  });
+  return { el, committed: () => committed };
+}
+
+describe('the probe must survive a min/max-constrained picker', () => {
+  it('fills a start date on a picker that rejects the past', async () => {
+    // A fixed 13 Jan 2026 probe is in the past here, so BOTH probes bounce, the order is never
+    // learned, and the field is skipped. The probe has to sit in the real date's own month.
+    const { el, committed } = rangedMdyPicker('2026-06-01');
+    expect(await fillDateField(el, '2026-08-09')).toBe(true);
+    expect(committed()).toBe('2026-08-09');
+  });
+
+  it('fills a date of birth on a picker that rejects the future', async () => {
+    // The mirror case: any fixed FUTURE probe would bounce here instead.
+    const { el, committed } = rangedMdyPicker('1900-01-01', '2026-07-17');
+    expect(await fillDateField(el, '2005-09-04')).toBe(true);
+    expect(committed()).toBe('2005-09-04');
+  });
+
+  it('fills a day-first ranged picker too', async () => {
+    const { el, committed } = dmyPickerNoMask();
+    expect(await fillDateField(el, '2026-08-09')).toBe(true);
+    expect(committed()).toBe('2026-08-09');
+  });
+});

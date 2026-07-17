@@ -139,3 +139,28 @@ describe('isPhoneLabel: labels the anchored version wrongly stopped filling', ()
     }
   });
 });
+
+describe('autocomplete is a token list, not a value', () => {
+  const withAc = (v: string) => ({ type: 'text', getAttribute: (k: string) => (k === 'autocomplete' ? v : null) }) as unknown as Element;
+  it('reads the spec-legal token forms', () => {
+    // Grammar: [section-*] [shipping|billing] [home|work|mobile|fax|pager] tel. "home tel" is THE
+    // canonical way to mark a home phone; anchoring the whole attribute rejected all of these.
+    for (const v of ['tel', 'tel-national', 'tel-local', 'home tel', 'work tel', 'shipping tel', 'section-blue billing tel']) {
+      expect(isPhoneLabel('Contact', withAc(v))).toBe(true);
+    }
+  });
+  it('does not fire on unrelated autocomplete tokens', () => {
+    for (const v of ['', 'off', 'email', 'street-address', 'given-name', 'postal-code']) {
+      expect(isPhoneLabel('Contact', withAc(v))).toBe(false);
+    }
+  });
+});
+
+describe('German abbreviations kept alongside the compounds', () => {
+  const tel = () => ({ type: 'tel' }) as unknown as Element;
+  it('matches the abbreviated German forms', () => {
+    for (const l of ['Telnr', 'Telefonnr', 'Tel Nr', 'Telefonnummer']) {
+      expect(isPhoneLabel(l, tel())).toBe(true);
+    }
+  });
+});

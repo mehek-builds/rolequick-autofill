@@ -127,8 +127,8 @@ export function valueHoldsDate(written: string, parts: DateParts, order: DateOrd
 //   day === month  - both readings are the same day, so there is nothing to get wrong.
 //
 // Otherwise there is nothing safe to sweep, and this returns EMPTY rather than a guess. An empty
-// list means "ask the widget": the caller probes it with PROBE_DATE (see fillDateField), because
-// only the widget knows which order it parses, and a first cut of this fix that answered "just
+// list means "ask the widget": the caller probes it with probeDateFor(parts) (see fillDateField),
+// because only the widget knows which order it parses, and a first cut that answered "just
 // write ISO" here silently stopped filling ~40% of dates on the commonest ATS shape there is - an
 // unmasked US month-first picker, which had been filling them correctly all along.
 export function dateOrderCandidates(el: Element | null | undefined, parts: DateParts): DateOrder[] {
@@ -139,13 +139,26 @@ export function dateOrderCandidates(el: Element | null | undefined, parts: DateP
 }
 
 // A date only ONE slash order can parse, used to ask an unmasked widget which order it wants.
+// For a real value of 8 July 2026 the probe is the 13th of that same month:
 //
-//   formatDate(PROBE_DATE, 'dmy') === "13/01/2026"  day-first: 13 Jan. month-first: month 13, dead.
-//   formatDate(PROBE_DATE, 'mdy') === "01/13/2026"  month-first: 13 Jan. day-first: month 13, dead.
+//   formatDate(probe, 'dmy') === "13/07/2026"  day-first: 13 July. month-first: month 13, dead.
+//   formatDate(probe, 'mdy') === "07/13/2026"  month-first: 13 July. day-first: month 13, dead.
 //
-// So exactly one surviving a write identifies the order outright, with no guessing. Both surviving
-// means the control validates nothing and has told us nothing.
-export const PROBE_DATE: DateParts = { year: 2026, month: 1, day: 13 };
+// So exactly one surviving a write names the order outright, with no guessing. Both surviving means
+// the control validates nothing and has told us nothing.
+//
+// Day 13 is what makes it single-order (the other reading is month 13, which cannot exist), and
+// every month has a 13th, so this is always a real date.
+//
+// The probe MUST track the value being written rather than sit on a constant. A fixed 13 Jan 2026
+// was tried and is dead on any picker carrying a min or a max, which is the normal shape of exactly
+// the two fields this module exists for: "earliest start date" rejects the past, "date of birth"
+// rejects the future. Both probes then bounce, the order is never learned, and the skip regression
+// comes back on the very field R-014 was found on. A probe days away from the value the field is
+// about to accept is a probe that field will accept too.
+export function probeDateFor(parts: DateParts): DateParts {
+  return { year: parts.year, month: parts.month, day: 13 };
+}
 
 // Is this control a date field at all? Used to route a date-shaped answer through the formatter
 // instead of the plain text filler.

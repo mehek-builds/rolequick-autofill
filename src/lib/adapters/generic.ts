@@ -12,7 +12,7 @@ import {
   isDateControl,
   parseStoredDate,
   valueHoldsDate,
-  PROBE_DATE,
+  probeDateFor,
   type DateOrder,
   type DateParts,
 } from './shared/dates';
@@ -537,15 +537,17 @@ async function writeAndVerify(el: HTMLInputElement, parts: DateParts, order: Dat
 //
 // Needed because a read-back cannot judge an ambiguous date on its own: hand a day-first widget our
 // month-first "07/08/2026" and it reads 7 August, accepts it, and hands our text straight back, so
-// the check passes while the form holds the wrong day. PROBE_DATE is built so only ONE order can
-// parse it (13 Jan: the other reading is month 13), which turns a guess into a question.
+// the check passes while the form holds the wrong day. The probe is built so only ONE order can
+// parse it (the 13th of the real date's month: the other reading is month 13), which turns a guess
+// into a question, and it sits beside the real date so a min/max-constrained picker accepts it.
 //
 // Exactly one probe surviving names the order. Both surviving means the control validates nothing,
 // so it has told us nothing and the caller falls back to ISO. Neither surviving means it wants
 // something other than slashes, which ISO also covers.
-async function probeDateOrder(el: HTMLInputElement): Promise<DateOrder | null> {
-  const dmy = await writeAndVerify(el, PROBE_DATE, 'dmy');
-  const mdy = await writeAndVerify(el, PROBE_DATE, 'mdy');
+async function probeDateOrder(el: HTMLInputElement, parts: DateParts): Promise<DateOrder | null> {
+  const probe = probeDateFor(parts);
+  const dmy = await writeAndVerify(el, probe, 'dmy');
+  const mdy = await writeAndVerify(el, probe, 'mdy');
   setNativeValue(el, ''); // never leave a probe date sitting in a real application
   if (dmy && !mdy) return 'dmy';
   if (mdy && !dmy) return 'mdy';
@@ -567,7 +569,7 @@ export async function fillDateField(el: HTMLInputElement, stored: string): Promi
 
   let orders = dateOrderCandidates(el, parts);
   if (orders.length === 0) {
-    const probed = await probeDateOrder(el);
+    const probed = await probeDateOrder(el, parts);
     // ISO last resort: unambiguous, so a widget that keeps or reformats it has demonstrably parsed
     // the day we meant. Beats a coin-flip between two real days.
     orders = probed ? [probed] : ['ymd'];
