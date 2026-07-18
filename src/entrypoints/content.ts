@@ -802,6 +802,9 @@ export default defineContentScript({
         // committed with asksForLink false on an input[type=text] - the population that fills a
         // URL unconditionally. Shipped with the telemetry this event already posts, only when
         // non-empty, so one real label off a real board can finally say what the R-030 fix is.
+        // The same drain also carries R-039's tagged populations ("r039-veto:..." where the
+        // location-commitment veto suppressed a fill, "r039-third-party:..." where a bare
+        // name/email/city matcher fired on a third-party label) - same field, same contract.
         const r030Labels = drainR030CandidateLabels();
 
         const reportEvent = (autoSubmitted: boolean) => {
