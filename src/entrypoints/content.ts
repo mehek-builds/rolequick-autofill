@@ -10,6 +10,7 @@ import { isLinkedInApplicationPage, extractLinkedInJdText, fillLinkedInApplicati
 import { isLikelyApplicationForm, extractGenericJdText, getGenericJobDetails, fillGenericApplication, drainR030CandidateLabels } from '../lib/adapters/generic';
 import { getAutoSubmitEnabled } from '../lib/storage';
 import { selectNeedsYouReasons, skippedReasonsNeedReview } from '../lib/autosubmit-gate';
+import { fetchResumeBlob, resumeFetchSkipReason } from '../lib/resume-fetch';
 import { startHarvest } from '../lib/harvest';
 import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
 import type { PostingCompensation } from '../lib/adapters/salary';
@@ -713,17 +714,14 @@ export default defineContentScript({
 
         if (statusEl) statusEl.textContent = 'Filling the application...';
 
-        let resumeBlob: Blob | undefined;
-        try {
-          const blobRes = await fetch(result.resume.resume_url);
-          // Without the ok check, a 403/404 error page would be handed to the file input as if
-          // it were the PDF; better to skip the file (the adapter flags it) than upload garbage.
-          if (!blobRes.ok) throw new Error(`resume fetch ${blobRes.status}`);
-          resumeBlob = await blobRes.blob();
-        } catch {
-          // No resume file available client-side; the adapter will skip the file input
-          // and flag it rather than fail the whole fill.
-        }
+        // R-041: this fetch used to swallow every failure in a bare catch - the card stayed
+        // clean, the fill read as a success, and the student could submit resume-less without
+        // ever being told (Eight Sleep AI/ML, 2026-07-18, during the R-040 discovery).
+        // fetchResumeBlob returns null on anything that is not a usable file (error status,
+        // network throw, empty or HTML body), and that null is surfaced after the fill as
+        // resumeFetchSkipReason. The fill itself still runs either way: a missing resume must
+        // not cost the student the forty other fields the adapter can fill.
+        const resumeBlob = (await fetchResumeBlob(result.resume.resume_url)) ?? undefined;
 
         // Safety net: a stuck field (an unexpected widget, a listener that never fires) must
         // never leave the student staring at "Filling the application..." forever with no way
@@ -782,6 +780,16 @@ export default defineContentScript({
           if (yesBtn) yesBtn.style.display = 'none';
           setTimeout(dismiss, 8000);
           return;
+        }
+
+        // R-041: the background generated a resume this tab could not download. The adapter
+        // cannot report this (it just saw "no blob", same as any other absence), so content.ts
+        // owns the reason: pushed into skipped_reasons so it rides R-010's exact rails -
+        // selectNeedsYouReasons lists it on the card, skippedReasonsNeedReview holds
+        // auto-submit. The counts are left alone: the adapter already counted the missing
+        // resume as a skip, this entry is the WHY.
+        if (!resumeBlob) {
+          fillResult.skipped_reasons.push(resumeFetchSkipReason);
         }
 
         const autoSubmitOn = await getAutoSubmitEnabled();
