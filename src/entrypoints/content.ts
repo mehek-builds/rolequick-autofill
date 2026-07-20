@@ -12,8 +12,9 @@ import { getAutoSubmitEnabled } from '../lib/storage';
 import { selectNeedsYouReasons, skippedReasonsNeedReview } from '../lib/autosubmit-gate';
 import { startHarvest } from '../lib/harvest';
 import { withInactivityTimeout } from '../lib/inactivity-timeout';
-import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
+import type { Profile, ApplicationProfile, AutofillResult, GeneratedResume } from '../lib/types';
 import type { PostingCompensation } from '../lib/adapters/salary';
+import { buildResumeReviewMessage } from '../lib/resume-review';
 
 export default defineContentScript({
   matches: [
@@ -333,7 +334,7 @@ export default defineContentScript({
       error?: string;
       profile?: Profile;
       applicationProfile?: ApplicationProfile;
-      resume?: { resume_url: string; file_name: string };
+      resume?: GeneratedResume;
       // This posting's structured salary range (R-031), fetched by the background from Ashby's
       // posting API off the tab URL; null/absent on every other ATS or when nothing usable exists.
       posting_compensation?: PostingCompensation | null;
@@ -713,6 +714,19 @@ export default defineContentScript({
           return;
         }
         const { profile, applicationProfile, resume } = result;
+
+        if (!result.resume.quality?.ready_to_attach || result.resume.quality.issues.length > 0) {
+          if (statusEl) statusEl.textContent = 'This resume did not pass RoleQuick quality checks, so the form was left unchanged.';
+          if (yesBtn) yesBtn.disabled = false;
+          return;
+        }
+
+        const approvedResume = window.confirm(buildResumeReviewMessage(result.resume.quality));
+        if (!approvedResume) {
+          if (statusEl) statusEl.textContent = 'Resume ready, but not attached. You can review the form or try again.';
+          if (yesBtn) yesBtn.disabled = false;
+          return;
+        }
 
         if (statusEl) statusEl.textContent = 'Filling the application...';
 
