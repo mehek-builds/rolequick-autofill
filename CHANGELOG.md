@@ -2,6 +2,16 @@
 
 All notable changes to the Litos extension are documented here.
 
+## [0.4.7] - 2026-07-21
+
+### Changed
+
+- The production popup now ships only the Latin Geist variable font instead of bundling every language subset, cutting the packaged extension by about 48 kB while preserving system-font fallback for other scripts.
+
+### Added
+
+- Added a packaging regression test that prevents the full multi-subset font import from returning.
+
 ## [0.4.6] - 2026-07-20
 
 ### Added

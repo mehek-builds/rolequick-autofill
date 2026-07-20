@@ -1,11 +1,11 @@
 # Graph Report - .  (2026-07-21)
 
 ## Corpus Check
-- 82 files · ~119,515 words
+- 83 files · ~119,722 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 453 nodes · 832 edges · 21 communities detected
+- 454 nodes · 832 edges · 22 communities detected
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS
 - Token cost: 0 input · 0 output
 
@@ -110,12 +110,18 @@ Nodes (0):
 Cohesion: 1.0
 Nodes (0):
 
+### Community 21 - "Community 21"
+Cohesion: 1.0
+Nodes (0):
+
 ## Knowledge Gaps
 - **Thin community `Community 18`** (2 nodes): `persistent-badge.ts`, `main()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 19`** (1 nodes): `tailwind.config.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 20`** (1 nodes): `postcss.config.js`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 21`** (1 nodes): `globals.test.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
