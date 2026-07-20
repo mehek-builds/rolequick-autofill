@@ -6,21 +6,21 @@ All notable changes to the Litos extension are documented here.
 
 ### Added
 
-- Added a compact shared interface system with consistent buttons, fields, headers, status indicators, and loading states.
-- Added behavioral tests for signup validation, asynchronous job detection, contact resolution, drafting, Gmail handoff, and outreach tracking.
+- You now get consistent buttons, fields, headers, status indicators, and loading states throughout the extension.
+- Contributors now have behavioral coverage for signup validation, asynchronous job detection, contact resolution, draft review, Gmail handoff, and outreach tracking.
 
 ### Changed
 
-- Redesigned onboarding, application setup, job workflows, contact results, draft review, and outreach tracking around a flatter, quieter layout.
-- Switched the extension to Geist, aligned every screen and store image to the Litos palette, and documented the design rules.
-- Updated the Chrome Web Store screenshots to show the redesigned Litos workflow.
+- Onboarding, application setup, job workflows, contact results, draft review, and outreach tracking now use a flatter layout that keeps the next action clear.
+- Every popup screen and Chrome Web Store image now uses Geist and the Litos palette, with the interface rules recorded in `DESIGN.md`.
+- Chrome Web Store screenshots now show the redesigned Litos workflow.
 
 ### Fixed
 
-- Added persistent field labels, visible keyboard focus, larger switch hit targets, consistent heading structure, and clearer live-region announcements.
-- Prevented unknown outreach statuses from crashing tracking, exposed recent-outreach loading failures, and stopped Gmail launch failures from showing false success.
-- Kept production builds pointed at the deployed Litos API while documenting the development and QA override behavior.
+- Fields now keep their labels visible, keyboard focus is easier to see, switches have larger targets, headings are consistent, and status changes are announced more clearly.
+- Tracking now handles unknown statuses safely, reports recent-outreach loading failures, and keeps Gmail launch errors from appearing as success.
+- Production packages now default to the deployed Litos API, while development and QA builds can still override the backend.
 
 ### Removed
 
-- Removed unused Inter assets, celebration confetti, stale animation tokens, and no-op visual styles.
+- Removed unused Inter assets, celebration confetti, stale animation tokens, and no-op visual styles to keep the production bundle focused.

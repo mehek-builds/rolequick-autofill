@@ -55,7 +55,7 @@ Data flows two ways. When a student lands on a posting, a content script detects
 | **Answer resolution** | A pure, DOM-free engine in `src/lib/adapters/generic.ts` (`desiredAnswer`, `matchOption`, `workAuthWantYes`, `eeoAnswer`) reused verbatim by every ATS adapter |
 | **Extension APIs** | `chrome.runtime` messaging, `chrome.storage.local` + `chrome.storage.session`, `chrome.scripting.executeScript` (on-demand injection), `chrome.action` badge, `chrome.tabs` |
 | **Backend client** | `fetch` with `AbortSignal.timeout` budgets, Bearer-JWT `Authorization`, typed request/response layer in `src/lib/api.ts`, base URL from `VITE_API_BASE` |
-| **Testing** | Vitest 4.1.10 (`generic.answers.test.ts`, `ats-answer.test.ts`) covering the pure answer engine |
+| **Testing** | Vitest 4.1.10 for unit and integration coverage, plus Testing Library, user-event, and jsdom for popup workflow behavior |
 | **Dev tooling** | `tsc --noEmit` type-check, a standalone Vite preview harness (`preview.tsx` + `preview/mock-server.mjs`) that renders every popup screen with mock data |
 
 ---
@@ -69,7 +69,7 @@ The popup is a small React app (`App.tsx`) that routes between six screens with 
 - **Main** (`MainScreen.tsx`): shows the job spotted on the current page, a "Find my people" form that calls `/resolve`, and a "Fill the form on this page" button that injects the content script on demand via `chrome.scripting.executeScript` for company career sites the manifest cannot match.
 - **Contacts / Draft / Tracking** (`ContactList.tsx`, `DraftEditor.tsx`, `TrackingDashboard.tsx`): review resolved contacts, edit a generated outreach email, open it prefilled in Gmail (`buildGmailComposeLink` in `src/lib/gmail.ts` builds a `mail.google.com` compose URL), and log sends to `/track/event`.
 
-The visual system lives in `tailwind.config.ts` and `src/components/ui.tsx`: a restrained blue accent, warm neutrals, shared form and button primitives, and short functional transitions. `DESIGN.md` records the interface rules.
+The visual system lives in `tailwind.config.ts` and `src/components/ui.tsx`: a restrained blue accent, warm neutrals, shared form and button primitives, and short functional transitions. [DESIGN.md](DESIGN.md) records the interface rules, and [CHANGELOG.md](CHANGELOG.md) tracks each release.
 
 ## The content script and card system (`src/entrypoints/content.ts`)
 
@@ -153,7 +153,7 @@ npm run preview             # mock API on :3001 + Vite on :4700
 # open http://localhost:4700/preview.html
 ```
 
-`preview.tsx` renders all seven popup screens side by side with canned data from `preview/mock-server.mjs`, so the UI can be eyeballed without loading the extension. It is dev-only; WXT bundles `src/` for production.
+`preview.tsx` renders seven popup states side by side with canned data from `preview/mock-server.mjs`, including both loaded and loading contact states, so the UI can be eyeballed without loading the extension. It is dev-only; WXT bundles `src/` for production. See [preview/README.md](preview/README.md) for the harness layout and extension points.
 
 ## Testing
 
@@ -163,7 +163,7 @@ npm test                    # vitest run
 npm run test:watch          # vitest watch
 ```
 
-The unit tests deliberately target the layer most likely to cause real-world harm: answer resolution. `generic.answers.test.ts` and `ats-answer.test.ts` lock in the visa-phrasing inversion (an OPT student authorized now but needing future sponsorship must answer "No" to "authorized to work without sponsorship"), EEO decline-by-default, the word-boundary option matcher (so "Asian" is not selected as "Caucasian" and "Male" is not selected as "Female"), the "leave ambiguous groups blank" rule, negative options phrased without "no" ("I am not a protected veteran"), and normalization of the zero-width and padding characters that react-select puts around option text. Because every ATS adapter imports these same functions, the tests cover all of them at once.
+The suite covers the fill decisions most likely to cause real-world harm and the popup workflows users rely on. `generic.answers.test.ts` and `ats-answer.test.ts` lock in visa-phrasing inversion, EEO decline-by-default, exact option matching, and the "leave ambiguous groups blank" rule across every ATS adapter. `redesign.behavior.test.tsx` covers signup validation, asynchronous job detection, contact resolution, Gmail handoff, outreach tracking, and recoverable error states. Production configuration tests also verify the release version and backend defaults.
 
 ## Permissions (`wxt.config.ts`)
 

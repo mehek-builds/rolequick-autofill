@@ -16,7 +16,7 @@ Litos should feel like a focused browser utility: quiet, direct, and trustworthy
 - Typeface: Geist Variable
 - Popup size: 380 by 580 pixels
 - Page background: white
-- Preview and store background: warm gray `#f4f2ee`
+- Preview and store background: warm gray `#faf9f7`
 - Brand action: `brand-600`
 - Text: `gray-950` for primary, `gray-600` for supporting copy
 - Borders: `gray-200` or `gray-300`
