@@ -5,6 +5,7 @@ import { overloadWaitMs, overloadBudgetRemains, RESUME_OVERLOAD_BUDGET_MS } from
 // Pure salary/posting helpers (R-031). adapters/salary is a LEAF module (types only), so this
 // import does not pull the DOM-adjacent adapter graph into the service worker bundle.
 import { parseAshbyPostingRef, selectPostingCompensation, type PostingCompensation } from '../lib/adapters/salary';
+import type { GeneratedResume } from '../lib/types';
 
 // Set VITE_API_BASE at build time (e.g. your Vercel URL) to point at the deployed backend;
 // defaults to the local dev server.
@@ -273,7 +274,7 @@ async function generateResumeAndProfile(
   // by a model overload; re-running them per attempt would add round trips to a backend that is
   // already telling us it is busy.
   const overloadDeadline = Date.now() + RESUME_OVERLOAD_BUDGET_MS;
-  let resume: { resume_url: string; file_name: string; spec: unknown } | undefined;
+  let resume: GeneratedResume | undefined;
   for (let attempt = 1; ; attempt++) {
     const resumeRes = await timeoutFetch(`${API_BASE}/resume/generate`, {
       method: 'POST',
