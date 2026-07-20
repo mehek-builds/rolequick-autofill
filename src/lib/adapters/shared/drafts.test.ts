@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_DRAFT_CONCURRENCY, runDraftQueue } from './drafts';
+import { DEFAULT_DRAFT_CONCURRENCY, isDraftTargetAvailable, runDraftQueue } from './drafts';
 
 describe('runDraftQueue', () => {
   it('bounds concurrent draft requests while processing every item', async () => {
@@ -129,6 +129,56 @@ describe('runDraftQueue', () => {
     expect(onProgress).not.toHaveBeenCalled();
   });
 
+  it('waits for sibling workers before propagating a settlement failure', async () => {
+    let finishSecond!: () => void;
+    const secondSettled = new Promise<void>((resolve) => {
+      finishSecond = resolve;
+    });
+    const completed: number[] = [];
+
+    const run = runDraftQueue({
+      items: [1, 2],
+      promptFor: String,
+      draftAnswer: async (question) => question,
+      onSettled: async (item) => {
+        if (item === 1) throw new Error('DOM write failed');
+        await secondSettled;
+        completed.push(item);
+      },
+    });
+    const rejection = expect(run).rejects.toThrow('DOM write failed');
+    await Promise.resolve();
+
+    expect(completed).toEqual([]);
+    finishSecond();
+    await rejection;
+    expect(completed).toEqual([2]);
+  });
+
+  it('does not settle drafts after cancellation', async () => {
+    const controller = new AbortController();
+    let finishDraft!: (answer: string) => void;
+    const draft = new Promise<string>((resolve) => {
+      finishDraft = resolve;
+    });
+    const onSettled = vi.fn();
+
+    const run = runDraftQueue({
+      items: [1],
+      signal: controller.signal,
+      promptFor: String,
+      draftAnswer: () => draft,
+      onSettled,
+    });
+    await Promise.resolve();
+
+    controller.abort();
+    finishDraft('late answer');
+    await run;
+
+    expect(onSettled).not.toHaveBeenCalled();
+  });
+
   it.each([
     { concurrency: 0, expected: 1 },
     { concurrency: Number.NaN, expected: DEFAULT_DRAFT_CONCURRENCY },
@@ -162,5 +212,13 @@ describe('runDraftQueue', () => {
     await run;
 
     expect(order).toEqual([1, 2, 3]);
+  });
+});
+
+describe('isDraftTargetAvailable', () => {
+  it('only accepts a connected target the student has not answered', () => {
+    expect(isDraftTargetAvailable({ isConnected: true, value: '' })).toBe(true);
+    expect(isDraftTargetAvailable({ isConnected: true, value: 'student answer' })).toBe(false);
+    expect(isDraftTargetAvailable({ isConnected: false, value: '' })).toBe(false);
   });
 });
