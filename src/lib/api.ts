@@ -10,6 +10,7 @@ import type {
   ResumeContact,
   GeneratedResume,
 } from './types';
+import { litosClientHeaders, type ProductMeta } from './product';
 import { API_BASE } from './config';
 
 
@@ -33,6 +34,7 @@ async function request<T>(
 ): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    ...litosClientHeaders(),
     ...(options.headers as Record<string, string>),
   };
   if (token) {
@@ -85,7 +87,7 @@ export async function uploadProfile(
 
   const res = await fetch(`${API_BASE}/profile`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Authorization: `Bearer ${token}`, ...litosClientHeaders() },
     body: form,
   });
 
@@ -94,6 +96,10 @@ export async function uploadProfile(
   }
 
   return res.json() as Promise<Profile>;
+}
+
+export async function getProductMeta(): Promise<ProductMeta> {
+  return request<ProductMeta>('/v1/meta');
 }
 
 export async function getProfile(token: string): Promise<Profile> {
