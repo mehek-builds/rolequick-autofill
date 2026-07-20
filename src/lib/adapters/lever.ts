@@ -19,6 +19,7 @@ import {
   unattachableDocumentReasons,
 } from './shared/dom';
 import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
+import { runDraftQueue } from './shared/drafts';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
 import { desiredAnswer, isDraftableQuestion, linkQuestion, linkSkipReason, locationQuestion, locationSkipReason, matchOption, noteLinkFillCandidate, unreadableQuestionSkipReason, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
@@ -400,19 +401,13 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
     }
   }
 
-  // Draft every collected essay CONCURRENTLY (each is an independent LLM round trip), writing and
-  // flagging each as it resolves. A failed or empty draft falls back to leaving it blank, unchanged.
+  // Draft through the shared bounded worker pool, writing and flagging each answer as it resolves.
   if (pendingDrafts.length > 0 && draftAnswer) {
-    let pendingEssays = pendingDrafts.length;
-    onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-    await Promise.all(
-      pendingDrafts.map(async ({ el, question }) => {
-        let drafted: string | null = null;
-        try {
-          drafted = (await draftAnswer(question))?.trim() || null;
-        } catch {
-          drafted = null;
-        }
+    await runDraftQueue({
+      items: pendingDrafts,
+      draftAnswer,
+      promptFor: ({ question }) => question,
+      onSettled: async ({ el, question }, drafted) => {
         if (drafted) {
           await fillField(el, drafted);
           markForReview(el);
@@ -422,10 +417,10 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
           fields_skipped++;
           skipped_reasons.push(`open-ended question left blank: "${question.slice(0, 60)}"`);
         }
-        pendingEssays--;
-        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-      }),
-    );
+      },
+      onProgress: (pendingEssays) =>
+        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays }),
+    });
   }
 
   if (ai_drafted > 0) {

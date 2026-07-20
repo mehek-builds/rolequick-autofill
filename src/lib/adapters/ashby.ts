@@ -56,6 +56,7 @@ import { classifyField, dateSkipReason, desiredAnswer, fillDateField, isDraftabl
 import { parseAshbyPostingRef, resolveSalary, salarySkipReason, storedSalaryOf, type AshbyPostingRef, type PostingCompensation } from './salary';
 import { isDateControl } from './shared/dates';
 import { htmlToPlainText, JD_UNREADABLE, looksLikeJobDescription } from './shared/jd';
+import { runDraftQueue } from './shared/drafts';
 
 // Resolves once the DOM has gone quiet for `quietMs`, or after `maxMs` regardless - Ashby's
 // React tree re-renders after most field changes, and firing the next fill mid-re-render risks
@@ -843,19 +844,13 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
     }
   }
 
-  // Draft every collected essay CONCURRENTLY (each is an independent LLM round trip), writing and
-  // flagging each as it resolves. A failed or empty draft falls back to leaving it blank, unchanged.
+  // Draft through the shared bounded worker pool, writing and flagging each answer as it resolves.
   if (pendingDrafts.length > 0 && draftAnswer) {
-    let pendingEssays = pendingDrafts.length;
-    onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-    await Promise.all(
-      pendingDrafts.map(async ({ el, question }) => {
-        let drafted: string | null = null;
-        try {
-          drafted = (await draftAnswer(question))?.trim() || null;
-        } catch {
-          drafted = null;
-        }
+    await runDraftQueue({
+      items: pendingDrafts,
+      draftAnswer,
+      promptFor: ({ question }) => question,
+      onSettled: async ({ el, question }, drafted) => {
         if (drafted) {
           await randomDelay();
           el.focus();
@@ -868,10 +863,10 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
           fields_skipped++;
           skipped_reasons.push(`open-ended question left blank: "${question.slice(0, 60)}"`);
         }
-        pendingEssays--;
-        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-      }),
-    );
+      },
+      onProgress: (pendingEssays) =>
+        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays }),
+    });
   }
 
   if (ai_drafted > 0) {

@@ -20,6 +20,7 @@ import {
 // currency-gated stored answer. Pure and shared, so this adapter, the ATS adapters and the
 // background all read the same decision.
 import { resolveSalary, storedSalaryOf } from './salary';
+import { runDraftQueue } from './shared/drafts';
 
 // Generic adapter for companies that build their OWN application form on their own domain
 // against an ATS's API (live-tested targets 2026-07-04: vercel.com/careers - Greenhouse API
@@ -1626,24 +1627,14 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
   fields_skipped += documentReasons.length;
   skipped_reasons.push(...documentReasons);
 
-  // ── Open-ended answers: all instant fields are filled by now, so draft every textarea
-  //    CONCURRENTLY (each is an independent LLM round trip). Wall-clock is the slowest single
-  //    draft, not the sum - a form with 4 essay boxes takes ~1 draft's time, not 4. Each result
-  //    is written into the DOM and reported via onProgress as soon as IT resolves, rather than
-  //    batching behind Promise.all so the student watches essays fill in one at a time. ──
-  if (pendingDrafts.length > 0) {
-    let pendingEssays = pendingDrafts.length;
-    params.onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-
-    await Promise.all(
-      pendingDrafts.map(async ({ el, question }) => {
-        let drafted: string | null = null;
-        try {
-          drafted = (await params.draftAnswer!(question))?.trim() || null;
-        } catch {
-          drafted = null;
-        }
-
+  // Open-ended answers use a shared worker pool. Each result still streams into this adapter as
+  // soon as it resolves, but a form cannot fire an unbounded burst of drafting requests.
+  if (pendingDrafts.length > 0 && draftAnswer) {
+    await runDraftQueue({
+      items: pendingDrafts,
+      draftAnswer,
+      promptFor: ({ question }) => question,
+      onSettled: async ({ el, question }, drafted) => {
         if (drafted) {
           await fillTextField(el, drafted);
           markForReview(el);
@@ -1653,11 +1644,10 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
           fields_skipped++;
           skipped_reasons.push(`open-ended question left blank: "${short(question)}"`);
         }
-
-        pendingEssays--;
-        params.onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-      }),
-    );
+      },
+      onProgress: (pendingEssays) =>
+        params.onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays }),
+    });
   }
 
   if (ai_drafted > 0) {
