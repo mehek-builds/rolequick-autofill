@@ -244,27 +244,33 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
 
             <div className="flex flex-col gap-2.5">
               {bank.map((entry, idx) => (
-                <div key={idx} className={cardClass} style={{ animationDelay: `${idx * 40}ms` }}>
+                <div key={idx} className={cardClass}>
                   <div className="flex items-start justify-between gap-2">
-                    <div className="flex flex-1 flex-col gap-1.5">
-                      <div className="flex items-center gap-1.5">
+                    <div className="flex flex-1 flex-col gap-2">
+                      <div className="flex items-end gap-1.5">
+                        <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs font-medium text-gray-600">
+                          {entry.type === 'job' ? 'Company' : 'Project name'}
                         <input
                           value={entry.org}
                           onChange={(e) => updateEntry(idx, { org: e.target.value })}
                           placeholder={entry.type === 'job' ? 'Company' : 'Project name'}
                           aria-label={entry.type === 'job' ? `Company ${idx + 1}` : `Project ${idx + 1}`}
-                          className="w-full rounded-md border-0 bg-transparent px-0 text-sm font-semibold text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-0"
+                          className="w-full rounded-md border-0 bg-transparent px-0 text-sm font-semibold text-gray-900 placeholder:text-gray-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
                         />
+                        </label>
                         {bankIsSeeded && <ResumePill />}
                       </div>
                       {entry.type === 'job' && (
+                        <label className="flex flex-col gap-1 text-xs font-medium text-gray-600">
+                          Title
                         <input
                           value={entry.title ?? ''}
                           onChange={(e) => updateEntry(idx, { title: e.target.value })}
                           placeholder="Title"
                           aria-label={`Title ${idx + 1}`}
-                          className="w-full rounded-md border-0 bg-transparent px-0 text-xs text-gray-600 placeholder:text-gray-500 focus:outline-none focus:ring-0"
+                          className="w-full rounded-md border-0 bg-transparent px-0 text-xs text-gray-600 placeholder:text-gray-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
                         />
+                        </label>
                       )}
                     </div>
                     <button
@@ -276,14 +282,17 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
                       ×
                     </button>
                   </div>
-                  <textarea
-                    value={entry.bullet_variants[0] ?? ''}
-                    onChange={(e) => updateEntry(idx, { bullet_variants: [e.target.value, ...entry.bullet_variants.slice(1)] })}
-                    placeholder="What did you do here? One or two sentences."
-                    aria-label={`Description ${idx + 1}`}
-                    rows={2}
-                    className={`${textAreaClass} mt-2 text-xs`}
-                  />
+                  <label className="mt-2 flex flex-col gap-1 text-xs font-medium text-gray-600">
+                    Description
+                    <textarea
+                      value={entry.bullet_variants[0] ?? ''}
+                      onChange={(e) => updateEntry(idx, { bullet_variants: [e.target.value, ...entry.bullet_variants.slice(1)] })}
+                      placeholder="What did you do here? One or two sentences."
+                      aria-label={`Description ${idx + 1}`}
+                      rows={2}
+                      className={`${textAreaClass} text-xs`}
+                    />
+                  </label>
                 </div>
               ))}
             </div>
@@ -574,15 +583,19 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
                   aria-checked={autoSubmit}
                   aria-label="Auto-submit after filling"
                   onClick={() => setAutoSubmit((v) => !v)}
-                  className={`relative mt-0.5 h-7 w-12 flex-shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ${
-                    autoSubmit ? 'bg-brand-600' : 'bg-gray-200'
-                  }`}
+                  className="relative flex h-11 w-12 flex-shrink-0 items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
                 >
                   <span
-                    className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow-sm transition-transform ${
-                      autoSubmit ? 'translate-x-5' : 'translate-x-0.5'
+                    className={`relative block h-7 w-12 rounded-full transition-colors ${
+                      autoSubmit ? 'bg-brand-600' : 'bg-gray-200'
                     }`}
-                  />
+                  >
+                    <span
+                      className={`absolute top-0.5 h-6 w-6 rounded-full border border-gray-200 bg-white transition-transform ${
+                        autoSubmit ? 'translate-x-5' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </span>
                 </button>
               </div>
             </div>
@@ -598,9 +611,8 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
         )}
 
         {step === 'saving' && (
-          <div className="flex flex-col items-center gap-3 py-10" role="status" aria-live="polite">
-            <LoadingSpinner size="md" />
-            <p className="text-xs text-gray-600">Saving your setup...</p>
+          <div className="flex flex-col items-center gap-3 py-10">
+            <LoadingSpinner size="md" message="Saving your setup…" />
           </div>
         )}
 

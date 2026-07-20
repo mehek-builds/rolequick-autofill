@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { createSession, requestCode, uploadProfile, verifyCode } from '../lib/api';
 import { setProfile, setToken } from '../lib/storage';
 import type { Profile } from '../lib/types';
@@ -21,7 +21,6 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<'form' | 'code' | 'uploading'>('form');
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const nextFile = e.target.files?.[0];
@@ -128,7 +127,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
           <div className="flex flex-1 flex-col items-start justify-center gap-4" role="status" aria-live="polite">
             <span className="h-8 w-8 animate-spin rounded-full border-2 border-brand-100 border-t-brand-600" aria-hidden="true" />
             <div>
-              <h1 className="text-xl font-semibold text-gray-950">Reading your resume</h1>
+              <h2 className="text-xl font-semibold text-gray-950">Reading your resume</h2>
               <p className="mt-1 text-sm leading-5 text-gray-600">
                 Litos is pulling out your experience for tailored applications.
               </p>
@@ -138,7 +137,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
           <form onSubmit={handleVerify} className="flex flex-col gap-5">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.08em] text-gray-600">Step 2 of 2</p>
-              <h1 className="mt-2 text-xl font-semibold text-gray-950">Check your email</h1>
+              <h2 className="mt-2 text-xl font-semibold text-gray-950">Check your email</h2>
               <p id="code-help" className="mt-1 text-sm leading-5 text-gray-600">
                 Enter the code sent to <span className="font-medium text-gray-800">{email}</span>.
               </p>
@@ -190,7 +189,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
           <form onSubmit={handleSubmit} className="flex flex-col gap-5">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.08em] text-gray-600">Step 1 of 2</p>
-              <h1 className="mt-2 text-xl font-semibold text-gray-950">Set up Litos</h1>
+              <h2 className="mt-2 text-xl font-semibold text-gray-950">Set up Litos</h2>
               <p className="mt-1 text-sm leading-5 text-gray-600">
                 Add your email and resume. You can review everything Litos creates.
               </p>
@@ -219,7 +218,6 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
                 <p id="resume-help" className="mt-0.5 text-xs text-gray-600">PDF, up to the limit shown by Chrome.</p>
               </div>
               <input
-                ref={fileRef}
                 id="resume-upload"
                 type="file"
                 accept="application/pdf"

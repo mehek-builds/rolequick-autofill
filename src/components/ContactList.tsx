@@ -26,7 +26,7 @@ export default function ContactList({ contacts, job, loading, onDraft, onBack }:
         ) : contacts.length === 0 ? (
           <div className="flex flex-1 flex-col items-start justify-center gap-3">
             <SectionLabel>No contacts found</SectionLabel>
-            <h1 className="text-xl font-semibold text-gray-950">Try a broader search</h1>
+            <h2 className="text-xl font-semibold text-gray-950">Try a broader search</h2>
             <p className="text-sm leading-5 text-gray-600">
               Use the parent company name or a less specific role title.
             </p>

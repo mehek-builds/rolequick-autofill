@@ -50,7 +50,7 @@ Data flows two ways. When a student lands on a posting, a content script detects
 |-------|--------------|
 | **Extension framework** | [WXT](https://wxt.dev) 0.20.26 (`wxt.config.ts`), Manifest V3, `@wxt-dev/module-react`, entrypoint conventions for background / content / popup, `wxt zip` packaging (Chrome + Firefox targets) |
 | **Language / UI** | TypeScript 5.4.5, React 18.3.1, react-dom 18.3.1, JSX via `react-jsx`, `@types/chrome` |
-| **Styling** | Tailwind CSS 3.4.4 (custom `brand` indigo scale + a full keyframe/animation set in `tailwind.config.ts`), PostCSS 8.4.38, autoprefixer, Inter Variable via `@fontsource-variable/inter` |
+| **Styling** | Tailwind CSS 3.4.4 with a compact utility design system in `src/components/ui.tsx`, PostCSS 8.4.38, autoprefixer, Geist Variable via `@fontsource-variable/geist` |
 | **Content-script fill engine** | Native-setter value writes (`Object.getOwnPropertyDescriptor(proto,'value').set`), click-first `commitChoice` for controlled radios, real `PointerEvent`/`MouseEvent`/`KeyboardEvent` sequences to open react-select, ARIA `aria-controls`/`aria-owns` scoping to read portal-mounted option menus, `MutationObserver` SPA-navigation and Workday stage polling, `DataTransfer` file injection for resume upload |
 | **Answer resolution** | A pure, DOM-free engine in `src/lib/adapters/generic.ts` (`desiredAnswer`, `matchOption`, `workAuthWantYes`, `eeoAnswer`) reused verbatim by every ATS adapter |
 | **Extension APIs** | `chrome.runtime` messaging, `chrome.storage.local` + `chrome.storage.session`, `chrome.scripting.executeScript` (on-demand injection), `chrome.action` badge, `chrome.tabs` |
@@ -69,7 +69,7 @@ The popup is a small React app (`App.tsx`) that routes between six screens with 
 - **Main** (`MainScreen.tsx`): shows the job spotted on the current page, a "Find my people" form that calls `/resolve`, and a "Fill the form on this page" button that injects the content script on demand via `chrome.scripting.executeScript` for company career sites the manifest cannot match.
 - **Contacts / Draft / Tracking** (`ContactList.tsx`, `DraftEditor.tsx`, `TrackingDashboard.tsx`): review resolved contacts, edit a generated outreach email, open it prefilled in Gmail (`buildGmailComposeLink` in `src/lib/gmail.ts` builds a `mail.google.com` compose URL), and log sends to `/track/event`.
 
-The visual system lives in `tailwind.config.ts`: a single indigo `brand` scale applied only to primary CTAs and key accents, plus animation keyframes (`fade-in-up`, `reveal`, `check-pop`, `confetti-fall`, `blob-drift`, `gradient-pan`) used across the screens.
+The visual system lives in `tailwind.config.ts` and `src/components/ui.tsx`: a restrained blue accent, warm neutrals, shared form and button primitives, and short functional transitions. `DESIGN.md` records the interface rules.
 
 ## The content script and card system (`src/entrypoints/content.ts`)
 
@@ -109,7 +109,7 @@ Two files keep every adapter honest:
 
 The background worker is the only component that holds the auth token, so it owns every authenticated backend call. It routes `chrome.runtime` messages: `JOB_DETECTED` / `GET_LAST_JOB` (badge + session cache), `JOB_APPROVED` (resolve contacts and draft the best two, ranked by reply likelihood so an alumni or near-peer outranks a busy exec), `GENERATE_RESUME_AND_FILL_DATA` (fetch the resume profile and the more-sensitive application profile in parallel, then generate a JD-tailored resume), `ANSWER_QUESTION` (draft one open-ended application answer), `GET_ACCOUNT_CREATION_DATA` (email only, for Workday signup), and `AUTOFILL_EVENT` (telemetry). It is careful about Manifest V3 service-worker teardown, only keeping the message channel open when a response is genuinely coming.
 
-`src/lib/api.ts` is the typed client for the Litos backend, base URL from `VITE_API_BASE` (default `http://localhost:3001`). Endpoints the extension calls:
+`src/lib/api.ts` is the typed client for the Litos backend. Development defaults to `http://localhost:3001`, production defaults to `https://student-outreach-backend.vercel.app`, and `VITE_API_BASE` overrides either mode. Endpoints the extension calls:
 
 | Purpose | Endpoint | What the backend does |
 |---------|----------|-----------------------|
@@ -134,7 +134,7 @@ The published extension is on the Chrome Web Store (link at the top). To build a
 ```bash
 npm install                 # runs `wxt prepare` on postinstall
 
-# Point the extension at your backend (defaults to http://localhost:3001).
+# Point development or QA builds at a different backend when needed.
 # Copy .env.example to .env and set:
 #   VITE_API_BASE=https://your-backend.example.com
 

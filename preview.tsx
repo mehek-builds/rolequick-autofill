@@ -59,10 +59,19 @@ const contacts: Contact[] = [
 
 const noop = () => {};
 
+const PREVIEW_COLORS = {
+  canvas: '#faf9f7',
+  ink: '#151412',
+  muted: '#625f5b',
+  border: '#d0ccc5',
+  accent: '#3157d5',
+  surface: '#ffffff',
+} as const;
+
 function Frame({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ fontFamily: 'Geist Variable, sans-serif', fontSize: 12, fontWeight: 700, color: '#625f59', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+      <div style={{ fontFamily: 'Geist Variable, sans-serif', fontSize: 12, fontWeight: 700, color: PREVIEW_COLORS.muted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
         {label}
       </div>
       <div
@@ -70,8 +79,8 @@ function Frame({ label, children }: { label: string; children: React.ReactNode }
           width: 380,
           height: 580,
           overflowY: 'auto',
-          background: '#fff',
-          border: '1px solid #dedbd4',
+          background: PREVIEW_COLORS.surface,
+          border: `1px solid ${PREVIEW_COLORS.border}`,
           borderRadius: 10,
           boxShadow: '0 8px 24px rgba(35, 33, 29, 0.08)',
         }}
@@ -132,21 +141,21 @@ function StorePreview({ screen }: { screen: keyof typeof storeScreens }) {
         alignItems: 'center',
         gap: 76,
         padding: '72px 120px',
-        background: '#f4f2ee',
-        color: '#23211d',
+        background: PREVIEW_COLORS.canvas,
+        color: PREVIEW_COLORS.ink,
         fontFamily: 'Geist Variable, sans-serif',
       }}
     >
       <section style={{ maxWidth: 530 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 54 }}>
-          <span style={{ display: 'grid', placeItems: 'center', width: 38, height: 38, borderRadius: 9, background: '#6557e8', color: 'white' }}>
+          <span style={{ display: 'grid', placeItems: 'center', width: 38, height: 38, borderRadius: 9, background: PREVIEW_COLORS.accent, color: 'white' }}>
             <BrandMark className="h-5 w-5" />
           </span>
           <span style={{ fontSize: 23, fontWeight: 650, letterSpacing: '-0.02em' }}>Litos</span>
         </div>
-        <p style={{ margin: 0, color: '#6557e8', fontSize: 14, fontWeight: 700, letterSpacing: '0.1em' }}>{content.eyebrow}</p>
+        <p style={{ margin: 0, color: PREVIEW_COLORS.accent, fontSize: 14, fontWeight: 700, letterSpacing: '0.1em' }}>{content.eyebrow}</p>
         <h1 style={{ margin: '18px 0 20px', maxWidth: 520, fontSize: 48, lineHeight: 1.08, letterSpacing: '-0.045em', fontWeight: 650 }}>{content.title}</h1>
-        <p style={{ margin: 0, maxWidth: 490, color: '#625f59', fontSize: 20, lineHeight: 1.55 }}>{content.body}</p>
+        <p style={{ margin: 0, maxWidth: 490, color: PREVIEW_COLORS.muted, fontSize: 20, lineHeight: 1.55 }}>{content.body}</p>
       </section>
 
       <section
@@ -156,8 +165,8 @@ function StorePreview({ screen }: { screen: keyof typeof storeScreens }) {
           height: 580,
           overflow: 'hidden',
           justifySelf: 'end',
-          background: '#fff',
-          border: '1px solid #d7d3cb',
+          background: PREVIEW_COLORS.surface,
+          border: `1px solid ${PREVIEW_COLORS.border}`,
           borderRadius: 10,
           boxShadow: '0 24px 60px rgba(35, 33, 29, 0.14)',
         }}
@@ -172,7 +181,7 @@ function StorePreview({ screen }: { screen: keyof typeof storeScreens }) {
 
 function Preview() {
   return (
-    <div style={{ padding: 32, display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start', background: '#f4f2ee' }}>
+    <div style={{ padding: 32, display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start', background: PREVIEW_COLORS.canvas }}>
       <Frame label="1 · Onboarding">
         <OnboardingScreen onComplete={noop} />
       </Frame>

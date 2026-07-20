@@ -146,8 +146,8 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-[200px] w-[380px] items-center justify-center bg-white font-sans" role="status" aria-label="Loading Litos">
-        <LoadingSpinner size="md" />
+      <div className="flex min-h-[200px] w-[380px] items-center justify-center bg-white font-sans">
+        <LoadingSpinner size="md" message="Loading Litos…" />
       </div>
     );
   }

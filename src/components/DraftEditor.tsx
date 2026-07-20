@@ -92,11 +92,15 @@ export default function DraftEditor({
     }
   };
 
-  const handleOpenGmail = () => {
+  const handleOpenGmail = async () => {
     const link = buildGmailComposeLink(contact.email ?? '', subject, body);
-    chrome.tabs.create({ url: link });
-    setGmailOpened(true);
-    setTimeout(() => setGmailOpened(false), 2000);
+    try {
+      await chrome.tabs.create({ url: link });
+      setGmailOpened(true);
+      setTimeout(() => setGmailOpened(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not open Gmail.');
+    }
   };
 
   const handleMarkSent = async () => {

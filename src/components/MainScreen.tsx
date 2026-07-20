@@ -83,6 +83,7 @@ export default function MainScreen({
   const [error, setError] = useState<string | null>(null);
   const [recentEvents, setRecentEvents] = useState<OutreachEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
+  const [eventsError, setEventsError] = useState<string | null>(null);
   const [fillError, setFillError] = useState<string | null>(null);
 
   const handleFillThisPage = async () => {
@@ -106,7 +107,7 @@ export default function MainScreen({
   useEffect(() => {
     getEvents(token)
       .then((events) => setRecentEvents(events.slice(0, 3)))
-      .catch(() => {})
+      .catch((err) => setEventsError(err instanceof Error ? err.message : 'Could not load recent outreach.'))
       .finally(() => setEventsLoading(false));
   }, [token]);
 
@@ -211,7 +212,7 @@ export default function MainScreen({
             <div className="flex items-start gap-3 border-b border-gray-200 pb-4">
               <StatusDot tone="brand" />
               <div className="min-w-0 flex-1">
-                <h1 className="truncate text-base font-semibold text-gray-950">{company}</h1>
+                <h2 className="truncate text-base font-semibold text-gray-950">{company}</h2>
                 <p className="truncate text-sm text-gray-600">{role}</p>
               </div>
               <span className="text-xs font-medium text-gray-600">Detected</span>
@@ -301,6 +302,8 @@ export default function MainScreen({
               <SkeletonBar width="55%" height={10} />
               <SkeletonBar width="40%" height={9} />
             </div>
+          ) : eventsError ? (
+            <WarningBanner message={eventsError} variant="error" />
           ) : recentEvents.length === 0 ? (
             <p className="border-y border-gray-200 py-4 text-sm text-gray-600">
               No outreach yet. Find contacts for the current job to start.

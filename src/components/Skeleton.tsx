@@ -55,9 +55,9 @@ export function SkeletonDraft() {
   return (
     <div className="flex flex-col gap-3">
       <SkeletonBar width="30%" height={10} />
-      <SkeletonBar height={38} className="!rounded-lg" />
+      <SkeletonBar height={38} />
       <SkeletonBar width="18%" height={10} className="mt-1" />
-      <SkeletonBar height={150} className="!rounded-lg" />
+      <SkeletonBar height={150} />
     </div>
   );
 }

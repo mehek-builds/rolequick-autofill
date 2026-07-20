@@ -42,7 +42,7 @@ export function PopupHeader({ title = 'Litos', subtitle, onBack, children }: Pop
       )}
 
       <div className="min-w-0 flex-1">
-        <p className="truncate text-base font-semibold text-gray-950">{title}</p>
+        <h1 className="truncate text-base font-semibold text-gray-950">{title}</h1>
         {subtitle && <p className="truncate text-xs text-gray-600">{subtitle}</p>}
       </div>
 
@@ -59,11 +59,12 @@ export function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function StatusDot({ tone = 'neutral' }: { tone?: 'neutral' | 'success' | 'warning' | 'brand' }) {
+export function StatusDot({ tone = 'neutral' }: { tone?: 'neutral' | 'success' | 'warning' | 'danger' | 'brand' }) {
   const color = {
     neutral: 'bg-gray-400',
     success: 'bg-success-600',
     warning: 'bg-warning-500',
+    danger: 'bg-danger-600',
     brand: 'bg-brand-600',
   }[tone];
 

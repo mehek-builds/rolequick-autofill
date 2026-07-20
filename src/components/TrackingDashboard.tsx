@@ -11,11 +11,11 @@ interface TrackingDashboardProps {
   onBack: () => void;
 }
 
-const STATUS_STYLE: Record<OutreachStatus, { tone: 'neutral' | 'success' | 'warning'; className: string }> = {
+const STATUS_STYLE: Record<OutreachStatus, { tone: 'neutral' | 'success' | 'warning' | 'danger'; className: string }> = {
   drafted: { tone: 'neutral', className: 'text-gray-600' },
   sent: { tone: 'warning', className: 'text-warning-700' },
   replied: { tone: 'success', className: 'text-success-700' },
-  bounced: { tone: 'neutral', className: 'text-danger-700' },
+  bounced: { tone: 'danger', className: 'text-danger-700' },
 };
 
 function formatDate(iso?: string): string {
@@ -88,7 +88,7 @@ export default function TrackingDashboard({ token, onBack }: TrackingDashboardPr
             {events.length === 0 ? (
               <div className="flex flex-1 flex-col items-start justify-center gap-3 py-12">
                 <SectionLabel>No outreach yet</SectionLabel>
-                <h1 className="text-xl font-semibold text-gray-950">Your drafts will appear here</h1>
+                <h2 className="text-xl font-semibold text-gray-950">Your drafts will appear here</h2>
                 <p className="text-sm leading-5 text-gray-600">Find a contact, write a draft, then track the reply.</p>
                 <button type="button" onClick={onBack} className={textButtonClass}>Find contacts</button>
               </div>
@@ -100,13 +100,13 @@ export default function TrackingDashboard({ token, onBack }: TrackingDashboardPr
                 </div>
                 <div className="divide-y divide-gray-200 border-y border-gray-200">
                   {events.map((event) => {
-                    const statusStyle = STATUS_STYLE[event.status];
+                    const statusStyle = STATUS_STYLE[event.status] ?? STATUS_STYLE.drafted;
                     return (
                       <article key={event.id} className="flex flex-col gap-2 py-3">
                         <div className="flex items-start gap-3">
                           <Avatar name={event.contact.full_name} size={36} />
                           <div className="min-w-0 flex-1">
-                            <h2 className="truncate text-sm font-semibold text-gray-950">{event.contact.full_name}</h2>
+                            <h3 className="truncate text-sm font-semibold text-gray-950">{event.contact.full_name}</h3>
                             <p className="truncate text-xs text-gray-600">{event.contact.company_domain}</p>
                             {event.subject && <p className="mt-1 truncate text-xs text-gray-600">{event.subject}</p>}
                           </div>

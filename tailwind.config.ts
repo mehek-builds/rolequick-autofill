@@ -55,9 +55,6 @@ export default {
           700: '#922e23',
         },
       },
-      boxShadow: {
-        popup: '0 12px 36px rgba(32,31,29,0.16), 0 2px 8px rgba(32,31,29,0.08)',
-      },
       keyframes: {
         'fade-in': {
           '0%': { opacity: '0' },
@@ -66,10 +63,6 @@ export default {
         'fade-in-up': {
           '0%': { opacity: '0', transform: 'translateY(4px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
-        },
-        reveal: {
-          '0%': { opacity: '0', transform: 'scale(0.97)' },
-          '100%': { opacity: '1', transform: 'scale(1)' },
         },
         'slide-down': {
           '0%': { opacity: '0', transform: 'translateY(-6px)' },
@@ -83,36 +76,13 @@ export default {
           '0%': { backgroundPosition: '-450px 0' },
           '100%': { backgroundPosition: '450px 0' },
         },
-        'check-pop': {
-          '0%': { transform: 'scale(0)', opacity: '0' },
-          '55%': { transform: 'scale(1.25)', opacity: '1' },
-          '100%': { transform: 'scale(1)', opacity: '1' },
-        },
-        'pop-in': {
-          '0%': { opacity: '0', transform: 'scale(0.6)' },
-          '60%': { transform: 'scale(1.08)' },
-          '100%': { opacity: '1', transform: 'scale(1)' },
-        },
-        'confetti-fall': {
-          '0%': { opacity: '1', transform: 'translateY(-8px) rotate(0deg)' },
-          '100%': { opacity: '0', transform: 'translateY(30px) rotate(220deg)' },
-        },
-        'soft-pulse': {
-          '0%, 100%': { opacity: '1' },
-          '50%': { opacity: '0.55' },
-        },
       },
       animation: {
         'fade-in': 'fade-in 0.2s ease-out',
         'fade-in-up': 'fade-in-up 0.34s cubic-bezier(0.16,1,0.3,1) both',
-        reveal: 'reveal 0.22s ease-out both',
         'slide-down': 'slide-down 0.24s cubic-bezier(0.16,1,0.3,1) both',
         'slide-in-right': 'slide-in-right 0.26s cubic-bezier(0.16,1,0.3,1) both',
         shimmer: 'shimmer 1.4s linear infinite',
-        'check-pop': 'check-pop 0.34s cubic-bezier(0.16,1,0.3,1) both',
-        'pop-in': 'pop-in 0.4s cubic-bezier(0.18,1.25,0.4,1) both',
-        'confetti-fall': 'confetti-fall 0.9s ease-out forwards',
-        'soft-pulse': 'soft-pulse 2s ease-in-out infinite',
       },
     },
   },
