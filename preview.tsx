@@ -9,8 +9,35 @@ import ContactList from './src/components/ContactList';
 import DraftEditor from './src/components/DraftEditor';
 import TrackingDashboard from './src/components/TrackingDashboard';
 import AutofillSetupScreen from './src/components/AutofillSetupScreen';
+import BrandMark from './src/components/BrandMark';
 
 const TOKEN = 'preview-token';
+
+// The standalone preview runs outside Chrome. Mirror the small callback-based storage surface
+// used by the popup so every screen can be reviewed without extension APIs.
+if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+  const previewStorage: Record<string, unknown> = {};
+  Object.assign(globalThis, {
+    chrome: {
+      storage: {
+        local: {
+          get(keys: string | string[], callback: (items: Record<string, unknown>) => void) {
+            const requested = Array.isArray(keys) ? keys : [keys];
+            callback(Object.fromEntries(requested.map((key) => [key, previewStorage[key]])));
+          },
+          set(items: Record<string, unknown>, callback?: () => void) {
+            Object.assign(previewStorage, items);
+            callback?.();
+          },
+          remove(keys: string | string[], callback?: () => void) {
+            for (const key of Array.isArray(keys) ? keys : [keys]) delete previewStorage[key];
+            callback?.();
+          },
+        },
+      },
+    },
+  });
+}
 
 const profile: Profile = {
   experience: [
@@ -35,7 +62,7 @@ const noop = () => {};
 function Frame({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ fontFamily: 'Inter Variable, sans-serif', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+      <div style={{ fontFamily: 'Geist Variable, sans-serif', fontSize: 12, fontWeight: 700, color: '#625f59', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
         {label}
       </div>
       <div
@@ -44,8 +71,9 @@ function Frame({ label, children }: { label: string; children: React.ReactNode }
           height: 580,
           overflowY: 'auto',
           background: '#fff',
-          borderRadius: 14,
-          boxShadow: '0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06)',
+          border: '1px solid #dedbd4',
+          borderRadius: 10,
+          boxShadow: '0 8px 24px rgba(35, 33, 29, 0.08)',
         }}
       >
         <div className="font-sans text-gray-900 antialiased" style={{ minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -56,9 +84,95 @@ function Frame({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+const storeScreens = {
+  onboarding: {
+    eyebrow: 'SET UP ONCE',
+    title: 'Your application workflow, ready when you are.',
+    body: 'Add your resume once. Litos uses your real experience to help with applications and thoughtful outreach.',
+    screen: <OnboardingScreen onComplete={noop} />,
+  },
+  main: {
+    eyebrow: 'ONE JOB, TWO WORKFLOWS',
+    title: 'Apply and reach out from one focused workspace.',
+    body: 'Fill the application, find relevant people, and review every draft before it goes anywhere.',
+    screen: (
+      <MainScreen
+        token={TOKEN}
+        detectedJob={job}
+        pendingDraftCount={2}
+        onViewDrafts={noop}
+        onContactsFound={noop}
+        onViewTracking={noop}
+        onViewAutofillSetup={noop}
+        onLogout={noop}
+        userSchool={profile.school}
+      />
+    ),
+  },
+  contacts: {
+    eyebrow: 'RELEVANT CONTACTS',
+    title: 'Find people worth contacting, without the noise.',
+    body: 'Litos prioritizes likely replies and keeps the details you need in one compact, reviewable list.',
+    screen: <ContactList contacts={contacts} job={job} loading={false} onDraft={noop} onBack={noop} />,
+  },
+} as const;
+
+function StorePreview({ screen }: { screen: keyof typeof storeScreens }) {
+  const content = storeScreens[screen];
+
+  return (
+    <main
+      style={{
+        boxSizing: 'border-box',
+        width: 1280,
+        height: 800,
+        overflow: 'hidden',
+        display: 'grid',
+        gridTemplateColumns: '1fr 460px',
+        alignItems: 'center',
+        gap: 76,
+        padding: '72px 120px',
+        background: '#f4f2ee',
+        color: '#23211d',
+        fontFamily: 'Geist Variable, sans-serif',
+      }}
+    >
+      <section style={{ maxWidth: 530 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 54 }}>
+          <span style={{ display: 'grid', placeItems: 'center', width: 38, height: 38, borderRadius: 9, background: '#6557e8', color: 'white' }}>
+            <BrandMark className="h-5 w-5" />
+          </span>
+          <span style={{ fontSize: 23, fontWeight: 650, letterSpacing: '-0.02em' }}>Litos</span>
+        </div>
+        <p style={{ margin: 0, color: '#6557e8', fontSize: 14, fontWeight: 700, letterSpacing: '0.1em' }}>{content.eyebrow}</p>
+        <h1 style={{ margin: '18px 0 20px', maxWidth: 520, fontSize: 48, lineHeight: 1.08, letterSpacing: '-0.045em', fontWeight: 650 }}>{content.title}</h1>
+        <p style={{ margin: 0, maxWidth: 490, color: '#625f59', fontSize: 20, lineHeight: 1.55 }}>{content.body}</p>
+      </section>
+
+      <section
+        aria-label={`${screen} extension preview`}
+        style={{
+          width: 380,
+          height: 580,
+          overflow: 'hidden',
+          justifySelf: 'end',
+          background: '#fff',
+          border: '1px solid #d7d3cb',
+          borderRadius: 10,
+          boxShadow: '0 24px 60px rgba(35, 33, 29, 0.14)',
+        }}
+      >
+        <div className="font-sans text-gray-900 antialiased" style={{ minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
+          {content.screen}
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function Preview() {
   return (
-    <div style={{ padding: 32, display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start', background: '#f1f3f7' }}>
+    <div style={{ padding: 32, display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start', background: '#f4f2ee' }}>
       <Frame label="1 · Onboarding">
         <OnboardingScreen onComplete={noop} />
       </Frame>
@@ -100,8 +214,10 @@ function Preview() {
   );
 }
 
+const storeScreen = new URLSearchParams(window.location.search).get('store') as keyof typeof storeScreens | null;
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <Preview />
+    {storeScreen && storeScreens[storeScreen] ? <StorePreview screen={storeScreen} /> : <Preview />}
   </React.StrictMode>,
 );
