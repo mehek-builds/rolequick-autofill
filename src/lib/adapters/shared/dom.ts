@@ -66,11 +66,17 @@ export function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement | HTML
   el.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-export async function fillField(el: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
+export async function fillField(
+  el: HTMLInputElement | HTMLTextAreaElement,
+  value: string,
+  canWrite: () => boolean = () => true,
+): Promise<boolean> {
   await randomDelay();
+  if (!canWrite()) return false;
   el.focus();
   setNativeValue(el, value);
   el.blur();
+  return true;
 }
 
 // ─── Verify-after-fill (R-032) ────────────────────────────────────────────────
@@ -506,7 +512,7 @@ export function unattachableDocumentReasons(resumeEl?: HTMLInputElement | null):
   const seen = new Set<string>();
   for (const el of document.querySelectorAll<HTMLInputElement>('input[type="file"]')) {
     if (el === resumeEl) continue;
-    if (el.closest('[id*="rolequick"]')) continue; // our own card
+    if (el.closest('[id*="litos"]')) continue; // our own card
     if (el.files?.length) continue; // already attached (this is how the resume slot excludes itself)
     const reason = documentSlotReason(
       fileInputLabelText(el),

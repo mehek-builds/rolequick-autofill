@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { selectNeedsYouReasons, skippedReasonsNeedReview } from './autosubmit-gate';
 import { linkSkipReason, locationSkipReason, unreadableQuestionSkipReason, workEligibilitySkipReason } from './adapters/generic';
+import { resumeFetchSkipReason } from './resume-fetch';
 
 // Fix 5 of the completion audit: auto-submit must be HELD (hand back, do not start the countdown)
 // whenever the adapter left a review-required item behind. These strings are the exact
@@ -91,6 +92,14 @@ describe('skippedReasonsNeedReview', () => {
     ).toBe(true);
   });
 
+  it('pins the shared reason to the gate: resumeFetchSkipReason must always hold (R-041)', () => {
+    // The hold rests on this string contract: "could not be attached" is what REVIEW_FLAG
+    // matches. If someone rewords resumeFetchSkipReason without checking the gate, auto-submit
+    // could fire on an application whose resume never downloaded - the exact silent failure
+    // R-041 exists to prevent - so this test is the tripwire.
+    expect(skippedReasonsNeedReview([resumeFetchSkipReason])).toBe(true);
+  });
+
   it('holds on a location question left unanswered (R-002)', () => {
     // This coupling is the entire point of the R-002 fix and it is invisible in either file alone:
     // locationSkipReason's "left for" wording is what REVIEW_FLAG matches. Build the strings with
@@ -147,5 +156,17 @@ describe('selectNeedsYouReasons', () => {
     expect(
       selectNeedsYouReasons(['first name left for you: the page did not keep the value Litos wrote']),
     ).toEqual(['first name left for you: the page did not keep the value Litos wrote']);
+  });
+
+  it('surfaces the R-041 download-failure reason while still dropping the adapter resume line', () => {
+    // Both can appear on the same failed fill: the adapter reports the absence it saw
+    // ("resume: ..."), content.ts adds the why (the download failed). The card's one-line
+    // resume warning covers the former; only the latter belongs under "Still needs you".
+    expect(
+      selectNeedsYouReasons([
+        'resume: no generated resume file available',
+        resumeFetchSkipReason,
+      ]),
+    ).toEqual([resumeFetchSkipReason]);
   });
 });

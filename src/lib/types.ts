@@ -51,7 +51,11 @@ export interface Profile {
   skills: string[];
   projects?: Array<{ name: string; description: string }>;
   school: string;
+  degree?: string;
+  grad_date?: string;
   grad_year: number;
+  currently_enrolled?: boolean;
+  coursework?: string[];
   target_roles?: string[];
   voice_pref?: string;
 }
@@ -85,7 +89,7 @@ export type Screen =
 
 export interface ExperienceBankEntry {
   id?: string;
-  type: 'job' | 'project';
+  type: 'job' | 'project' | 'leadership';
   org: string;
   title?: string;
   date_range?: string;
@@ -153,6 +157,18 @@ export interface GeneratedResume {
   resume_url: string;
   file_name: string;
   spec: unknown;
+  quality: ResumeQuality;
+}
+
+export interface ResumeQuality {
+  ready_to_attach: boolean;
+  issues: string[];
+  warnings: Array<{ entry: string; bullet: string; flags: string[] }>;
+  ats_keyword_coverage_pct: number;
+  trimmed_for_one_page_fit: boolean;
+  sparse_add_more_experience: boolean;
+  grounding_removed: string[];
+  omissions: string[];
 }
 
 // Per-ATS field-mapping adapter contract (Section 7 of PRD-v2). Each adapter fills what it

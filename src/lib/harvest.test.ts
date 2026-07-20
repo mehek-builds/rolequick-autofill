@@ -216,7 +216,7 @@ describe('handleInput: only learns what a human typed', () => {
   });
 
   it("ignores edits inside Litos's own card", async () => {
-    mount('<div id="rolequick-card-stack"><label for="q">Phone number</label><input id="q"></div>');
+    mount('<div id="litos-card-stack"><label for="q">Phone number</label><input id="q"></div>');
     type(document.getElementById('q')!, '+1 555 000 0000', true);
     await vi.advanceTimersByTimeAsync(5000);
     expect(sent).toEqual([]);

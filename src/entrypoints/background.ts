@@ -1,15 +1,13 @@
 // Token access goes through lib/storage, so the background reads the exact key the popup
 // writes, including the backward-compatible fallback to the legacy Volley-era key name.
 import { getToken as getStoredToken, migrateLegacyStorage, setToken, setAutoSubmitEnabled } from '../lib/storage';
+import { API_BASE } from '../lib/config';
 import { overloadWaitMs, overloadBudgetRemains, RESUME_OVERLOAD_BUDGET_MS } from '../lib/overload';
 // Pure salary/posting helpers (R-031). adapters/salary is a LEAF module (types only), so this
 // import does not pull the DOM-adjacent adapter graph into the service worker bundle.
 import { parseAshbyPostingRef, selectPostingCompensation, type PostingCompensation } from '../lib/adapters/salary';
 import { litosClientHeaders, PRODUCT_NAME, type ProductMeta } from '../lib/product';
-
-// Set VITE_API_BASE at build time (e.g. your Vercel URL) to point at the deployed backend;
-// defaults to the local dev server.
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001';
+import type { GeneratedResume } from '../lib/types';
 
 // Latched off once the backend reports onboarding complete. Service-worker memory is fine for
 // this: the worst case on a restart is one wasted 403, which re-latches it immediately.
@@ -278,7 +276,7 @@ async function generateResumeAndProfile(
   // by a model overload; re-running them per attempt would add round trips to a backend that is
   // already telling us it is busy.
   const overloadDeadline = Date.now() + RESUME_OVERLOAD_BUDGET_MS;
-  let resume: { resume_url: string; file_name: string; spec: unknown } | undefined;
+  let resume: GeneratedResume | undefined;
   for (let attempt = 1; ; attempt++) {
     const resumeRes = await timeoutFetch(`${API_BASE}/resume/generate`, {
       method: 'POST',
@@ -331,7 +329,7 @@ async function generateResumeAndProfile(
 }
 
 export default defineBackground(() => {
-  // One-time copy of any legacy Volley-era storage keys to their new rolequick_* names, so a
+  // One-time copy of any legacy Volley-era storage keys to their new litos_* names, so a
   // published update never orphans an existing user's saved token/profile/settings.
   void migrateLegacyStorage();
 

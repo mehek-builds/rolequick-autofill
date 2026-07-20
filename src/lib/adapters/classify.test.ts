@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { desiredAnswer, classifyField } from './generic';
+import { desiredAnswer, classifyField, isLocationCommitmentQuestion } from './generic';
 import type { ApplicationProfile } from '../types';
 
 /* Two suites, and the order matters.
@@ -215,5 +215,64 @@ describe('classifyField preserves R-014 (term before start date)', () => {
       value: '14 weeks',
     });
     expect(desiredAnswer('when can you start?', ap, {})).toEqual({ mode: 'value', value: 'June 2027' });
+  });
+});
+
+/* R-039 (live 2026-07-18): the city/location matcher committed "Dubai" into two location-
+ * COMMITMENT questions - Faire's in-office-commitment ask and Gemini's NYC-relocation ask. A
+ * commitment question is a yes/no about willingness; a stored city answers neither. The veto
+ * (isLocationCommitmentQuestion) requires question stem AND office/relocation vocabulary at once,
+ * so every live residence phrasing this classifier was built against keeps classifying. */
+describe('R-039 location-commitment veto', () => {
+  // The two REAL labels, verbatim from the register (lowercased the way controlIdentity/
+  // questionLabel hand labels to the classifier).
+  const FAIRE =
+    'this role will be in-office on a hybrid schedule, can you commit to being in-office three days per week at the sf office?';
+  const GEMINI =
+    "this role is required to be based near our new york city, ny office. are you open to relocating if you're not currently near nyc?";
+
+  it('vetoes both live labels', () => {
+    expect(isLocationCommitmentQuestion(FAIRE)).toBe(true);
+    expect(isLocationCommitmentQuestion(GEMINI)).toBe(true);
+  });
+
+  it('the Gemini label no longer classifies as a city field (it contains "City")', () => {
+    expect(classifyField(GEMINI)).toBeNull();
+    expect(classifyField(FAIRE)).toBeNull();
+  });
+
+  it('desiredAnswer no longer answers a commitment question with her city', () => {
+    const ap = { address_city: 'Dubai', address_country: 'United Arab Emirates' } as ApplicationProfile;
+    expect(desiredAnswer(GEMINI, ap, {})).toBeNull();
+  });
+
+  it('a commitment question that lands on country vocabulary is vetoed too', () => {
+    // Same disease, different unit: RESIDENCE_QUESTION's bare \bcountry\b alternative would
+    // otherwise resolve this to address_country.
+    expect(classifyField('do you commit to relocating to the country where our office is based?')).toBeNull();
+  });
+
+  it('every live residence phrasing keeps classifying exactly as before', () => {
+    // The R-002 live set: these are the labels the location classifier was built against.
+    expect(classifyField('location (city)*')).toBe('address_city');
+    expect(classifyField("country you're currently residing in")).toBe('address_country');
+    expect(classifyField('where are you currently located?')).toBe('address_city');
+    expect(classifyField('current location')).toBe('address_city');
+    expect(classifyField('where do you live?')).toBe('address_city');
+    expect(classifyField('which city are you located in?')).toBe('address_city');
+    // "where are you based" resolves to country first (RESIDENCE_QUESTION) - the documented
+    // order. It carries the question stem but none of the veto vocabulary ("based" is deliberately
+    // NOT vocabulary; the live labels supply "office"/"relocat" themselves).
+    expect(classifyField('where are you based')).toBe('address_country');
+  });
+
+  it('stem without vocabulary, and vocabulary without stem, both stay un-vetoed', () => {
+    expect(isLocationCommitmentQuestion('where are you currently located?')).toBe(false); // stem, no vocab
+    expect(isLocationCommitmentQuestion('office address')).toBe(false); // vocab, no stem
+    expect(isLocationCommitmentQuestion('office location')).toBe(false); // vocab, no stem
+  });
+
+  it('an office-commute commitment question is vetoed even when phrased with "commute"', () => {
+    expect(isLocationCommitmentQuestion('can you commute to our office three days per week?')).toBe(true);
   });
 });

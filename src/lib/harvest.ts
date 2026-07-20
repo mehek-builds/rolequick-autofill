@@ -43,7 +43,7 @@ let started = false;
 let stopped = false;
 
 function isOurNode(t: EventTarget | null): boolean {
-  return t instanceof Element && !!t.closest('[id*="rolequick"]');
+  return t instanceof Element && !!t.closest('[id*="litos"]');
 }
 
 /**
