@@ -3,7 +3,7 @@ import { isPhoneLabel } from './shared/dom';
 
 // R-020, found live 2026-07-17: Enpal's Ashby board labels its REQUIRED phone field just "Number".
 // The matcher keyed on /\bphone\b/, so the field came back empty on a form where the profile HAD
-// the number - the damaging class of non-fill, since RoleQuick advertises that field and had the
+// the number - the damaging class of non-fill, since Litos advertises that field and had the
 // data for it. The matrix below is the real one from the register.
 
 const tel = () => ({ type: 'tel' }) as unknown as Element;

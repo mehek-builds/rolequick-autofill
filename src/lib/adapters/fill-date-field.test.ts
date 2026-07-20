@@ -7,7 +7,7 @@ import { fillDateField } from './generic';
 // a real one does. So this file (and only this file) runs in jsdom, with a stand-in for the widget
 // that actually caused R-014.
 //
-// The stand-in mirrors how a React controlled input really behaves, which is also why RoleQuick's
+// The stand-in mirrors how a React controlled input really behaves, which is also why Litos's
 // setNativeValue exists: the native prototype setter writes the DOM value and dispatches `input`,
 // the component's handler reads it, and a re-render writes back whatever the component's state now
 // holds. So the fake validates on the `input` event and writes back through the prototype setter -

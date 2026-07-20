@@ -39,7 +39,7 @@ async function harvestFields(fields: unknown): Promise<{ ok: boolean; stop?: boo
       // A 400 here means the classifier produced a field the server refuses - i.e. the R-004
       // guard failed somewhere upstream. Loud in the log, because it should be impossible:
       // ProfileKey has no member for any denied field.
-      console.warn('[RoleQuick] harvest rejected', res.status, await res.text().catch(() => ''));
+      console.warn('[Litos] harvest rejected', res.status, await res.text().catch(() => ''));
       return { ok: false };
     }
     const body = (await res.json().catch(() => null)) as { kept?: string[] } | null;
@@ -324,7 +324,7 @@ async function generateResumeAndProfile(
 }
 
 export default defineBackground(() => {
-  // One-time copy of any legacy Volley-era storage keys to their new rolequick_* names, so a
+  // One-time copy of any legacy Volley-era storage keys to their new litos_* names, so a
   // published update never orphans an existing user's saved token/profile/settings.
   void migrateLegacyStorage();
 
@@ -337,7 +337,7 @@ export default defineBackground(() => {
     chrome.runtime.onInstalled.addListener(() => {
       setToken(import.meta.env.VITE_QA_TOKEN)
         .then(() => setAutoSubmitEnabled(import.meta.env.VITE_QA_AUTOSUBMIT === '1'))
-        .catch((e) => console.warn('[RoleQuick QA] storage seed failed:', e));
+        .catch((e) => console.warn('[Litos QA] storage seed failed:', e));
     });
   }
 
@@ -486,7 +486,7 @@ export default defineBackground(() => {
         // account email, not a resume, so this skips the /resume/generate call entirely (no
         // point spending a resume-gen quota unit on a step before there's even an application to
         // tailor one for). Password is deliberately not fetched here - the student types their
-        // own (2026-07-03 product decision), RoleQuick never touches that field.
+        // own (2026-07-03 product decision), Litos never touches that field.
         getStoredToken().then(async (token) => {
           if (!token) {
             sendResponse({ error: 'not signed in' });

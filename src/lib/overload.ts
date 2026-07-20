@@ -23,7 +23,7 @@ const MAX_JITTER_MS = 400;
 // literally would spend the entire 150s window in one sleep, turning "retry ~6 times over 2.5 min"
 // (which is what recovered the live incident) into "retry once and give up".
 //
-// Jittered, because every RoleQuick client retrying a SHARED incident is the actual failure mode:
+// Jittered, because every Litos client retrying a SHARED incident is the actual failure mode:
 // identical schedules synchronize into a thundering herd against an API that is already shedding
 // load. Large prompts are shed first during an overload and resume-gen sends the JD plus the whole
 // experience bank, so a synchronized fleet would be hammering the API with exactly the requests it

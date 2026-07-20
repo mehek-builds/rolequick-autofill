@@ -1,6 +1,6 @@
 {
-  "name": "rolequick-extension",
-  "version": "0.4.3",
+  "name": "litos-extension",
+  "version": "0.4.4",
   "private": true,
   "type": "module",
   "scripts": {

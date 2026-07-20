@@ -459,7 +459,7 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
     skipped_reasons.push('resume: no file input found in this frame (possible cross-origin embed without a same-frame uploader)');
   }
 
-  // Documents this form requires that RoleQuick cannot produce (R-010). Reported at fill time, in
+  // Documents this form requires that Litos cannot produce (R-010). Reported at fill time, in
   // the card, so the student learns the form wants a transcript NOW rather than at submit; the
   // "left for" wording holds auto-submit while it sits unattached.
   const documentReasons = unattachableDocumentReasons(resumeEl);
@@ -791,7 +791,7 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
       fields_filled = Math.max(0, fields_filled - 1);
       if (t.drafted) ai_drafted = Math.max(0, ai_drafted - 1);
       fields_skipped++;
-      skipped_reasons.push(`${t.what} left for you: the page did not keep the value RoleQuick wrote`);
+      skipped_reasons.push(`${t.what} left for you: the page did not keep the value Litos wrote`);
     });
   }
 

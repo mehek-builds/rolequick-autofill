@@ -19,13 +19,13 @@ export default defineContentScript({
     if (
       window.location.protocol === 'chrome:' ||
       window.location.protocol === 'chrome-extension:' ||
-      document.getElementById('rolequick-persistent')
+      document.getElementById('litos-persistent')
     ) return;
 
     const el = document.createElement('div');
-    el.id = 'rolequick-persistent';
+    el.id = 'litos-persistent';
     el.innerHTML = `
-      <div id="rolequick-persistent-btn" style="
+      <div id="litos-persistent-btn" style="
         position: fixed;
         bottom: 20px;
         right: 20px;
@@ -43,8 +43,8 @@ export default defineContentScript({
         transition: opacity 0.2s, transform 0.2s;
         font-size: 17px;
         user-select: none;
-      " title="RoleQuick">🔥</div>
-      <div id="rolequick-persistent-tip" style="
+      " title="Litos">🔥</div>
+      <div id="litos-persistent-tip" style="
         display: none;
         position: fixed;
         bottom: 68px;
@@ -61,12 +61,12 @@ export default defineContentScript({
         line-height: 1.4;
         box-shadow: 0 2px 8px rgba(0,0,0,0.25);
         pointer-events: none;
-      ">Click the RoleQuick icon in your toolbar to draft outreach emails</div>
+      ">Click the Litos icon in your toolbar to draft outreach emails</div>
     `;
     document.body.appendChild(el);
 
-    const btn = el.querySelector<HTMLElement>('#rolequick-persistent-btn')!;
-    const tip = el.querySelector<HTMLElement>('#rolequick-persistent-tip')!;
+    const btn = el.querySelector<HTMLElement>('#litos-persistent-btn')!;
+    const tip = el.querySelector<HTMLElement>('#litos-persistent-tip')!;
 
     btn.addEventListener('mouseenter', () => {
       btn.style.opacity = '1';
