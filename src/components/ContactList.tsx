@@ -2,6 +2,7 @@ import React from 'react';
 import type { Contact, JobContext } from '../lib/types';
 import ContactCard from './ContactCard';
 import { SkeletonContactList } from './Skeleton';
+import { PopupHeader, SectionLabel, textButtonClass } from './ui';
 
 interface ContactListProps {
   contacts: Contact[];
@@ -11,75 +12,43 @@ interface ContactListProps {
   onBack: () => void;
 }
 
-export default function ContactList({
-  contacts,
-  job,
-  loading,
-  onDraft,
-  onBack,
-}: ContactListProps) {
+export default function ContactList({ contacts, job, loading, onDraft, onBack }: ContactListProps) {
   return (
-    <div className="flex min-h-full animate-slide-in-right flex-col">
-      {/* Header */}
-      <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-gray-100 bg-white/95 px-4 py-3 backdrop-blur">
-        <button
-          onClick={onBack}
-          className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
-          title="Back"
-        >
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-gray-900">{job.company}</p>
-          <p className="truncate text-xs text-gray-500">{job.role}</p>
-        </div>
-      </div>
+    <div className="flex min-h-full animate-slide-in-right flex-col bg-white">
+      <PopupHeader title={job.company} subtitle={job.role} onBack={onBack} />
 
-      <div className="flex-1 overflow-y-auto px-4 py-4">
+      <main className="flex flex-1 flex-col px-4 py-4">
         {loading ? (
-          <div className="flex flex-col gap-3">
-            <p className="text-xs text-gray-400">Finding the right people to reach...</p>
+          <div className="flex flex-col gap-3" role="status" aria-live="polite">
+            <p className="text-sm text-gray-600">Finding contacts…</p>
             <SkeletonContactList count={3} />
           </div>
         ) : contacts.length === 0 ? (
-          <div className="flex animate-fade-in flex-col items-center justify-center gap-3 py-10 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gray-50 text-2xl">
-              🔍
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-700">No one surfaced yet</p>
-              <p className="mt-1 px-4 text-xs leading-relaxed text-gray-400">
-                Try a different company spelling or a broader role title - sometimes the team is listed
-                under a parent company.
-              </p>
-            </div>
-            <button
-              onClick={onBack}
-              className="text-xs font-semibold text-brand-600 hover:text-brand-700"
-            >
-              Try another search
+          <div className="flex flex-1 flex-col items-start justify-center gap-3">
+            <SectionLabel>No contacts found</SectionLabel>
+            <h1 className="text-xl font-semibold text-gray-950">Try a broader search</h1>
+            <p className="text-sm leading-5 text-gray-600">
+              Use the parent company name or a less specific role title.
+            </p>
+            <button type="button" onClick={onBack} className={textButtonClass}>
+              Edit the job
             </button>
           </div>
         ) : (
-          <div className="flex flex-col gap-3">
-            <p className="text-xs text-gray-500">
-              <span className="font-semibold text-gray-700">{contacts.length}</span>{' '}
-              {contacts.length !== 1 ? 'people' : 'person'} found, ranked by who's most likely to reply
-            </p>
-            {contacts.map((contact, i) => (
-              <div
-                key={contact.id}
-                className="animate-fade-in-up"
-                style={{ animationDelay: `${i * 60}ms` }}
-              >
-                <ContactCard contact={contact} onDraft={onDraft} />
-              </div>
-            ))}
-          </div>
+          <section aria-labelledby="contact-results-heading">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div id="contact-results-heading"><SectionLabel>Best matches</SectionLabel></div>
+              <span className="text-xs text-gray-600">{contacts.length} found</span>
+            </div>
+            <p className="mb-2 text-sm text-gray-600">Ranked by likelihood of a reply.</p>
+            <div className="divide-y divide-gray-200 border-y border-gray-200">
+              {contacts.map((contact) => (
+                <ContactCard key={contact.id} contact={contact} onDraft={onDraft} />
+              ))}
+            </div>
+          </section>
         )}
-      </div>
+      </main>
     </div>
   );
 }
