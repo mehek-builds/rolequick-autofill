@@ -13,12 +13,13 @@ export default function LoadingSpinner({
     size === 'sm' ? 'h-4 w-4' : size === 'lg' ? 'h-10 w-10' : 'h-7 w-7';
 
   return (
-    <div className="flex flex-col items-center justify-center gap-3 py-6">
+    <div className="flex flex-col items-center justify-center gap-3 py-6" role="status" aria-live="polite">
       <svg
         className={`animate-spin text-brand-600 ${sizeClass}`}
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
+        aria-hidden="true"
       >
         <circle
           className="opacity-25"
@@ -35,8 +36,9 @@ export default function LoadingSpinner({
         />
       </svg>
       {message && (
-        <p className="text-sm text-gray-500 text-center px-4">{message}</p>
+        <p className="px-4 text-center text-sm text-gray-600">{message}</p>
       )}
+      {!message && <span className="sr-only">Loading</span>}
     </div>
   );
 }
