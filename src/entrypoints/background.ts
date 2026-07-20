@@ -6,6 +6,7 @@ import { overloadWaitMs, overloadBudgetRemains, RESUME_OVERLOAD_BUDGET_MS } from
 // Pure salary/posting helpers (R-031). adapters/salary is a LEAF module (types only), so this
 // import does not pull the DOM-adjacent adapter graph into the service worker bundle.
 import { parseAshbyPostingRef, selectPostingCompensation, type PostingCompensation } from '../lib/adapters/salary';
+import { litosClientHeaders, PRODUCT_NAME, type ProductMeta } from '../lib/product';
 import type { GeneratedResume } from '../lib/types';
 
 // Latched off once the backend reports onboarding complete. Service-worker memory is fine for
@@ -56,7 +57,11 @@ async function harvestFields(fields: unknown): Promise<{ ok: boolean; stop?: boo
 const FETCH_TIMEOUT_MS = 20000;
 const RESUME_FETCH_TIMEOUT_MS = 60000;
 function timeoutFetch(input: string, init: RequestInit = {}, ms = FETCH_TIMEOUT_MS): Promise<Response> {
-  return fetch(input, { ...init, signal: AbortSignal.timeout(ms) });
+  const headers = new Headers(init.headers);
+  if (input.startsWith(API_BASE)) {
+    for (const [name, value] of Object.entries(litosClientHeaders())) headers.set(name, value);
+  }
+  return fetch(input, { ...init, headers, signal: AbortSignal.timeout(ms) });
 }
 
 // ─── Transient model-capacity retry (live QA 2026-07-16, R-003) ──────────────
@@ -327,6 +332,20 @@ export default defineBackground(() => {
   // One-time copy of any legacy Volley-era storage keys to their new litos_* names, so a
   // published update never orphans an existing user's saved token/profile/settings.
   void migrateLegacyStorage();
+
+  // Cache the backend-owned public contract for this service-worker session.
+  // Static fallbacks keep the extension usable offline; the live contract lets
+  // future releases add compatibility gates without another naming migration.
+  void timeoutFetch(`${API_BASE}/v1/meta`)
+    .then(async (res) => {
+      if (!res.ok) return;
+      const meta = (await res.json()) as ProductMeta;
+      if (meta.product.name !== PRODUCT_NAME) {
+        console.warn(`[${PRODUCT_NAME}] backend product contract mismatch`);
+      }
+      await chrome.storage.session.set({ litos_product_meta: meta });
+    })
+    .catch(() => {});
 
   // QA/dev bootstrap: when built with VITE_QA_TOKEN, seed the session once at install/reload so
   // the extension is signed in without driving the popup UI (which automation can't reach).

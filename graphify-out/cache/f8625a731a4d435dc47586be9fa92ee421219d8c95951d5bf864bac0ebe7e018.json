@@ -1,0 +1,1 @@
+{"nodes": [{"id": "loadingspinner", "label": "LoadingSpinner.tsx", "file_type": "code", "source_file": "src/components/LoadingSpinner.tsx", "source_location": "L1"}], "edges": [{"source": "loadingspinner", "target": "react", "relation": "imports_from", "confidence": "EXTRACTED", "source_file": "src/components/LoadingSpinner.tsx", "source_location": "L1", "weight": 1.0}]}

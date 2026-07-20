@@ -2,7 +2,7 @@
 
 All notable changes to the Litos extension are documented here.
 
-## [0.4.5] - 2026-07-20
+## [0.4.6] - 2026-07-20
 
 ### Added
 
