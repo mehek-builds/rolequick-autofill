@@ -1,15 +1,12 @@
 // Token access goes through lib/storage, so the background reads the exact key the popup
 // writes, including the backward-compatible fallback to the legacy Volley-era key name.
 import { getToken as getStoredToken, migrateLegacyStorage, setToken, setAutoSubmitEnabled } from '../lib/storage';
+import { API_BASE } from '../lib/config';
 import { overloadWaitMs, overloadBudgetRemains, RESUME_OVERLOAD_BUDGET_MS } from '../lib/overload';
 // Pure salary/posting helpers (R-031). adapters/salary is a LEAF module (types only), so this
 // import does not pull the DOM-adjacent adapter graph into the service worker bundle.
 import { parseAshbyPostingRef, selectPostingCompensation, type PostingCompensation } from '../lib/adapters/salary';
 import type { GeneratedResume } from '../lib/types';
-
-// Set VITE_API_BASE at build time (e.g. your Vercel URL) to point at the deployed backend;
-// defaults to the local dev server.
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 
 // Latched off once the backend reports onboarding complete. Service-worker memory is fine for
 // this: the worst case on a restart is one wasted 403, which re-latches it immediately.

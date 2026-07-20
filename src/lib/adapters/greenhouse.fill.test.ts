@@ -292,6 +292,156 @@ describe('R-032: phone country-code pairing', () => {
   });
 });
 
+describe('R-032 classic-form phone variant: the old intl-tel-input wrap (boards.greenhouse.io)', () => {
+  // The Neuralink shape (R-032 update, 2026-07-18): the CLASSIC board wraps #phone in v12-era
+  // intl-tel-input markup ("intl-tel-input" / "flag-container" / "selected-flag" / "iti-flag"
+  // classes, none of the new board's "iti"/"iti__*" names) whose country UI is jQuery-bound <li>
+  // elements, not a select or combobox. Pre-fix, the adapter saw neither widget nor selector,
+  // typed the whole stored string, and the widget rewrote it to the local "056 741 7451" with
+  // the country selector untouched.
+  function classicItiPhone(): HTMLInputElement {
+    const phone = textInput('phone', 'tel');
+    markReactManaged(phone);
+    const wrap = document.createElement('div');
+    wrap.className = 'intl-tel-input allow-dropdown';
+    const flagContainer = document.createElement('div');
+    flagContainer.className = 'flag-container';
+    const selectedFlag = document.createElement('div');
+    selectedFlag.className = 'selected-flag';
+    selectedFlag.title = 'United States: +1';
+    const flag = document.createElement('div');
+    flag.className = 'iti-flag us';
+    selectedFlag.appendChild(flag);
+    flagContainer.appendChild(selectedFlag);
+    const list = document.createElement('ul');
+    list.className = 'country-list hide';
+    for (const [name, dial, cc] of [
+      ['United States', '1', 'us'],
+      ['United Arab Emirates', '971', 'ae'],
+    ]) {
+      const li = document.createElement('li');
+      li.className = 'country';
+      li.setAttribute('data-dial-code', dial);
+      li.setAttribute('data-country-code', cc);
+      li.textContent = `${name} +${dial}`;
+      list.appendChild(li);
+    }
+    flagContainer.appendChild(list);
+    wrap.appendChild(flagContainer);
+    wrap.appendChild(phone);
+    wrapper('Phone*', wrap);
+    return phone;
+  }
+
+  function baseFormFields(): void {
+    const { first, last, email } = coreFields();
+    for (const el of [first, last, email]) markReactManaged(el);
+  }
+
+  it('writes E.164 into the classic widget box, so the code travels with the digits', async () => {
+    baseFormFields();
+    const phone = classicItiPhone();
+
+    const result = await fillGreenhouseApplication({
+      fullName: 'Mehek Mandal',
+      email: 'mehekman@usc.edu',
+      profile,
+      applicationProfile: ap,
+    });
+
+    // Never the spaced stored string (what the widget mangled) and never the bare national
+    // number (the classic form submits the raw box value, so the code must ride in it).
+    expect(phone.value).toBe('+971567417451');
+    expect(result.fields_filled).toBe(4); // first, last, email, phone
+    expect(result.skipped_reasons.filter((r) => /phone/.test(r))).toEqual([]);
+  });
+
+  it('un-counts and flags when the widget still rewrites the number to a local format', async () => {
+    baseFormFields();
+    const phone = classicItiPhone();
+    // A widget that mangles despite the E.164 write: the verify pass's digits-only comparison
+    // must catch the trunk-zero rewrite (a changed number, not a re-spacing) and tell the truth.
+    phone.addEventListener('input', () => {
+      setTimeout(() => nativeSet.call(phone, '056 741 7451'), 5);
+    });
+
+    const result = await fillGreenhouseApplication({
+      fullName: 'Mehek Mandal',
+      email: 'mehekman@usc.edu',
+      profile,
+      applicationProfile: ap,
+    });
+
+    expect(result.fields_filled).toBe(3); // first, last, email; the phone write did not hold
+    expect(result.skipped_reasons.some((r) => /phone left for you: the page did not keep/.test(r))).toBe(true);
+  });
+
+  it('still gets the selector + national treatment when a real country select is paired', async () => {
+    baseFormFields();
+    const phone = classicItiPhone();
+    // A drivable paired control beats the E.164 fallback: same treatment as the new form.
+    const select = document.createElement('select');
+    select.id = 'country';
+    for (const [value, text] of [
+      ['US', 'United States (+1)'],
+      ['AE', 'United Arab Emirates (+971)'],
+    ]) {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = text;
+      select.appendChild(o);
+    }
+    const w = phone.closest('.field-wrapper')!;
+    w.insertBefore(select, phone.closest('.intl-tel-input'));
+
+    const result = await fillGreenhouseApplication({
+      fullName: 'Mehek Mandal',
+      email: 'mehekman@usc.edu',
+      profile,
+      applicationProfile: ap,
+    });
+
+    expect(select.value).toBe('AE');
+    expect(phone.value).toBe('567417451');
+    expect(result.fields_filled).toBe(4); // phone-as-one-field, selector included
+  });
+
+  it('keeps a number stored without a +prefix as-is, even inside the classic wrap', async () => {
+    baseFormFields();
+    const phone = classicItiPhone();
+
+    await fillGreenhouseApplication({
+      fullName: 'Mehek Mandal',
+      email: 'mehekman@usc.edu',
+      profile,
+      applicationProfile: { phone: '0501234567' },
+    });
+
+    // No declared country means no safe split; never invent one (same rule as the new form).
+    expect(phone.value).toBe('0501234567');
+  });
+
+  it('a plain classic phone box with no widget keeps the whole stored number (both directions)', async () => {
+    baseFormFields();
+    // Legacy name-based markup, no intl-tel-input anywhere: today's behavior, unchanged.
+    const phone = document.createElement('input');
+    phone.type = 'tel';
+    phone.name = 'job_application[phone]';
+    markReactManaged(phone);
+    wrapper('Phone*', phone);
+
+    const result = await fillGreenhouseApplication({
+      fullName: 'Mehek Mandal',
+      email: 'mehekman@usc.edu',
+      profile,
+      applicationProfile: ap,
+    });
+
+    expect(phone.value).toBe('+971 567417451');
+    expect(result.fields_filled).toBe(4);
+  });
+});
+
 describe('R-033: required open-ended input[type=text]', () => {
   const GEMINI_LABEL =
     'Please share 3-5 sentences explaining your interest in the Blockchain/Web3 industry.*';

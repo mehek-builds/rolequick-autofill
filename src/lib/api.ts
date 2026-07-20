@@ -10,10 +10,8 @@ import type {
   ResumeContact,
   GeneratedResume,
 } from './types';
+import { API_BASE } from './config';
 
-// Set VITE_API_BASE at build time (e.g. your Vercel URL) to point the extension at the
-// deployed backend; defaults to the local dev server.
-const BASE_URL = import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 
 // Throw the backend's human-readable message (quota, rate limit, bad code, etc.)
 // when present; raw status-prefixed text otherwise.
@@ -41,7 +39,7 @@ async function request<T>(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers,
   });
@@ -85,7 +83,7 @@ export async function uploadProfile(
   form.append('resume', file);
   if (voice_pref) form.append('voice_pref', voice_pref);
 
-  const res = await fetch(`${BASE_URL}/profile`, {
+  const res = await fetch(`${API_BASE}/profile`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
     body: form,
