@@ -8,9 +8,11 @@
 // A skip reason that still needs the student's eyes: an AI-drafted answer flagged for review, an
 // agreement to confirm, a question the adapter could not answer (no matching option/control, no
 // unambiguous or clean Yes/No), a never-fill or sensitive field, an autocomplete/dropdown left for
-// manual selection, or any answer left blank. Conservative on purpose: when in doubt, HOLD.
+// manual selection, any answer left blank, or a resume whose download failed after generation
+// (R-041's resumeFetchSkipReason - "could not be attached" is that reason's load-bearing phrase,
+// the way "left for" is R-010's). Conservative on purpose: when in doubt, HOLD.
 const REVIEW_FLAG =
-  /review before submitting|left for|left blank|no matching|no unambiguous|no clean|agreement|never-fill|autocomplete field/i;
+  /review before submitting|left for|left blank|no matching|no unambiguous|no clean|agreement|never-fill|autocomplete field|could not be attached/i;
 
 export function skippedReasonsNeedReview(skippedReasons: string[]): boolean {
   return skippedReasons.some((r) => REVIEW_FLAG.test(r));
@@ -23,7 +25,10 @@ export function skippedReasonsNeedReview(skippedReasons: string[]): boolean {
 // applied - a card may truncate niceties, never a required field.
 export function selectNeedsYouReasons(skippedReasons: string[], cap = 4): string[] {
   return skippedReasons
-    .filter((r) => /agreement|never-fill|no matching|left for you|left blank|required|no unambiguous/i.test(r))
+    .filter((r) => /agreement|never-fill|no matching|left for you|left blank|required|no unambiguous|could not be attached/i.test(r))
+    // The adapters' own "resume:" outcomes fold into the card's one-line resume warning instead
+    // of this list. R-041's download-failure reason has no "resume:" prefix on purpose, so it
+    // passes here and the student sees WHY the resume is missing.
     .filter((r) => !/^resume:/i.test(r))
     .sort((a, b) => Number(/\brequired\b/i.test(b)) - Number(/\brequired\b/i.test(a)))
     .slice(0, cap);
