@@ -585,6 +585,7 @@ export default defineContentScript({
       // demographic prefs for EEO questions; draftAnswer AI-drafts an open-ended textarea.
       eeo?: Record<string, string>;
       draftAnswer?: (question: string) => Promise<string | null>;
+      signal?: AbortSignal;
       onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
       // Ashby-only today (the other adapters ignore it): the posting's structured salary range,
       // for the R-031 median rule.
@@ -741,7 +742,7 @@ export default defineContentScript({
         let fillResult: AutofillResult;
         try {
           fillResult = await withInactivityTimeout(
-            (reportProgress) => fill({
+            (reportProgress, signal) => fill({
               fullName: profile.full_name ?? '',
               email: profile.email,
               profile,
@@ -754,11 +755,26 @@ export default defineContentScript({
               eeo: (applicationProfile.eeo_prefs as Record<string, string> | undefined) ?? {},
               // The posting's structured salary range (R-031), when the background resolved one.
               postingCompensation: result.posting_compensation ?? null,
+              signal,
               draftAnswer: (question: string) =>
                 new Promise<string | null>((resolve) => {
+                  if (signal.aborted) {
+                    resolve(null);
+                    return;
+                  }
+                  let resolved = false;
+                  const finish = (answer: string | null): void => {
+                    if (resolved) return;
+                    resolved = true;
+                    signal.removeEventListener('abort', onAbort);
+                    resolve(answer);
+                  };
+                  const onAbort = () => finish(null);
+                  signal.addEventListener('abort', onAbort, { once: true });
                   chrome.runtime.sendMessage(
                     { type: 'ANSWER_QUESTION', payload: { company, role: title, jd_text: getJd(), question } },
-                    (r: { answer?: string | null } | undefined) => resolve(r?.answer ?? null),
+                    (r: { answer?: string | null } | undefined) =>
+                      finish(signal.aborted ? null : (r?.answer ?? null)),
                   );
                 }),
               // Streamed progress: instant fields report immediately, then each essay updates
@@ -817,11 +833,11 @@ export default defineContentScript({
         };
 
         // Same dismissal check as after the generation await, for the stretch the fill itself
-        // takes (legitimately up to 90s on an essay-heavy form). A dismissal that lands while the
-        // fill is running must not be followed by an auto-submit countdown: the card is the
-        // student's only handle on that countdown's context, and an application they closed the
-        // card on is one they chose to finish themselves. The fill above already happened, so
-        // report it honestly and hand the form back without submitting.
+        // takes (potentially multiple healthy request waves on an essay-heavy form). A dismissal
+        // that lands while the fill is running must not be followed by an auto-submit countdown:
+        // the card is the student's only handle on that countdown's context, and an application
+        // they closed the card on is one they chose to finish themselves. The fill above already
+        // happened, so report it honestly and hand the form back without submitting.
         if (!card.isConnected) {
           reportEvent(false);
           return;

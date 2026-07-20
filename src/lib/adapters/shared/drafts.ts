@@ -7,6 +7,11 @@ export interface DraftQueueOptions<T> {
   onSettled: (item: T, draft: string | null) => void | Promise<void>;
   onProgress?: (pending: number) => void;
   concurrency?: number;
+  signal?: AbortSignal;
+}
+
+export function isDraftTargetAvailable(target: { isConnected: boolean; value: string }): boolean {
+  return target.isConnected && target.value.trim() === '';
 }
 
 // Application forms can contain several independent essay questions. Running every request at
@@ -20,6 +25,7 @@ export async function runDraftQueue<T>({
   onSettled,
   onProgress,
   concurrency = DEFAULT_DRAFT_CONCURRENCY,
+  signal,
 }: DraftQueueOptions<T>): Promise<void> {
   if (items.length === 0) return;
 
@@ -34,6 +40,7 @@ export async function runDraftQueue<T>({
 
   const runWorker = async (): Promise<void> => {
     while (nextIndex < items.length) {
+      if (signal?.aborted) return;
       const item = items[nextIndex++];
       let draft: string | null = null;
 
@@ -43,14 +50,22 @@ export async function runDraftQueue<T>({
         // A failed draft is recoverable. The adapter reports the field as left for the student.
       }
 
-      try {
-        await onSettled(item, draft);
-      } finally {
-        pending--;
-        onProgress?.(pending);
+      if (!signal?.aborted) {
+        try {
+          await onSettled(item, draft);
+        } finally {
+          pending--;
+          onProgress?.(pending);
+        }
       }
     }
   };
 
-  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  const workers = await Promise.allSettled(
+    Array.from({ length: workerCount }, () => runWorker()),
+  );
+  const failedWorker = workers.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  );
+  if (failedWorker) throw failedWorker.reason;
 }

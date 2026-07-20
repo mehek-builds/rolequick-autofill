@@ -49,7 +49,7 @@ import {
 } from './shared/dom';
 import { matchCountryOption, splitInternationalPhone, type InternationalPhone } from './shared/phone';
 import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
-import { runDraftQueue } from './shared/drafts';
+import { isDraftTargetAvailable, runDraftQueue } from './shared/drafts';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. These are pure (no DOM) and covered by
 // generic.answers.test.ts + ats-answer.test.ts.
@@ -273,6 +273,7 @@ export interface GreenhouseFillParams {
   // EEO questions; draftAnswer AI-drafts an open-ended textarea; onProgress streams counts.
   eeo?: Record<string, string>;
   draftAnswer?: (question: string) => Promise<string | null>;
+  signal?: AbortSignal;
   onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
 }
 
@@ -325,9 +326,12 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
     value: string,
     what: string,
     drafted = false,
-  ): Promise<void> => {
-    await fillField(el, value);
+    canWrite: () => boolean = () => true,
+  ): Promise<boolean> => {
+    const written = await fillField(el, value, canWrite);
+    if (!written) return false;
     tracked.push({ el, value, what, drafted });
+    return true;
   };
 
   const firstEl = firstMatch<HTMLInputElement>(['#first_name', 'input[name="job_application[first_name]"]']);
@@ -695,6 +699,7 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
     await runDraftQueue({
       items: pendingDrafts,
       draftAnswer,
+      signal: params.signal,
       promptFor: ({ question, maxLen }) => {
         // A budgeted control tells the drafter up front (the backend prompt takes the question
         // as free context), because asking for an essay and then trimming it is how a 950-char
@@ -705,6 +710,7 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
           : question;
       },
       onSettled: async ({ el, question, maxLen, required }, draft) => {
+        if (!isDraftTargetAvailable(el)) return;
         let drafted = draft;
         // A single-line input cannot hold newlines; a model that answered in paragraphs anyway
         // gets flattened to one line before the budget check.
@@ -714,7 +720,14 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
         // surrenders the field to the student.
         if (drafted && maxLen) drafted = fitToBudget(drafted, maxLen);
         if (drafted) {
-          await fillTracked(el, drafted, `drafted answer "${question.slice(0, 40)}"`, true);
+          const written = await fillTracked(
+            el,
+            drafted,
+            `drafted answer "${question.slice(0, 40)}"`,
+            true,
+            () => !params.signal?.aborted && isDraftTargetAvailable(el),
+          );
+          if (!written) return;
           markForReview(el);
           ai_drafted++;
           fields_filled++;

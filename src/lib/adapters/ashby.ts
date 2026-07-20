@@ -56,7 +56,7 @@ import { classifyField, dateSkipReason, desiredAnswer, fillDateField, isDraftabl
 import { parseAshbyPostingRef, resolveSalary, salarySkipReason, storedSalaryOf, type AshbyPostingRef, type PostingCompensation } from './salary';
 import { isDateControl } from './shared/dates';
 import { htmlToPlainText, JD_UNREADABLE, looksLikeJobDescription } from './shared/jd';
-import { runDraftQueue } from './shared/drafts';
+import { isDraftTargetAvailable, runDraftQueue } from './shared/drafts';
 
 // Resolves once the DOM has gone quiet for `quietMs`, or after `maxMs` regardless - Ashby's
 // React tree re-renders after most field changes, and firing the next fill mid-re-render risks
@@ -325,6 +325,7 @@ export interface AshbyFillParams {
   // EEO questions; draftAnswer AI-drafts an open-ended textarea; onProgress streams counts.
   eeo?: Record<string, string>;
   draftAnswer?: (question: string) => Promise<string | null>;
+  signal?: AbortSignal;
   onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
   // This posting's structured salary range (R-031), fetched by background.ts from the posting API
   // (?includeCompensation=true) and plumbed through the GENERATE_RESUME_AND_FILL_DATA response.
@@ -849,10 +850,13 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
     await runDraftQueue({
       items: pendingDrafts,
       draftAnswer,
+      signal: params.signal,
       promptFor: ({ question }) => question,
       onSettled: async ({ el, question }, drafted) => {
+        if (!isDraftTargetAvailable(el)) return;
         if (drafted) {
           await randomDelay();
+          if (params.signal?.aborted || !isDraftTargetAvailable(el)) return;
           el.focus();
           setNativeValue(el, drafted);
           el.blur();

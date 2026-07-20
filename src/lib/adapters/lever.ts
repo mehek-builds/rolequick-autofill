@@ -19,7 +19,7 @@ import {
   unattachableDocumentReasons,
 } from './shared/dom';
 import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
-import { runDraftQueue } from './shared/drafts';
+import { isDraftTargetAvailable, runDraftQueue } from './shared/drafts';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
 import { desiredAnswer, isDraftableQuestion, linkQuestion, linkSkipReason, locationQuestion, locationSkipReason, matchOption, noteLinkFillCandidate, unreadableQuestionSkipReason, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
@@ -139,6 +139,7 @@ export interface LeverFillParams {
   // EEO questions; draftAnswer AI-drafts an open-ended textarea; onProgress streams counts.
   eeo?: Record<string, string>;
   draftAnswer?: (question: string) => Promise<string | null>;
+  signal?: AbortSignal;
   onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
 }
 
@@ -406,10 +407,17 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
     await runDraftQueue({
       items: pendingDrafts,
       draftAnswer,
+      signal: params.signal,
       promptFor: ({ question }) => question,
       onSettled: async ({ el, question }, drafted) => {
+        if (!isDraftTargetAvailable(el)) return;
         if (drafted) {
-          await fillField(el, drafted);
+          const written = await fillField(
+            el,
+            drafted,
+            () => !params.signal?.aborted && isDraftTargetAvailable(el),
+          );
+          if (!written) return;
           markForReview(el);
           ai_drafted++;
           fields_filled++;
