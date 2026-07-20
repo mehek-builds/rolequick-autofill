@@ -10,6 +10,11 @@ import { isLinkedInApplicationPage, extractLinkedInJdText, fillLinkedInApplicati
 import { isLikelyApplicationForm, extractGenericJdText, getGenericJobDetails, fillGenericApplication, drainR030CandidateLabels } from '../lib/adapters/generic';
 import { getAutoSubmitEnabled } from '../lib/storage';
 import { selectNeedsYouReasons, skippedReasonsNeedReview } from '../lib/autosubmit-gate';
+import {
+  extractValidationErrors,
+  mergeValidationReasons,
+  validationErrorsToReasons,
+} from '../lib/validation-authority';
 import { startHarvest } from '../lib/harvest';
 import { withInactivityTimeout } from '../lib/inactivity-timeout';
 import type { Profile, ApplicationProfile, AutofillResult, GeneratedResume } from '../lib/types';
@@ -305,7 +310,7 @@ export default defineContentScript({
     function renderFillSummary(
       statusEl: HTMLElement | null,
       fillResult: AutofillResult,
-      opts: { resumeMissing: boolean; autoSubmitHeld: boolean },
+      opts: { resumeMissing: boolean; autoSubmitHeld: boolean; capOverride?: number },
     ): void {
       if (!statusEl) return;
       const head: string[] = [`Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}.`];
@@ -315,8 +320,9 @@ export default defineContentScript({
       // required blanks. Selection + ordering live in the pure selectNeedsYouReasons (autosubmit-
       // gate.ts) so it stays unit-tested: required blanks sort ahead of the cap, because a card
       // that truncated a REQUIRED blank off its list read as complete over an empty required
-      // field (R-033's second half).
-      const needsYou = selectNeedsYouReasons(fillResult.skipped_reasons);
+      // field (R-033's second half). capOverride exists for the E-015 path: the form's own
+      // validation list is authoritative and must never be truncated.
+      const needsYou = selectNeedsYouReasons(fillResult.skipped_reasons, opts.capOverride);
       statusEl.style.display = 'block';
       statusEl.innerHTML =
         head.map((l) => `<div>${escapeHtml(l)}</div>`).join('') +
@@ -325,6 +331,66 @@ export default defineContentScript({
             needsYou.map((r) => `<div>• ${escapeHtml(r)}</div>`).join('')
           : '') +
         `<div style="margin-top:4px;">Review, then submit yourself.</div>`;
+    }
+
+    // E-015 watcher. A MutationObserver, deliberately NOT an event listener: a capture-phase
+    // click listener on document measurably broke keyboard input into Ashby's React fields on
+    // the live QA build (typed characters vanished with the input focused; removing the listener
+    // restored typing; bisected 2026-07-18). Watching for the ATS's own error nodes appearing is
+    // passive with respect to the page's input pipeline and needs no knowledge of when submit was
+    // clicked - validation errors only exist after a refusal. Re-fires on later refusals too; the
+    // latest fill's card state rides module vars so a refill redirects the same observer.
+    let validationCardState: {
+      statusEl: HTMLElement | null;
+      fillResult: AutofillResult;
+      resumeMissing: boolean;
+    } | null = null;
+    let validationObserver: MutationObserver | null = null;
+    let validationDebounce: ReturnType<typeof setTimeout> | null = null;
+
+    function armValidationAuthority(
+      statusEl: HTMLElement | null,
+      fillResult: AutofillResult,
+      resumeMissing: boolean,
+    ): void {
+      validationCardState = { statusEl, fillResult, resumeMissing };
+      if (validationObserver) return;
+      validationObserver = new MutationObserver(() => {
+        // Debounce: refusals render many nodes in one burst, and the extract walks the DOM.
+        if (validationDebounce) clearTimeout(validationDebounce);
+        validationDebounce = setTimeout(() => {
+          const state = validationCardState;
+          if (!state) return;
+          const errors = extractValidationErrors(document);
+          if (!errors.length) return;
+          const merged = mergeValidationReasons(
+            state.fillResult.skipped_reasons,
+            validationErrorsToReasons(errors),
+          );
+          if (merged.length === state.fillResult.skipped_reasons.length) return;
+          state.fillResult.skipped_reasons = merged;
+          // The summary card self-dismisses ~9s after the fill, so by the time the student
+          // submits, statusEl is usually detached. The refusal verdict needs somewhere to
+          // land: re-inject a minimal status host rather than rendering into a ghost node.
+          if (!state.statusEl || !state.statusEl.isConnected) {
+            document.getElementById('rolequick-validation-card')?.remove();
+            const host = document.createElement('div');
+            host.id = 'rolequick-validation-card';
+            host.style.cssText =
+              'position:fixed;right:16px;bottom:16px;z-index:2147483646;max-width:340px;' +
+              'background:#fff;border:1px solid #c7c9d1;border-radius:10px;box-shadow:0 4px 18px rgba(0,0,0,.18);' +
+              'padding:12px 14px;font:13px/1.45 system-ui,sans-serif;color:#111;';
+            document.documentElement.appendChild(host);
+            state.statusEl = host;
+          }
+          renderFillSummary(state.statusEl, state.fillResult, {
+            resumeMissing: state.resumeMissing,
+            autoSubmitHeld: true,
+            capOverride: merged.length,
+          });
+        }, 700);
+      });
+      validationObserver.observe(document.body, { childList: true, subtree: true });
     }
 
     // Result of the background resume-gen round trip, cached per job (company|role) for the tab's
@@ -884,6 +950,11 @@ export default defineContentScript({
         // Surface WHAT still needs the student (resume, agreements, unmatched/required blanks), not
         // just a filled count - the adapters compute this precisely and it used to be discarded.
         renderFillSummary(statusEl, fillResult, { resumeMissing, autoSubmitHeld });
+
+        // E-015: after the student's own submit attempt, the form may refuse with a validation
+        // list naming required fields no sweep saw. That list is the authority - re-read it and
+        // re-render the card from it.
+        armValidationAuthority(statusEl, fillResult, resumeMissing);
 
         // Highlight the real final-submit control if there is one; never click it here (PRD-v2
         // Section 5 Step 4). On a multi-step form still mid-flow there is no final submit yet, so
