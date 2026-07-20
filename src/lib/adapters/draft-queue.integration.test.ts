@@ -17,7 +17,7 @@ const profile = {
   grad_year: 2028,
 } as Profile;
 
-const QUESTION = 'Why do you want to join RoleQuick?';
+const QUESTION = 'Why do you want to join Litos?';
 const NORMALIZED_QUESTION = QUESTION.toLowerCase();
 const DRAFT = 'I want to help students apply with more confidence.';
 

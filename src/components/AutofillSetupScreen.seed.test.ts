@@ -16,7 +16,7 @@ const profile: Profile = {
     { company: 'SoFi', title: 'Product Management Intern', start: 'Jun 2025', end: 'Aug 2025', description: 'Shipped a thing.' },
     { company: 'Spark SC', title: 'VP of Finance', start: 'Jan 2025', end: 'May 2025', description: 'Ran the budget.' },
   ],
-  projects: [{ name: 'RoleQuick', description: 'Job application autofill extension.' }],
+  projects: [{ name: 'Litos', description: 'Job application autofill extension.' }],
   school: 'USC',
   grad_year: 2028,
 };
@@ -49,7 +49,7 @@ describe('R-027: seedExperienceBank does not stamp profile.skills onto entries',
     });
     expect(bank[2]).toMatchObject({
       type: 'project',
-      org: 'RoleQuick',
+      org: 'Litos',
       bullet_variants: ['Job application autofill extension.'],
     });
   });

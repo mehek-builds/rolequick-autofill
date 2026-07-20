@@ -4,14 +4,14 @@ import { skippedReasonsNeedReview } from '../autosubmit-gate';
 
 // R-010 (live QA 2026-07-16, Global Relay co-op): the form said "In order to be considered for this
 // role, you must include post-secondary transcripts" and rendered a second Attach input beyond the
-// resume. RoleQuick left it "(no file)" and said NOTHING - the card reported a successful fill, and
-// the student met the empty required upload at submit. RoleQuick can only ever produce a resume, so
+// resume. Litos left it "(no file)" and said NOTHING - the card reported a successful fill, and
+// the student met the empty required upload at submit. Litos can only ever produce a resume, so
 // the fix is not to attach the transcript; it is to SAY that it cannot.
 //
 // The guards carry most of the weight here. A false positive fires on every form and trains the
 // student to ignore the warning, which is worse than never warning at all.
 
-describe('documentSlotReason: flags what RoleQuick cannot attach', () => {
+describe('documentSlotReason: flags what Litos cannot attach', () => {
   it('flags a required transcript (the live Global Relay shape)', () => {
     const reason = documentSlotReason('post-secondary transcripts', true);
     expect(reason).toContain('transcript');

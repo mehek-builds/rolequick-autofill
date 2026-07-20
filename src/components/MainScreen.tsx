@@ -88,7 +88,7 @@ export default function MainScreen({
   const [fillError, setFillError] = useState<string | null>(null);
 
   // Company career sites that host their own application form aren't in the manifest's
-  // matches, so RoleQuick can't see them until the student asks. Clicking here is the ask:
+  // matches, so Litos can't see them until the student asks. Clicking here is the ask:
   // the toolbar interaction grants activeTab for this one tab, and the content script is
   // injected on demand. Its generic adapter takes over from there.
   const handleFillThisPage = async () => {
@@ -175,7 +175,7 @@ export default function MainScreen({
           <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-brand-600 text-white">
             <BrandMark className="h-3.5 w-3.5" />
           </div>
-          <span className="text-base font-bold tracking-tight text-gray-900">RoleQuick</span>
+          <span className="text-base font-bold tracking-tight text-gray-900">Litos</span>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -227,7 +227,7 @@ export default function MainScreen({
                     {pendingDraftCount} draft{pendingDraftCount > 1 ? 's' : ''} ready for you
                   </p>
                   <p className="text-[11px] text-green-600">
-                    RoleQuick wrote these in the background, tap to review
+                    Litos wrote these in the background, tap to review
                   </p>
                 </div>
                 <span className="text-sm text-green-400">›</span>
@@ -325,7 +325,7 @@ export default function MainScreen({
             {/* On-demand fill for company-hosted application forms */}
             <div className="flex flex-col gap-1.5 rounded-xl border border-gray-100 bg-gray-50 p-3">
               <p className="text-[11px] font-medium text-gray-500">
-                On a company's own application page? RoleQuick can fill it here too.
+                On a company's own application page? Litos can fill it here too.
               </p>
               <button
                 type="button"

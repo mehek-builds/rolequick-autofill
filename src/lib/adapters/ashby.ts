@@ -152,7 +152,7 @@ function comboControlIn(block: Element): HTMLElement | null {
 // submit control is already excluded by the text list below (it reads "Submit application").
 function buttonOptionsIn(block: Element): Array<{ text: string; el: HTMLButtonElement }> {
   return [...block.querySelectorAll<HTMLButtonElement>('button')]
-    .filter((b) => !b.closest('[id*="rolequick"]'))
+    .filter((b) => !b.closest('[id*="litos"]'))
     .map((b) => ({ text: (b.textContent ?? '').trim(), el: b }))
     .filter(
       (b) =>
@@ -194,7 +194,7 @@ async function answerChoiceBlock(block: Element, desired: Desired): Promise<bool
   // "Select all that apply" checkbox groups (Ashby renders EEO ethnicity / community questions
   // this way): tick the opt-out box for a decline, or the matching box for a value.
   const checkboxes = [...block.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
-    .filter((cb) => !cb.closest('[id*="rolequick"]') && !cb.disabled)
+    .filter((cb) => !cb.closest('[id*="litos"]') && !cb.disabled)
     .map((cb) => ({
       text: (
         document.querySelector(`label[for="${CSS.escape(cb.id)}"]`)?.textContent ??
@@ -344,7 +344,7 @@ export function isAshbyApplicationPage(): boolean {
 
 // ─── Job-description extraction (R-013) ─────────────────────────────────────
 //
-// On the Ashby Application tab - the only place the form and RoleQuick's card exist - the job
+// On the Ashby Application tab - the only place the form and Litos's card exist - the job
 // description is NOT in the DOM at all. It lives on the Overview tab and is swapped out on SPA
 // nav. The old extractor could not tell, so every Ashby resume was tailored to the job title and
 // some form labels. See shared/jd.ts for the full failure write-up.
@@ -499,7 +499,7 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
     skipped_reasons.push('resume: no generated resume file available');
   }
 
-  // Documents this form requires that RoleQuick cannot produce (R-010). Reported at fill time, in
+  // Documents this form requires that Litos cannot produce (R-010). Reported at fill time, in
   // the card, so the student learns the form wants a transcript NOW rather than at submit; the
   // "left for" wording holds auto-submit while it sits unattached.
   const documentReasons = unattachableDocumentReasons();

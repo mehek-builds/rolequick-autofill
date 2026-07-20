@@ -2,12 +2,12 @@ import type { ResumeQuality } from './types';
 
 export function buildResumeReviewMessage(quality: ResumeQuality): string {
   const lines = [
-    'RoleQuick prepared a one-page resume for this job.',
+    'Litos prepared a one-page resume for this job.',
     '',
     'Before it is attached, confirm that you want to use this tailored version.',
   ];
   if (quality.omissions.length > 0) {
-    lines.push('', `To keep the strongest job-matched evidence on one page, RoleQuick omitted ${quality.omissions.length} item${quality.omissions.length === 1 ? '' : 's'}:`);
+    lines.push('', `To keep the strongest job-matched evidence on one page, Litos omitted ${quality.omissions.length} item${quality.omissions.length === 1 ? '' : 's'}:`);
     lines.push(...quality.omissions.slice(0, 5).map((item) => `- ${item}`));
     if (quality.omissions.length > 5) lines.push(`- ${quality.omissions.length - 5} more`);
   }

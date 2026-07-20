@@ -185,7 +185,7 @@ function candidateInputs(): Array<HTMLInputElement | HTMLTextAreaElement> {
   // the filler and left silently blank with no skip reason.
   return [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
     'input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input[type="date"], input:not([type]), textarea',
-  )].filter((el) => !el.closest('[id*="rolequick"]') && !el.disabled && !el.readOnly && isVisible(el));
+  )].filter((el) => !el.closest('[id*="litos"]') && !el.disabled && !el.readOnly && isVisible(el));
 }
 
 export function isLikelyApplicationForm(): boolean {
@@ -255,7 +255,7 @@ export function eeoAnswer(pref: string | undefined): Desired {
 // ("legally authorized to work in the location where this role is based?", "require sponsorship
 // to work in the US?") but the profile stores single global flags, so deriving Yes/No shipped a
 // false declaration on non-local roles (live QA 2026-07-16, Lever/Xsolla; sponsorship extended to
-// always-ask on Mehek's 2026-07-16 decision). RoleQuick NEVER answers either: the adapters skip
+// always-ask on Mehek's 2026-07-16 decision). Litos NEVER answers either: the adapters skip
 // the question with workEligibilitySkipReason(), whose "left for" wording makes the auto-submit
 // gate HOLD (autosubmit-gate.ts REVIEW_FLAG) while it sits unanswered. This is the ONE classifier
 // every adapter must use: whitespace-tolerant (\s+, labels keep raw internal whitespace from
@@ -315,7 +315,7 @@ export type ProfileKey =
   | 'referral_source_default';
 
 /**
- * Is this a question RoleQuick must never answer AND never learn?
+ * Is this a question Litos must never answer AND never learn?
  *
  * The single source of refusal truth, exported because harvest has to ask the same question of a
  * control's own label AND of its surrounding question stem: a work-auth question rendered as a
@@ -335,7 +335,7 @@ export function isRefusedQuestion(label: string): boolean {
  * The single source of field identity, with two consumers that must never disagree:
  * `desiredAnswer` (fill: key -> look up the stored value) and harvest (read: key -> store what the
  * student typed). Two copies of these regexes would drift, and the drift would be invisible until
- * RoleQuick filled one field and learned a different one.
+ * Litos filled one field and learned a different one.
  *
  * Why this exists rather than reusing desiredAnswer: desiredAnswer's branches are guarded on the
  * value being present (`&& ap.desired_salary`), so on an empty profile - which is exactly the
@@ -442,7 +442,7 @@ export const REFERRAL_QUESTION = /how did you hear|referral source|hear about (t
 // "When can you start", broadened by R-014: "starting date" / "earliest possible starting date"
 // (Enpal's verbatim label) matched neither "start date" nor "earliest start". Hoisted out of
 // desiredAnswer so classifyField reads the SAME regex - two copies would drift, and the drift is
-// invisible: RoleQuick would fill one field and learn a different one.
+// invisible: Litos would fill one field and learn a different one.
 export const START_DATE_QUESTION =
   /availab|start(ing)?\s+date|date.*you.*start|when can you start|earliest.*start/i;
 const SALARY_QUESTION = /salary|compensation|desired pay|expected pay|pay expectation/i;
@@ -595,7 +595,7 @@ export function locationQuestion(label: string, ap: ApplicationProfile): Locatio
     return null;
   }
   // Field identity is delegated to classifyField, the same classifier harvest reads with, so a
-  // label RoleQuick fills as a city can never be harvested back as a country. classifyField
+  // label Litos fills as a city can never be harvested back as a country. classifyField
   // re-checks the two refusals above internally (plus EEO and never-fill), so the delegation
   // cannot weaken them; they stay spelled out here, first, because this ordering is the R-004
   // lock and must survive any future classifyField edit.
@@ -662,7 +662,7 @@ export function locationComboQueries(field: LocationQuestion['field'], ap: Appli
 // Enpal-style level selects "Wie gut sind deine Deutschkenntnisse?" / "German level" /
 // "English level".
 //
-// RoleQuick answers these from EXACTLY ONE source: the languages the student DECLARED
+// Litos answers these from EXACTLY ONE source: the languages the student DECLARED
 // (ApplicationProfile.languages). Never the resume, never citizenship, never the JD - a language
 // "inferred" from adjacent data is R-015's exact failure (JD keywords lifted onto a submitted
 // resume as if they were hers) re-expressed as a spoken claim. The mis-fill asymmetry each arm
@@ -686,7 +686,7 @@ export function locationComboQueries(field: LocationQuestion['field'], ap: Appli
 // ("Spanish", "German"), which is exactly how a language classifier could re-open R-004.
 
 // Curated vocabulary: label variant -> canonical name. Curated rather than open-ended on purpose:
-// only a language RoleQuick can NAME can ever be matched against the declared list, so a language
+// only a language Litos can NAME can ever be matched against the declared list, so a language
 // outside this table degrades to the existing unrecognized-question flags instead of a guess.
 // Native names (Deutsch, Espanol, Francais, Italiano, ...) are included because the form may ask
 // in its own language; diacritics are stripped by normalizeLanguageText before lookup, so one
@@ -826,7 +826,7 @@ function languageMembership(lang: string, declared: Set<string>): 'declared' | '
   return 'not-declared';
 }
 
-// The level options RoleQuick may commit for a DECLARED language, fullest-claim-first, matched
+// The level options Litos may commit for a DECLARED language, fullest-claim-first, matched
 // through matchOption's oneof (first value landing an unambiguous option wins). Deliberately no
 // native tier - see NATIVE_CLAIM. C1 before C2 on the same conservatism: both are fluent-tier,
 // C2 is the stronger claim, so it is only reached when the form offers no C1. German option
@@ -937,7 +937,7 @@ export function isDraftableQuestion(label: string): boolean {
 
 // "left for" again: an essay we declined to draft must hold auto-submit, not sail through blank.
 export function unreadableQuestionSkipReason(): string {
-  return "open-ended question left for you: RoleQuick could not read this question's label";
+  return "open-ended question left for you: Litos could not read this question's label";
 }
 
 // ─── Open-ended question shape (R-033) ──────────────────────────────────────
@@ -1005,7 +1005,7 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   //   - negated phrasings ("are you UNDER 18?", "younger than 18 years"), which would answer Yes
   //     to being a minor;
   //   - the number 18 used for TENURE rather than age. "Do you have 18+ months of experience?" and
-  //     "at least 18 years of experience" both satisfied the alternatives above, so RoleQuick
+  //     "at least 18 years of experience" both satisfied the alternatives above, so Litos
   //     claimed experience the student never stated - the same class of false declaration the
   //     always-ask work-eligibility rule exists to prevent.
   if (
@@ -1028,7 +1028,7 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
 
   // Everything below is a profile-field lookup, so the FIELD IDENTITY now comes from
   // classifyField - the same classifier harvest reads with. Two copies of these regexes would
-  // drift, and the drift would be invisible: RoleQuick would fill one field and learn a different
+  // drift, and the drift would be invisible: Litos would fill one field and learn a different
   // one. From here desiredAnswer's only job is shaping a stored value for the option matcher.
   //
   // Only the keys that were already answered here are handled. classifyField recognises more
@@ -1277,7 +1277,7 @@ async function fillTextField(
 
 function findResumeFileInput(): HTMLInputElement | null {
   const fileInputs = [...document.querySelectorAll<HTMLInputElement>('input[type="file"]')].filter(
-    (el) => !el.closest('[id*="rolequick"]'),
+    (el) => !el.closest('[id*="litos"]'),
   );
   if (fileInputs.length === 0) return null;
   const scored = fileInputs.map((el) => {
@@ -1522,7 +1522,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
 
   // ── <select> dropdowns ──
   for (const select of [...document.querySelectorAll<HTMLSelectElement>('select')]) {
-    if (select.closest('[id*="rolequick"]') || select.disabled || !isVisible(select)) continue;
+    if (select.closest('[id*="litos"]') || select.disabled || !isVisible(select)) continue;
     if (select.selectedIndex > 0 && select.value && !/select|choose|^$/i.test(select.options[select.selectedIndex]?.text ?? '')) continue; // already answered
     const label = questionLabel(select);
     const options = [...select.options]
@@ -1568,7 +1568,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
 
   // ── Radio groups (grouped by name) ──
   const radios = [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')].filter(
-    (el) => !el.closest('[id*="rolequick"]') && !el.disabled && isInteractableChoice(el),
+    (el) => !el.closest('[id*="litos"]') && !el.disabled && isInteractableChoice(el),
   );
   const radioGroups = new Map<string, HTMLInputElement[]>();
   for (const r of radios) {
@@ -1629,7 +1629,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
   //    way as before. ──
   const checkboxGroups = new Map<string | HTMLInputElement, HTMLInputElement[]>();
   for (const cb of [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]) {
-    if (cb.closest('[id*="rolequick"]') || cb.disabled || cb.checked || !isInteractableChoice(cb)) continue;
+    if (cb.closest('[id*="litos"]') || cb.disabled || cb.checked || !isInteractableChoice(cb)) continue;
     const key = cb.name || cb; // unnamed checkboxes each form their own group of one
     (checkboxGroups.get(key) ?? checkboxGroups.set(key, []).get(key)!).push(cb);
   }
@@ -1711,7 +1711,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     skipped_reasons.push('resume: no generated resume file available');
   }
 
-  // Documents this form requires that RoleQuick cannot produce (R-010). Reported at fill time, in
+  // Documents this form requires that Litos cannot produce (R-010). Reported at fill time, in
   // the card, so the student learns the form wants a transcript NOW rather than at submit; the
   // "left for" wording holds auto-submit while it sits unattached.
   const documentReasons = unattachableDocumentReasons();
