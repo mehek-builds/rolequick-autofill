@@ -68,6 +68,14 @@
       "community": 20
     },
     {
+      "label": "globals.test.ts",
+      "file_type": "code",
+      "source_file": "src/styles/globals.test.ts",
+      "source_location": "L1",
+      "id": "globals_test",
+      "community": 21
+    },
+    {
       "label": "WarningBanner.tsx",
       "file_type": "code",
       "source_file": "src/components/WarningBanner.tsx",
@@ -13593,7 +13601,7 @@
       "relation": "imports_from",
       "confidence": "EXTRACTED",
       "source_file": "src/entrypoints/popup/main.tsx",
-      "source_location": "L4",
+      "source_location": "L3",
       "weight": 1.0,
       "_src": "main",
       "_tgt": "app",
