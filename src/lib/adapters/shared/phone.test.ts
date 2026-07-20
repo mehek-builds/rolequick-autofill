@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitInternationalPhone, matchCountryOption } from './phone';
+import { splitInternationalPhone, matchCountryOption, toE164 } from './phone';
 
 // R-032's second defect, pure half: the split and the option match must be right BEFORE any DOM
 // is involved, because a wrong split types a wrong number (the R-018/R-028 mis-fill class). The
@@ -90,5 +90,25 @@ describe('matchCountryOption', () => {
     expect(matchCountryOption([{ text: 'AE' }, { text: 'US' }], uae)?.text).toBe('AE');
     // "ae" inside prose must not match: two letters appear everywhere.
     expect(matchCountryOption([{ text: 'Aerial Systems Ltd' }], uae)).toBeNull();
+  });
+});
+
+describe('toE164', () => {
+  it('compacts the live R-032 number: code and digits, nothing else', () => {
+    // The write for a widget-wrapped box with no drivable selector (Greenhouse CLASSIC): the
+    // stored spacing is gone, the + and code are not.
+    expect(toE164(splitInternationalPhone('+971 567417451')!)).toBe('+971567417451');
+  });
+
+  it('carries no trunk zero, because the split already stripped it', () => {
+    // "+971 0567417451" written with its trunk zero IS the mangle shape; E.164 never has one.
+    expect(toE164(splitInternationalPhone('+971 0567417451')!)).toBe('+971567417451');
+    expect(toE164(splitInternationalPhone('+44 07911 123456')!)).toBe('+447911123456');
+  });
+
+  it('round-trips through the splitter to the same code and national number', () => {
+    const split = splitInternationalPhone('+1 (415) 555-2671')!;
+    expect(toE164(split)).toBe('+14155552671');
+    expect(splitInternationalPhone(toE164(split))).toEqual(split);
   });
 });
