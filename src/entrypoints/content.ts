@@ -11,6 +11,7 @@ import { isLikelyApplicationForm, extractGenericJdText, getGenericJobDetails, fi
 import { getAutoSubmitEnabled } from '../lib/storage';
 import { selectNeedsYouReasons, skippedReasonsNeedReview } from '../lib/autosubmit-gate';
 import { startHarvest } from '../lib/harvest';
+import { withInactivityTimeout } from '../lib/inactivity-timeout';
 import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
 import type { PostingCompensation } from '../lib/adapters/salary';
 
@@ -584,6 +585,7 @@ export default defineContentScript({
       // demographic prefs for EEO questions; draftAnswer AI-drafts an open-ended textarea.
       eeo?: Record<string, string>;
       draftAnswer?: (question: string) => Promise<string | null>;
+      signal?: AbortSignal;
       onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
       // Ashby-only today (the other adapters ignore it): the posting's structured salary range,
       // for the R-031 median rule.
@@ -710,12 +712,13 @@ export default defineContentScript({
           if (statusEl) statusEl.textContent = result?.error || 'Could not generate a resume - fill this one manually.';
           return;
         }
+        const { profile, applicationProfile, resume } = result;
 
         if (statusEl) statusEl.textContent = 'Filling the application...';
 
         let resumeBlob: Blob | undefined;
         try {
-          const blobRes = await fetch(result.resume.resume_url);
+          const blobRes = await fetch(resume.resume_url);
           // Without the ok check, a 403/404 error page would be handed to the file input as if
           // it were the PDF; better to skip the file (the adapter flags it) than upload garbage.
           if (!blobRes.ok) throw new Error(`resume fetch ${blobRes.status}`);
@@ -726,46 +729,59 @@ export default defineContentScript({
         }
 
         // Safety net: a stuck field (an unexpected widget, a listener that never fires) must
-        // never leave the student staring at "Filling the application..." forever with no way
-        // to know what happened. This is a true-hang backstop, NOT a routine budget: every
-        // adapter now AI-drafts open-ended essays inside fill() (parallel LLM round trips, each
-        // able to fire a grounding-retry), so a form with a few essays can legitimately run well
-        // past 20s. At the old 20s this race routinely tripped on essay-heavy forms, dismissed
-        // the card, and let the essays fill in AFTER the student was told to finish manually.
-        // 90s only fires on a genuine hang; onProgress streams field counts meanwhile so the
-        // student is never staring at a frozen status.
-        const FILL_TIMEOUT_MS = 90000;
+        // never leave the student staring at "Filling the application..." forever. This is an
+        // INACTIVITY budget, not a total runtime budget. The shared draft queue deliberately
+        // limits concurrent LLM calls, so a form may need multiple request waves. Every progress
+        // event resets the clock, allowing healthy queued work to finish while still detecting a
+        // worker that has genuinely stopped making progress.
+        const FILL_INACTIVITY_TIMEOUT_MS = 90000;
         // R-030 observation: a previous run that timed out (the catch below returns without
         // reporting) may have left labels behind. Discard them so THIS report only ever carries
         // labels recorded by this fill.
         drainR030CandidateLabels();
         let fillResult: AutofillResult;
         try {
-          fillResult = await Promise.race([
-            fill({
-              fullName: result.profile.full_name ?? '',
-              email: result.profile.email,
-              profile: result.profile,
-              applicationProfile: result.applicationProfile,
+          fillResult = await withInactivityTimeout(
+            (reportProgress, signal) => fill({
+              fullName: profile.full_name ?? '',
+              email: profile.email,
+              profile,
+              applicationProfile,
               resumeBlob,
-              resumeFileName: result.resume.file_name,
+              resumeFileName: resume.file_name,
               // Generic-adapter extras (ATS adapters ignore them): EEO prefs for demographic
               // questions, and an AI-draft hook for open-ended textareas routed through the
               // background to the backend. jdText/company/title are already in scope here.
-              eeo: (result.applicationProfile?.eeo_prefs as Record<string, string> | undefined) ?? {},
+              eeo: (applicationProfile.eeo_prefs as Record<string, string> | undefined) ?? {},
               // The posting's structured salary range (R-031), when the background resolved one.
               postingCompensation: result.posting_compensation ?? null,
+              signal,
               draftAnswer: (question: string) =>
                 new Promise<string | null>((resolve) => {
+                  if (signal.aborted) {
+                    resolve(null);
+                    return;
+                  }
+                  let resolved = false;
+                  const finish = (answer: string | null): void => {
+                    if (resolved) return;
+                    resolved = true;
+                    signal.removeEventListener('abort', onAbort);
+                    resolve(answer);
+                  };
+                  const onAbort = () => finish(null);
+                  signal.addEventListener('abort', onAbort, { once: true });
                   chrome.runtime.sendMessage(
                     { type: 'ANSWER_QUESTION', payload: { company, role: title, jd_text: getJd(), question } },
-                    (r: { answer?: string | null } | undefined) => resolve(r?.answer ?? null),
+                    (r: { answer?: string | null } | undefined) =>
+                      finish(signal.aborted ? null : (r?.answer ?? null)),
                   );
                 }),
               // Streamed progress: instant fields report immediately, then each essay updates
               // the count as its own draft call resolves, instead of the status text sitting on
               // "Filling the application..." until every essay in the form is done.
               onProgress: (partial) => {
+                reportProgress();
                 if (!statusEl) return;
                 const essayNote = partial.pendingEssays > 0
                   ? ` Drafting ${partial.pendingEssays} more essay${partial.pendingEssays === 1 ? '' : 's'}...`
@@ -773,10 +789,8 @@ export default defineContentScript({
                 statusEl.textContent = `Filled ${partial.fields_filled} field${partial.fields_filled === 1 ? '' : 's'}.${essayNote}`;
               },
             }),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('timed out')), FILL_TIMEOUT_MS),
-            ),
-          ]);
+            FILL_INACTIVITY_TIMEOUT_MS,
+          );
         } catch {
           if (statusEl) statusEl.textContent = 'This form is taking too long to fill - some fields may be partially filled. Review and finish it yourself.';
           if (yesBtn) yesBtn.style.display = 'none';
@@ -819,11 +833,11 @@ export default defineContentScript({
         };
 
         // Same dismissal check as after the generation await, for the stretch the fill itself
-        // takes (legitimately up to 90s on an essay-heavy form). A dismissal that lands while the
-        // fill is running must not be followed by an auto-submit countdown: the card is the
-        // student's only handle on that countdown's context, and an application they closed the
-        // card on is one they chose to finish themselves. The fill above already happened, so
-        // report it honestly and hand the form back without submitting.
+        // takes (potentially multiple healthy request waves on an essay-heavy form). A dismissal
+        // that lands while the fill is running must not be followed by an auto-submit countdown:
+        // the card is the student's only handle on that countdown's context, and an application
+        // they closed the card on is one they chose to finish themselves. The fill above already
+        // happened, so report it honestly and hand the form back without submitting.
         if (!card.isConnected) {
           reportEvent(false);
           return;

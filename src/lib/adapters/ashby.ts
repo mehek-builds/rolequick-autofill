@@ -56,6 +56,7 @@ import { classifyField, dateSkipReason, desiredAnswer, fillDateField, isDraftabl
 import { parseAshbyPostingRef, resolveSalary, salarySkipReason, storedSalaryOf, type AshbyPostingRef, type PostingCompensation } from './salary';
 import { isDateControl } from './shared/dates';
 import { htmlToPlainText, JD_UNREADABLE, looksLikeJobDescription } from './shared/jd';
+import { isDraftTargetAvailable, runDraftQueue } from './shared/drafts';
 
 // Resolves once the DOM has gone quiet for `quietMs`, or after `maxMs` regardless - Ashby's
 // React tree re-renders after most field changes, and firing the next fill mid-re-render risks
@@ -324,6 +325,7 @@ export interface AshbyFillParams {
   // EEO questions; draftAnswer AI-drafts an open-ended textarea; onProgress streams counts.
   eeo?: Record<string, string>;
   draftAnswer?: (question: string) => Promise<string | null>;
+  signal?: AbortSignal;
   onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
   // This posting's structured salary range (R-031), fetched by background.ts from the posting API
   // (?includeCompensation=true) and plumbed through the GENERATE_RESUME_AND_FILL_DATA response.
@@ -843,21 +845,18 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
     }
   }
 
-  // Draft every collected essay CONCURRENTLY (each is an independent LLM round trip), writing and
-  // flagging each as it resolves. A failed or empty draft falls back to leaving it blank, unchanged.
+  // Draft through the shared bounded worker pool, writing and flagging each answer as it resolves.
   if (pendingDrafts.length > 0 && draftAnswer) {
-    let pendingEssays = pendingDrafts.length;
-    onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-    await Promise.all(
-      pendingDrafts.map(async ({ el, question }) => {
-        let drafted: string | null = null;
-        try {
-          drafted = (await draftAnswer(question))?.trim() || null;
-        } catch {
-          drafted = null;
-        }
+    await runDraftQueue({
+      items: pendingDrafts,
+      draftAnswer,
+      signal: params.signal,
+      promptFor: ({ question }) => question,
+      onSettled: async ({ el, question }, drafted) => {
+        if (!isDraftTargetAvailable(el)) return;
         if (drafted) {
           await randomDelay();
+          if (params.signal?.aborted || !isDraftTargetAvailable(el)) return;
           el.focus();
           setNativeValue(el, drafted);
           el.blur();
@@ -868,10 +867,10 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
           fields_skipped++;
           skipped_reasons.push(`open-ended question left blank: "${question.slice(0, 60)}"`);
         }
-        pendingEssays--;
-        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-      }),
-    );
+      },
+      onProgress: (pendingEssays) =>
+        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays }),
+    });
   }
 
   if (ai_drafted > 0) {

@@ -49,6 +49,7 @@ import {
 } from './shared/dom';
 import { matchCountryOption, splitInternationalPhone, type InternationalPhone } from './shared/phone';
 import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
+import { isDraftTargetAvailable, runDraftQueue } from './shared/drafts';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. These are pure (no DOM) and covered by
 // generic.answers.test.ts + ats-answer.test.ts.
@@ -272,6 +273,7 @@ export interface GreenhouseFillParams {
   // EEO questions; draftAnswer AI-drafts an open-ended textarea; onProgress streams counts.
   eeo?: Record<string, string>;
   draftAnswer?: (question: string) => Promise<string | null>;
+  signal?: AbortSignal;
   onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
 }
 
@@ -324,9 +326,12 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
     value: string,
     what: string,
     drafted = false,
-  ): Promise<void> => {
-    await fillField(el, value);
+    canWrite: () => boolean = () => true,
+  ): Promise<boolean> => {
+    const written = await fillField(el, value, canWrite);
+    if (!written) return false;
     tracked.push({ el, value, what, drafted });
+    return true;
   };
 
   const firstEl = firstMatch<HTMLInputElement>(['#first_name', 'input[name="job_application[first_name]"]']);
@@ -688,27 +693,25 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
     }
   }
 
-  // Draft every collected answer CONCURRENTLY (each is an independent LLM round trip), writing
-  // and flagging each as it resolves. If a draft fails, returns nothing, or cannot fit the
-  // control's budget as whole sentences, fall back to leaving it blank plus the skip reason.
+  // Draft through the shared bounded worker pool. Greenhouse keeps ownership of its character
+  // budgets and tracked DOM writes, while request scheduling and failure normalization are shared.
   if (pendingDrafts.length > 0 && draftAnswer) {
-    let pendingEssays = pendingDrafts.length;
-    onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-    await Promise.all(
-      pendingDrafts.map(async ({ el, question, maxLen, required }) => {
+    await runDraftQueue({
+      items: pendingDrafts,
+      draftAnswer,
+      signal: params.signal,
+      promptFor: ({ question, maxLen }) => {
         // A budgeted control tells the drafter up front (the backend prompt takes the question
         // as free context), because asking for an essay and then trimming it is how a 950-char
         // Notion-style draft meets a 255-char box. The constraint rides inside the question
         // string since that is the whole contract of /application/answer's payload.
-        const constrained = maxLen
+        return maxLen
           ? `${question} [This is a short-answer field limited to ${maxLen} characters. Answer in 1-3 complete sentences that fit within that limit.]`
           : question;
-        let drafted: string | null = null;
-        try {
-          drafted = (await draftAnswer(constrained))?.trim() || null;
-        } catch {
-          drafted = null;
-        }
+      },
+      onSettled: async ({ el, question, maxLen, required }, draft) => {
+        if (!isDraftTargetAvailable(el)) return;
+        let drafted = draft;
         // A single-line input cannot hold newlines; a model that answered in paragraphs anyway
         // gets flattened to one line before the budget check.
         if (drafted && el instanceof HTMLInputElement) drafted = drafted.replace(/\s*\n+\s*/g, ' ');
@@ -717,7 +720,14 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
         // surrenders the field to the student.
         if (drafted && maxLen) drafted = fitToBudget(drafted, maxLen);
         if (drafted) {
-          await fillTracked(el, drafted, `drafted answer "${question.slice(0, 40)}"`, true);
+          const written = await fillTracked(
+            el,
+            drafted,
+            `drafted answer "${question.slice(0, 40)}"`,
+            true,
+            () => !params.signal?.aborted && isDraftTargetAvailable(el),
+          );
+          if (!written) return;
           markForReview(el);
           ai_drafted++;
           fields_filled++;
@@ -725,10 +735,10 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
           fields_skipped++;
           skipped_reasons.push(`${required ? 'required ' : ''}open-ended question left blank: "${question.slice(0, 60)}"`);
         }
-        pendingEssays--;
-        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-      }),
-    );
+      },
+      onProgress: (pendingEssays) =>
+        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays }),
+    });
   }
 
   // ─── R-032 verify pass: the counts describe the DOM, not the intent ─────────

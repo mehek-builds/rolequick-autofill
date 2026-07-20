@@ -20,6 +20,7 @@ import {
 // currency-gated stored answer. Pure and shared, so this adapter, the ATS adapters and the
 // background all read the same decision.
 import { resolveSalary, storedSalaryOf } from './salary';
+import { isDraftTargetAvailable, runDraftQueue } from './shared/drafts';
 
 // Generic adapter for companies that build their OWN application form on their own domain
 // against an ATS's API (live-tested targets 2026-07-04: vercel.com/careers - Greenhouse API
@@ -1203,11 +1204,17 @@ export async function fillDateField(el: HTMLInputElement, stored: string): Promi
   return false;
 }
 
-async function fillTextField(el: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
+async function fillTextField(
+  el: HTMLInputElement | HTMLTextAreaElement,
+  value: string,
+  canWrite: () => boolean = () => true,
+): Promise<boolean> {
   await randomDelay();
+  if (!canWrite()) return false;
   el.focus();
   setNativeValue(el, value);
   el.blur();
+  return true;
 }
 
 function findResumeFileInput(): HTMLInputElement | null {
@@ -1236,6 +1243,7 @@ export interface GenericFillParams {
   resumeBlob?: Blob;
   resumeFileName?: string;
   draftAnswer?: (question: string) => Promise<string | null>;
+  signal?: AbortSignal;
   onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
 }
 
@@ -1626,26 +1634,23 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
   fields_skipped += documentReasons.length;
   skipped_reasons.push(...documentReasons);
 
-  // ── Open-ended answers: all instant fields are filled by now, so draft every textarea
-  //    CONCURRENTLY (each is an independent LLM round trip). Wall-clock is the slowest single
-  //    draft, not the sum - a form with 4 essay boxes takes ~1 draft's time, not 4. Each result
-  //    is written into the DOM and reported via onProgress as soon as IT resolves, rather than
-  //    batching behind Promise.all so the student watches essays fill in one at a time. ──
-  if (pendingDrafts.length > 0) {
-    let pendingEssays = pendingDrafts.length;
-    params.onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-
-    await Promise.all(
-      pendingDrafts.map(async ({ el, question }) => {
-        let drafted: string | null = null;
-        try {
-          drafted = (await params.draftAnswer!(question))?.trim() || null;
-        } catch {
-          drafted = null;
-        }
-
+  // Open-ended answers use a shared worker pool. Each result still streams into this adapter as
+  // soon as it resolves, but a form cannot fire an unbounded burst of drafting requests.
+  if (pendingDrafts.length > 0 && draftAnswer) {
+    await runDraftQueue({
+      items: pendingDrafts,
+      draftAnswer,
+      signal: params.signal,
+      promptFor: ({ question }) => question,
+      onSettled: async ({ el, question }, drafted) => {
+        if (!isDraftTargetAvailable(el)) return;
         if (drafted) {
-          await fillTextField(el, drafted);
+          const written = await fillTextField(
+            el,
+            drafted,
+            () => !params.signal?.aborted && isDraftTargetAvailable(el),
+          );
+          if (!written) return;
           markForReview(el);
           ai_drafted++;
           fields_filled++;
@@ -1653,11 +1658,10 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
           fields_skipped++;
           skipped_reasons.push(`open-ended question left blank: "${short(question)}"`);
         }
-
-        pendingEssays--;
-        params.onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-      }),
-    );
+      },
+      onProgress: (pendingEssays) =>
+        params.onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays }),
+    });
   }
 
   if (ai_drafted > 0) {
