@@ -11,6 +11,7 @@ import { isLikelyApplicationForm, extractGenericJdText, getGenericJobDetails, fi
 import { getAutoSubmitEnabled } from '../lib/storage';
 import { selectNeedsYouReasons, skippedReasonsNeedReview } from '../lib/autosubmit-gate';
 import { startHarvest } from '../lib/harvest';
+import { withInactivityTimeout } from '../lib/inactivity-timeout';
 import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
 import type { PostingCompensation } from '../lib/adapters/salary';
 
@@ -710,12 +711,13 @@ export default defineContentScript({
           if (statusEl) statusEl.textContent = result?.error || 'Could not generate a resume - fill this one manually.';
           return;
         }
+        const { profile, applicationProfile, resume } = result;
 
         if (statusEl) statusEl.textContent = 'Filling the application...';
 
         let resumeBlob: Blob | undefined;
         try {
-          const blobRes = await fetch(result.resume.resume_url);
+          const blobRes = await fetch(resume.resume_url);
           // Without the ok check, a 403/404 error page would be handed to the file input as if
           // it were the PDF; better to skip the file (the adapter flags it) than upload garbage.
           if (!blobRes.ok) throw new Error(`resume fetch ${blobRes.status}`);
@@ -726,33 +728,30 @@ export default defineContentScript({
         }
 
         // Safety net: a stuck field (an unexpected widget, a listener that never fires) must
-        // never leave the student staring at "Filling the application..." forever with no way
-        // to know what happened. This is a true-hang backstop, NOT a routine budget: every
-        // adapter now AI-drafts open-ended essays inside fill() (parallel LLM round trips, each
-        // able to fire a grounding-retry), so a form with a few essays can legitimately run well
-        // past 20s. At the old 20s this race routinely tripped on essay-heavy forms, dismissed
-        // the card, and let the essays fill in AFTER the student was told to finish manually.
-        // 90s only fires on a genuine hang; onProgress streams field counts meanwhile so the
-        // student is never staring at a frozen status.
-        const FILL_TIMEOUT_MS = 90000;
+        // never leave the student staring at "Filling the application..." forever. This is an
+        // INACTIVITY budget, not a total runtime budget. The shared draft queue deliberately
+        // limits concurrent LLM calls, so a form may need multiple request waves. Every progress
+        // event resets the clock, allowing healthy queued work to finish while still detecting a
+        // worker that has genuinely stopped making progress.
+        const FILL_INACTIVITY_TIMEOUT_MS = 90000;
         // R-030 observation: a previous run that timed out (the catch below returns without
         // reporting) may have left labels behind. Discard them so THIS report only ever carries
         // labels recorded by this fill.
         drainR030CandidateLabels();
         let fillResult: AutofillResult;
         try {
-          fillResult = await Promise.race([
-            fill({
-              fullName: result.profile.full_name ?? '',
-              email: result.profile.email,
-              profile: result.profile,
-              applicationProfile: result.applicationProfile,
+          fillResult = await withInactivityTimeout(
+            (reportProgress) => fill({
+              fullName: profile.full_name ?? '',
+              email: profile.email,
+              profile,
+              applicationProfile,
               resumeBlob,
-              resumeFileName: result.resume.file_name,
+              resumeFileName: resume.file_name,
               // Generic-adapter extras (ATS adapters ignore them): EEO prefs for demographic
               // questions, and an AI-draft hook for open-ended textareas routed through the
               // background to the backend. jdText/company/title are already in scope here.
-              eeo: (result.applicationProfile?.eeo_prefs as Record<string, string> | undefined) ?? {},
+              eeo: (applicationProfile.eeo_prefs as Record<string, string> | undefined) ?? {},
               // The posting's structured salary range (R-031), when the background resolved one.
               postingCompensation: result.posting_compensation ?? null,
               draftAnswer: (question: string) =>
@@ -766,6 +765,7 @@ export default defineContentScript({
               // the count as its own draft call resolves, instead of the status text sitting on
               // "Filling the application..." until every essay in the form is done.
               onProgress: (partial) => {
+                reportProgress();
                 if (!statusEl) return;
                 const essayNote = partial.pendingEssays > 0
                   ? ` Drafting ${partial.pendingEssays} more essay${partial.pendingEssays === 1 ? '' : 's'}...`
@@ -773,10 +773,8 @@ export default defineContentScript({
                 statusEl.textContent = `Filled ${partial.fields_filled} field${partial.fields_filled === 1 ? '' : 's'}.${essayNote}`;
               },
             }),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('timed out')), FILL_TIMEOUT_MS),
-            ),
-          ]);
+            FILL_INACTIVITY_TIMEOUT_MS,
+          );
         } catch {
           if (statusEl) statusEl.textContent = 'This form is taking too long to fill - some fields may be partially filled. Review and finish it yourself.';
           if (yesBtn) yesBtn.style.display = 'none';

@@ -67,6 +67,68 @@ describe('runDraftQueue', () => {
     expect(progress).toEqual([3, 2, 1, 0]);
   });
 
+  it('streams out-of-order results without exceeding the worker limit', async () => {
+    const resolvers = new Map<number, (answer: string) => void>();
+    const started: number[] = [];
+    const settled: number[] = [];
+    let active = 0;
+    let maxActive = 0;
+
+    const run = runDraftQueue({
+      items: [1, 2, 3, 4],
+      promptFor: String,
+      draftAnswer: (question) => {
+        const item = Number(question);
+        started.push(item);
+        active++;
+        maxActive = Math.max(maxActive, active);
+        return new Promise<string>((resolve) => {
+          resolvers.set(item, (answer) => {
+            active--;
+            resolve(answer);
+          });
+        });
+      },
+      onSettled: async (item) => {
+        await Promise.resolve();
+        settled.push(item);
+      },
+    });
+
+    await vi.waitFor(() => expect(started).toEqual([1, 2, 3]));
+    resolvers.get(2)?.('second finished first');
+    await vi.waitFor(() => expect(settled).toEqual([2]));
+    expect(started).toEqual([1, 2, 3, 4]);
+    expect(maxActive).toBe(DEFAULT_DRAFT_CONCURRENCY);
+
+    resolvers.get(1)?.('first');
+    resolvers.get(3)?.('third');
+    resolvers.get(4)?.('fourth');
+    await run;
+
+    expect(settled).toEqual([2, 1, 3, 4]);
+  });
+
+  it('does no work for an empty queue', async () => {
+    const draftAnswer = vi.fn(async () => 'answer');
+    const promptFor = vi.fn(String);
+    const onSettled = vi.fn();
+    const onProgress = vi.fn();
+
+    await runDraftQueue({
+      items: [],
+      draftAnswer,
+      promptFor,
+      onSettled,
+      onProgress,
+    });
+
+    expect(draftAnswer).not.toHaveBeenCalled();
+    expect(promptFor).not.toHaveBeenCalled();
+    expect(onSettled).not.toHaveBeenCalled();
+    expect(onProgress).not.toHaveBeenCalled();
+  });
+
   it.each([
     { concurrency: 0, expected: 1 },
     { concurrency: Number.NaN, expected: DEFAULT_DRAFT_CONCURRENCY },
