@@ -5,6 +5,7 @@ import { overloadWaitMs, overloadBudgetRemains, RESUME_OVERLOAD_BUDGET_MS } from
 // Pure salary/posting helpers (R-031). adapters/salary is a LEAF module (types only), so this
 // import does not pull the DOM-adjacent adapter graph into the service worker bundle.
 import { parseAshbyPostingRef, selectPostingCompensation, type PostingCompensation } from '../lib/adapters/salary';
+import { litosClientHeaders, PRODUCT_NAME, type ProductMeta } from '../lib/product';
 
 // Set VITE_API_BASE at build time (e.g. your Vercel URL) to point at the deployed backend;
 // defaults to the local dev server.
@@ -41,7 +42,7 @@ async function harvestFields(fields: unknown): Promise<{ ok: boolean; stop?: boo
       // A 400 here means the classifier produced a field the server refuses - i.e. the R-004
       // guard failed somewhere upstream. Loud in the log, because it should be impossible:
       // ProfileKey has no member for any denied field.
-      console.warn('[RoleQuick] harvest rejected', res.status, await res.text().catch(() => ''));
+      console.warn('[Litos] harvest rejected', res.status, await res.text().catch(() => ''));
       return { ok: false };
     }
     const body = (await res.json().catch(() => null)) as { kept?: string[] } | null;
@@ -58,7 +59,11 @@ async function harvestFields(fields: unknown): Promise<{ ok: boolean; stop?: boo
 const FETCH_TIMEOUT_MS = 20000;
 const RESUME_FETCH_TIMEOUT_MS = 60000;
 function timeoutFetch(input: string, init: RequestInit = {}, ms = FETCH_TIMEOUT_MS): Promise<Response> {
-  return fetch(input, { ...init, signal: AbortSignal.timeout(ms) });
+  const headers = new Headers(init.headers);
+  if (input.startsWith(API_BASE)) {
+    for (const [name, value] of Object.entries(litosClientHeaders())) headers.set(name, value);
+  }
+  return fetch(input, { ...init, headers, signal: AbortSignal.timeout(ms) });
 }
 
 // ─── Transient model-capacity retry (live QA 2026-07-16, R-003) ──────────────
@@ -330,6 +335,20 @@ export default defineBackground(() => {
   // published update never orphans an existing user's saved token/profile/settings.
   void migrateLegacyStorage();
 
+  // Cache the backend-owned public contract for this service-worker session.
+  // Static fallbacks keep the extension usable offline; the live contract lets
+  // future releases add compatibility gates without another naming migration.
+  void timeoutFetch(`${API_BASE}/v1/meta`)
+    .then(async (res) => {
+      if (!res.ok) return;
+      const meta = (await res.json()) as ProductMeta;
+      if (meta.product.name !== PRODUCT_NAME) {
+        console.warn(`[${PRODUCT_NAME}] backend product contract mismatch`);
+      }
+      await chrome.storage.session.set({ litos_product_meta: meta });
+    })
+    .catch(() => {});
+
   // QA/dev bootstrap: when built with VITE_QA_TOKEN, seed the session once at install/reload so
   // the extension is signed in without driving the popup UI (which automation can't reach).
   // Seeding on onInstalled (not on every service-worker wake) means sign-out tests and the
@@ -339,7 +358,7 @@ export default defineBackground(() => {
     chrome.runtime.onInstalled.addListener(() => {
       setToken(import.meta.env.VITE_QA_TOKEN)
         .then(() => setAutoSubmitEnabled(import.meta.env.VITE_QA_AUTOSUBMIT === '1'))
-        .catch((e) => console.warn('[RoleQuick QA] storage seed failed:', e));
+        .catch((e) => console.warn('[Litos QA] storage seed failed:', e));
     });
   }
 
@@ -488,7 +507,7 @@ export default defineBackground(() => {
         // account email, not a resume, so this skips the /resume/generate call entirely (no
         // point spending a resume-gen quota unit on a step before there's even an application to
         // tailor one for). Password is deliberately not fetched here - the student types their
-        // own (2026-07-03 product decision), RoleQuick never touches that field.
+        // own (2026-07-03 product decision), Litos never touches that field.
         getStoredToken().then(async (token) => {
           if (!token) {
             sendResponse({ error: 'not signed in' });

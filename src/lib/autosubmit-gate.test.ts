@@ -145,7 +145,7 @@ describe('selectNeedsYouReasons', () => {
 
   it('surfaces the R-032 verify-pass reason (a value the page did not keep)', () => {
     expect(
-      selectNeedsYouReasons(['first name left for you: the page did not keep the value RoleQuick wrote']),
-    ).toEqual(['first name left for you: the page did not keep the value RoleQuick wrote']);
+      selectNeedsYouReasons(['first name left for you: the page did not keep the value Litos wrote']),
+    ).toEqual(['first name left for you: the page did not keep the value Litos wrote']);
   });
 });

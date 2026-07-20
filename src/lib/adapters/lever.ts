@@ -216,7 +216,7 @@ export async function fillLeverApplication(params: LeverFillParams): Promise<Aut
     skipped_reasons.push('resume: no generated resume file available');
   }
 
-  // Documents this form requires that RoleQuick cannot produce (R-010). Reported at fill time, in
+  // Documents this form requires that Litos cannot produce (R-010). Reported at fill time, in
   // the card, so the student learns the form wants a transcript NOW rather than at submit; the
   // "left for" wording holds auto-submit while it sits unattached.
   const documentReasons = unattachableDocumentReasons(resumeEl);

@@ -432,15 +432,15 @@ export function blockAlreadyAnswered(block: Element): boolean {
   return !!block.querySelector('[class*="singleValue"], [class*="multiValue"]');
 }
 
-// ─── Documents RoleQuick cannot attach (R-010) ───────────────────────────────
-// RoleQuick generates exactly ONE artifact: the tailored resume. A form that also demands a
+// ─── Documents Litos cannot attach (R-010) ───────────────────────────────
+// Litos generates exactly ONE artifact: the tailored resume. A form that also demands a
 // transcript, cover letter, or portfolio therefore cannot be finished, and the student has to take
-// over. That limit is a product decision, not a bug. The BUG was that RoleQuick said nothing about
+// over. That limit is a product decision, not a bug. The BUG was that Litos said nothing about
 // it: the card reported a successful fill, and the student met the empty required upload at submit.
 //
 // This is squarely the target market rather than an edge case - co-op and internship applications
 // routinely demand transcripts (live QA 2026-07-16, Global Relay: "In order to be considered for
-// this role, you must include post-secondary transcripts", with a second Attach input RoleQuick
+// this role, you must include post-secondary transcripts", with a second Attach input Litos
 // left as "(no file)").
 //
 // Why this does NOT simply flag every extra file input: Ashby renders its own "autofill from
@@ -480,7 +480,7 @@ function fileInputLabelText(el: HTMLInputElement): string {
   return text.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
-// Every non-resume document slot this form needs that RoleQuick cannot fill, as ready-to-push skip
+// Every non-resume document slot this form needs that Litos cannot fill, as ready-to-push skip
 // reasons. "left for" is load-bearing, same as the other reason builders: it makes the auto-submit
 // gate HOLD and puts the item in the card's flagged list, which is the entire point - the student
 // learns at fill time, not at submit time.
@@ -498,7 +498,7 @@ export function documentSlotReason(label: string, required: boolean): string | n
   const named = DOCUMENT_LABELS.test(label);
   if (!required && !named) return null; // no positive signal: stay quiet rather than cry wolf
   const what = label.match(DOCUMENT_LABELS)?.[0] ?? 'a document';
-  return `${what} left for you: RoleQuick only generates a resume, so attach this one yourself`;
+  return `${what} left for you: Litos only generates a resume, so attach this one yourself`;
 }
 
 export function unattachableDocumentReasons(resumeEl?: HTMLInputElement | null): string[] {

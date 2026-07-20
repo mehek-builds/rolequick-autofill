@@ -1,12 +1,12 @@
-# RoleQuick: Tailored Resumes and Application Autofill
+# Litos: Tailored Resumes and Application Autofill
 
-Every job application makes you re-enter the same information and rewrite your resume for the role. RoleQuick is a Chrome extension that autofills applications with AI-tailored resumes and essays generated from your profile.
+Every job application makes you re-enter the same information and rewrite your resume for the role. Litos is a Chrome extension that autofills applications with AI-tailored resumes and essays generated from your profile.
 
 Install: https://chromewebstore.google.com/detail/rolequick-tailored-resume/bdbedbmkjpfioknfpmhookefabipjaad
 
 ## System architecture
 
-The extension is a thin, careful client. Every piece of AI generation happens on the RoleQuick backend; the extension detects, orchestrates, fills, and guards.
+The extension is a thin, careful client. Every piece of AI generation happens on the Litos backend; the extension detects, orchestrates, fills, and guards.
 
 ```
         ┌───────────────────────────────────────────────────────────────┐
@@ -20,7 +20,7 @@ The extension is a thin, careful client. Every piece of AI generation happens on
         └───────────────▲───────────────────────────────────────────────┘
                         │ REST (Bearer JWT), VITE_API_BASE
         ┌───────────────┴───────────────────────────────────────────────┐
- BACKEND│  RoleQuick backend API (separate repo, not in this codebase)   │
+ BACKEND│  Litos backend API (separate repo, not in this codebase)   │
         │  /auth · /profile · /resolve · /draft · /resume/generate ·    │
         │  /application/answer · /track · /autofill/event               │
         └───────────────────────────────────────────────────────────────┘
@@ -109,7 +109,7 @@ Two files keep every adapter honest:
 
 The background worker is the only component that holds the auth token, so it owns every authenticated backend call. It routes `chrome.runtime` messages: `JOB_DETECTED` / `GET_LAST_JOB` (badge + session cache), `JOB_APPROVED` (resolve contacts and draft the best two, ranked by reply likelihood so an alumni or near-peer outranks a busy exec), `GENERATE_RESUME_AND_FILL_DATA` (fetch the resume profile and the more-sensitive application profile in parallel, then generate a JD-tailored resume), `ANSWER_QUESTION` (draft one open-ended application answer), `GET_ACCOUNT_CREATION_DATA` (email only, for Workday signup), and `AUTOFILL_EVENT` (telemetry). It is careful about Manifest V3 service-worker teardown, only keeping the message channel open when a response is genuinely coming.
 
-`src/lib/api.ts` is the typed client for the RoleQuick backend, base URL from `VITE_API_BASE` (default `http://localhost:3001`). Endpoints the extension calls:
+`src/lib/api.ts` is the typed client for the Litos backend, base URL from `VITE_API_BASE` (default `http://localhost:3001`). Endpoints the extension calls:
 
 | Purpose | Endpoint | What the backend does |
 |---------|----------|-----------------------|
@@ -171,7 +171,7 @@ The manifest requests only `activeTab`, `scripting`, `storage`, and `clipboardWr
 
 ## Naming and storage compatibility
 
-The product is RoleQuick. It first shipped to the Chrome Web Store under the earlier name Volley, so the source keeps that history in one deliberate place: the persisted `chrome.storage.local` keys have new `rolequick_*` names but read with a backward-compatible fallback to their old `volley_*` names (see `src/lib/storage.ts` and `migrateLegacyStorage`), so an existing user's saved token and profile survive the update. The package name, injected DOM ids, window globals, and everything else use the `rolequick` name.
+The product is Litos. It first shipped as Volley and later used the RoleQuick name. Persisted `rolequick_*` storage keys, injected DOM ids, and window globals are now frozen compatibility identifiers. Storage reads retain a fallback to the original `volley_*` keys, so an existing user's saved token and profile survive every naming migration.
 
 ## Scope
 

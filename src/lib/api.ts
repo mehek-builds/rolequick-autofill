@@ -10,6 +10,7 @@ import type {
   ResumeContact,
   GeneratedResume,
 } from './types';
+import { litosClientHeaders, type ProductMeta } from './product';
 
 // Set VITE_API_BASE at build time (e.g. your Vercel URL) to point the extension at the
 // deployed backend; defaults to the local dev server.
@@ -35,6 +36,7 @@ async function request<T>(
 ): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    ...litosClientHeaders(),
     ...(options.headers as Record<string, string>),
   };
   if (token) {
@@ -87,7 +89,7 @@ export async function uploadProfile(
 
   const res = await fetch(`${BASE_URL}/profile`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Authorization: `Bearer ${token}`, ...litosClientHeaders() },
     body: form,
   });
 
@@ -96,6 +98,10 @@ export async function uploadProfile(
   }
 
   return res.json() as Promise<Profile>;
+}
+
+export async function getProductMeta(): Promise<ProductMeta> {
+  return request<ProductMeta>('/v1/meta');
 }
 
 export async function getProfile(token: string): Promise<Profile> {

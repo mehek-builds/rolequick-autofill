@@ -1,8 +1,9 @@
 import type { Profile } from './types';
 
-// Storage keys. The product was renamed from Volley to RoleQuick after it shipped to the
-// Chrome Web Store, so every persisted key now has a new `rolequick_*` name alongside the
-// original `volley_*` name it may already exist under in an installed user's
+// Storage keys. The product shipped as Volley, moved through RoleQuick, and is now Litos.
+// The `rolequick_*` namespace is frozen because changing it would sign out existing users.
+// Every current key still has the original `volley_*` fallback it may already
+// exist under in an installed user's
 // chrome.storage.local. To avoid orphaning saved profiles/tokens/settings across a published
 // update: reads prefer the new key and fall back to the legacy one; writes only ever touch the
 // new key; clears remove BOTH names (so a fallback read cannot resurrect a cleared value); and

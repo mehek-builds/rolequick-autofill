@@ -496,7 +496,7 @@ export default defineContentScript({
             <span style="font-size:20px;">⏳</span>
             <div>
               <div style="font-weight:700;font-size:13px;color:#1e1b4b;">Finding contacts &amp; drafting...</div>
-              <div style="font-size:12px;color:#6366f1;margin-top:2px;">Open RoleQuick when ready</div>
+              <div style="font-size:12px;color:#6366f1;margin-top:2px;">Open Litos when ready</div>
             </div>
           </div>
         `;
@@ -835,7 +835,7 @@ export default defineContentScript({
         // attached, and no required field is still empty (native validation would block the submit
         // anyway, after we'd already reported it sent). Otherwise fall through to highlight-and-
         // hand-back. It always fires from THIS student's own logged-in session, on data they
-        // generated and can still cancel - never something RoleQuick decides on its own.
+        // generated and can still cancel - never something Litos decides on its own.
         // document.hidden: never START a countdown while the student isn't looking at the tab (they
         // can't see the window to back out); going hidden mid-countdown is handled separately.
         const autoSubmitHeld =
@@ -1089,7 +1089,7 @@ export default defineContentScript({
     }
 
     // ─── Workday account-creation speed-up (2026-07-03) ────────────────────────
-    // RoleQuick doesn't create the account itself, and only ever fills the email field - password,
+    // Litos doesn't create the account itself, and only ever fills the email field - password,
     // clicking Create Account, and completing email verification are entirely the student's own
     // steps by explicit product decision. Not a fill-and-stop-with-countdown card like the
     // others: there's no button to auto-submit toward, since the form is never actually
@@ -1177,7 +1177,7 @@ export default defineContentScript({
     }
 
     // Guidance for Workday's "Start Your Application" triage screen (Autofill with Resume /
-    // Apply Manually / Use My Last Application) - previously RoleQuick said nothing here, leaving
+    // Apply Manually / Use My Last Application) - previously Litos said nothing here, leaving
     // the student to guess which option leads anywhere useful. This just points them at the
     // right one and clicks it for them - pure page navigation, not a form submission or account
     // action, so it isn't gated behind the auto-submit toggle the way real submits are.
@@ -1200,7 +1200,7 @@ export default defineContentScript({
               <div style="font-weight:700;font-size:13px;color:#1e1b4b;line-height:1.4;">This employer uses Workday</div>
               <div style="font-size:12px;color:#6b7280;margin-top:2px;line-height:1.4;">
                 You'll need to sign in or create an account first - that part's still on you. Tap below
-                and RoleQuick will take you to the right screen, then speed up account setup and the
+                and Litos will take you to the right screen, then speed up account setup and the
                 application from there.
               </div>
             </div>
@@ -1243,7 +1243,7 @@ export default defineContentScript({
           'position:fixed;bottom:72px;right:20px;z-index:2147483647;background:white;border:1.5px solid #e0e7ff;' +
           'border-radius:14px;padding:12px 16px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;' +
           'font-size:12px;line-height:1.4;color:#374151;box-shadow:0 8px 32px rgba(79,70,229,0.18);max-width:272px;';
-        note.textContent = "RoleQuick couldn't find an application form on this page. Open the page with the actual form fields, then try again.";
+        note.textContent = "Litos couldn't find an application form on this page. Open the page with the actual form fields, then try again.";
         document.getElementById('rolequick-generic-note')?.remove();
         document.body.appendChild(note);
         setTimeout(() => note.remove(), 6000);
@@ -1253,7 +1253,7 @@ export default defineContentScript({
       // Company-hosted forms count too: isLikelyApplicationForm() has already confirmed this page
       // is a real application (resume upload, or name AND email), which is the same bar the ATS
       // path uses. This branch only runs on an on-demand inject from the popup, so the student
-      // has explicitly pointed RoleQuick at this form.
+      // has explicitly pointed Litos at this form.
       startHarvest();
       injectResumeFillCard(job.title, job.company, extractGenericJdText, fillGenericApplication);
     }
@@ -1368,7 +1368,7 @@ export default defineContentScript({
     // application form) without a URL change in some tenants (a same-path client-side
     // re-render rather than a navigation), which the MutationObserver above wouldn't catch via
     // its URL-diff check. A cheap poll (just DOM marker lookups) re-runs init() whenever none of
-    // RoleQuick's three Workday cards is currently showing, so a stage change gets picked up within
+    // Litos's three Workday cards is currently showing, so a stage change gets picked up within
     // ~500ms instead of waiting for the next navigation event.
     if (isWorkdayHost) {
       // Poll for Workday's URL-less stage swaps, but not aggressively or forever: at 500ms this
