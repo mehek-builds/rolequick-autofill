@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import '@fontsource-variable/inter';
+import '@fontsource-variable/geist';
 import './src/styles/globals.css';
 import type { Contact, Profile, JobContext } from './src/lib/types';
 import OnboardingScreen from './src/components/OnboardingScreen';
