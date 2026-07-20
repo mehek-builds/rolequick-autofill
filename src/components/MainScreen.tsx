@@ -1,10 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import { resolveContacts, getEvents } from '../lib/api';
-import type { Contact, OutreachEvent, JobContext } from '../lib/types';
-import WarningBanner from './WarningBanner';
+import React, { useEffect, useState } from 'react';
+import { getEvents, resolveContacts } from '../lib/api';
+import type { Contact, JobContext, OutreachEvent } from '../lib/types';
 import Avatar from './Avatar';
-import { SkeletonContactList, SkeletonBar } from './Skeleton';
-import BrandMark from './BrandMark';
+import { SkeletonBar } from './Skeleton';
+import WarningBanner from './WarningBanner';
+import {
+  fieldClass,
+  iconButtonClass,
+  PopupHeader,
+  primaryButtonClass,
+  secondaryButtonClass,
+  SectionLabel,
+  StatusDot,
+  textButtonClass,
+} from './ui';
 
 interface MainScreenProps {
   token: string;
@@ -18,50 +27,38 @@ interface MainScreenProps {
   userSchool?: string;
 }
 
-function StatusDot({ status }: { status: string }) {
-  const color =
-    status === 'replied' ? '#22C55E' : status === 'sent' ? '#EAB308' : '#D1D5DB';
+function EventStatus({ status }: { status: string }) {
+  const tone = status === 'replied' ? 'success' : status === 'sent' ? 'warning' : 'neutral';
   return (
-    <span
-      className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
-      style={{ backgroundColor: color }}
-    />
+    <span className="inline-flex items-center gap-1.5 text-xs capitalize text-gray-600">
+      <StatusDot tone={tone} />
+      {status}
+    </span>
   );
 }
-
-const inputClass =
-  'w-full rounded-lg border border-gray-200 bg-gray-50/60 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 transition-colors focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100';
 
 function slugToName(slug: string): string {
   return slug
     .replace(/[-_]/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+    .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
 function parseJobUrl(url: string): { company?: string } {
   try {
-    const u = new URL(url);
-    const h = u.hostname;
-    const parts = u.pathname.split('/').filter(Boolean);
+    const parsedUrl = new URL(url);
+    const host = parsedUrl.hostname;
+    const parts = parsedUrl.pathname.split('/').filter(Boolean);
 
-    if (h.includes('greenhouse.io') && parts[0]) {
-      return { company: slugToName(parts[0]) };
-    }
-    if (h.includes('lever.co') && parts[0]) {
-      return { company: slugToName(parts[0]) };
-    }
-    if (h.includes('ashbyhq.com') && parts[0]) {
-      return { company: slugToName(parts[0]) };
-    }
-    if (h.includes('myworkdayjobs.com') || h.includes('workday.com')) {
-      const slug = h.split('.')[0].replace(/^www/, '');
+    if (host.includes('greenhouse.io') && parts[0]) return { company: slugToName(parts[0]) };
+    if (host.includes('lever.co') && parts[0]) return { company: slugToName(parts[0]) };
+    if (host.includes('ashbyhq.com') && parts[0]) return { company: slugToName(parts[0]) };
+    if (host.includes('myworkdayjobs.com') || host.includes('workday.com')) {
+      const slug = host.split('.')[0].replace(/^www/, '');
       if (slug) return { company: slugToName(slug) };
     }
-    if (h.includes('joinhandshake.com') && parts[1]) {
-      return { company: slugToName(parts[1]) };
-    }
+    if (host.includes('joinhandshake.com') && parts[1]) return { company: slugToName(parts[1]) };
   } catch {
-    // invalid URL, ignore
+    return {};
   }
   return {};
 }
@@ -80,17 +77,14 @@ export default function MainScreen({
   const [jobUrl, setJobUrl] = useState(detectedJob?.url ?? '');
   const [company, setCompany] = useState(detectedJob?.company ?? '');
   const [role, setRole] = useState(detectedJob?.role ?? '');
-  const [showManual, setShowManual] = useState(!!detectedJob?.company);
+  const [editingJob, setEditingJob] = useState(!detectedJob);
+  const [jobDetailsTouched, setJobDetailsTouched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recentEvents, setRecentEvents] = useState<OutreachEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
   const [fillError, setFillError] = useState<string | null>(null);
 
-  // Company career sites that host their own application form aren't in the manifest's
-  // matches, so Litos can't see them until the student asks. Clicking here is the ask:
-  // the toolbar interaction grants activeTab for this one tab, and the content script is
-  // injected on demand. Its generic adapter takes over from there.
   const handleFillThisPage = async () => {
     setFillError(null);
     try {
@@ -103,9 +97,9 @@ export default function MainScreen({
         target: { tabId: tab.id },
         files: ['content-scripts/content.js'],
       });
-      window.close(); // hand off to the on-page card
+      window.close();
     } catch {
-      setFillError("Chrome doesn't allow extensions on this page (new tab, chrome://, or the Web Store).");
+      setFillError("Chrome does not allow extensions on this page.");
     }
   };
 
@@ -116,281 +110,219 @@ export default function MainScreen({
       .finally(() => setEventsLoading(false));
   }, [token]);
 
-  // detectedJob arrives asynchronously (the background GET_LAST_JOB callback and the live
-  // JOB_DETECTED listener both resolve after this component has already mounted). The field
-  // state is seeded via useState, which only reads its initial value once, so a job spotted
-  // on the page would never reach the inputs without this sync. Only fill blank fields so we
-  // never clobber what the user is actively typing.
   useEffect(() => {
     if (!detectedJob) return;
-    if (detectedJob.company) setCompany((prev) => prev || detectedJob.company);
-    if (detectedJob.role) setRole((prev) => prev || detectedJob.role);
-    if (detectedJob.url) setJobUrl((prev) => prev || detectedJob.url!);
-    if (detectedJob.company || detectedJob.role) setShowManual(true);
-  }, [detectedJob]);
+    if (detectedJob.company) setCompany((current) => current || detectedJob.company);
+    if (detectedJob.role) setRole((current) => current || detectedJob.role);
+    if (detectedJob.url) setJobUrl((current) => current || detectedJob.url!);
+    if (!jobDetailsTouched && (detectedJob.company || detectedJob.role)) setEditingJob(false);
+  }, [detectedJob, jobDetailsTouched]);
 
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setJobUrl(val);
+    const value = e.target.value;
+    setJobUrl(value);
+    setJobDetailsTouched(true);
     setError(null);
-    if (val.trim() === '') {
-      setShowManual(false);
-      return;
-    }
-    setShowManual(true);
-    const parsed = parseJobUrl(val);
+    const parsed = parseJobUrl(value);
     if (parsed.company && !company) setCompany(parsed.company);
   };
 
   const handleFind = async (e: React.FormEvent) => {
     e.preventDefault();
-    const co = company.trim();
-    const ro = role.trim();
-    if (!co || !ro) {
-      setError('Please enter both company name and role.');
+    const cleanCompany = company.trim();
+    const cleanRole = role.trim();
+    if (!cleanCompany || !cleanRole) {
+      setError('Enter both the company and role.');
+      setEditingJob(true);
       return;
     }
+
     setError(null);
     setLoading(true);
-
     try {
       const contacts = await resolveContacts(token, {
-        company: co,
-        role: ro,
+        company: cleanCompany,
+        role: cleanRole,
         user_school: userSchool,
       });
-      onContactsFound(contacts, { company: co, role: ro, url: jobUrl || undefined });
+      onContactsFound(contacts, {
+        company: cleanCompany,
+        role: cleanRole,
+        url: jobUrl || undefined,
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to find contacts. Is the backend running?');
+      setError(err instanceof Error ? err.message : 'Could not find contacts. Try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <div className="flex min-h-full animate-fade-in flex-col">
-      {/* Header */}
-      <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white/95 px-4 py-3 backdrop-blur">
-        <div className="flex items-center gap-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-brand-600 text-white">
-            <BrandMark className="h-3.5 w-3.5" />
-          </div>
-          <span className="text-base font-bold tracking-tight text-gray-900">Litos</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={onViewAutofillSetup}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
-            title="Autofill setup"
-          >
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-          </button>
-          <button
-            onClick={onViewTracking}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
-            title="Tracking dashboard"
-          >
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-          </button>
-          <button
-            onClick={onLogout}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
-            title="Sign out"
-          >
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-            </svg>
-          </button>
-        </div>
-      </div>
+  const hasJob = Boolean(company || role);
 
-      <div className="flex flex-1 flex-col gap-4 px-4 py-4">
-        {loading ? (
-          <div className="flex flex-col gap-3">
-            <p className="text-xs text-gray-400">Finding the right people to reach...</p>
-            <SkeletonContactList count={3} />
-          </div>
-        ) : (
-          <>
-            {pendingDraftCount > 0 && (
-              <button
-                onClick={onViewDrafts}
-                className="flex w-full animate-slide-down items-center gap-2.5 rounded-xl border border-green-200 bg-green-50 px-3 py-2.5 text-left transition-colors hover:bg-green-100/70"
-              >
-                <span className="flex-shrink-0 text-base">✉️</span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-green-800">
-                    {pendingDraftCount} draft{pendingDraftCount > 1 ? 's' : ''} ready for you
-                  </p>
-                  <p className="text-[11px] text-green-600">
-                    Litos wrote these in the background, tap to review
-                  </p>
-                </div>
-                <span className="text-sm text-green-400">›</span>
+  return (
+    <div className="flex min-h-full animate-fade-in flex-col bg-white">
+      <PopupHeader>
+        <button type="button" onClick={onViewAutofillSetup} className={iconButtonClass} aria-label="Application profile" title="Application profile">
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 6h8M8 10h8M8 14h5m4 7H7a2 2 0 01-2-2V5a2 2 0 012-2h7l5 5v11a2 2 0 01-2 2z" />
+          </svg>
+        </button>
+        <button type="button" onClick={onViewTracking} className={iconButtonClass} aria-label="Outreach tracker" title="Outreach tracker">
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 19V9m7 10V5m7 14v-7" />
+          </svg>
+        </button>
+        <button type="button" onClick={onLogout} className={iconButtonClass} aria-label="Sign out" title="Sign out">
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M14 8l4 4m0 0l-4 4m4-4H8m4 8H6a2 2 0 01-2-2V6a2 2 0 012-2h6" />
+          </svg>
+        </button>
+      </PopupHeader>
+
+      <main className="flex flex-1 flex-col gap-5 px-4 py-4">
+        {pendingDraftCount > 0 && (
+          <button
+            type="button"
+            onClick={onViewDrafts}
+            className="flex min-h-14 w-full items-center gap-3 border-b border-gray-200 pb-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          >
+            <StatusDot tone="success" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-gray-950">
+                {pendingDraftCount} draft{pendingDraftCount === 1 ? '' : 's'} ready
+              </span>
+              <span className="block text-xs text-gray-600">Review before sending</span>
+            </span>
+            <span className="text-sm font-semibold text-brand-700">Review</span>
+          </button>
+        )}
+
+        <form onSubmit={handleFind} className="flex flex-col gap-4">
+          <div className="flex items-center justify-between gap-3">
+            <SectionLabel>{hasJob ? 'Current job' : 'Add a job'}</SectionLabel>
+            {hasJob && !editingJob && (
+              <button type="button" onClick={() => setEditingJob(true)} className={textButtonClass}>
+                Edit
               </button>
             )}
+          </div>
 
-            {detectedJob && (
-              <div className="flex animate-slide-down items-start gap-2.5 rounded-xl border border-brand-200 bg-brand-50 px-3 py-2.5">
-                <span className="flex-shrink-0 text-base">🎯</span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold text-brand-700">Spotted a job on this page</p>
-                  <p className="truncate text-[11px] text-brand-600">
-                    {detectedJob.role} at {detectedJob.company}
-                  </p>
-                </div>
+          {hasJob && !editingJob ? (
+            <div className="flex items-start gap-3 border-b border-gray-200 pb-4">
+              <StatusDot tone="brand" />
+              <div className="min-w-0 flex-1">
+                <h1 className="truncate text-base font-semibold text-gray-950">{company}</h1>
+                <p className="truncate text-sm text-gray-600">{role}</p>
               </div>
-            )}
-
-            <form onSubmit={handleFind} className="flex flex-col gap-3">
+              <span className="text-xs font-medium text-gray-600">Detected</span>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3 border-b border-gray-200 pb-4">
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-gray-600">Job link</label>
+                <label htmlFor="job-url" className="text-sm font-medium text-gray-800">Job link</label>
                 <input
+                  id="job-url"
                   type="url"
                   value={jobUrl}
                   onChange={handleUrlChange}
-                  placeholder="Paste a LinkedIn or job-board URL"
-                  className={inputClass}
+                  placeholder="Paste a job URL"
+                  className={fieldClass}
                 />
               </div>
-
-              {showManual && (
-                <div className="flex animate-slide-down flex-col gap-2 rounded-xl border border-gray-100 bg-gray-50 p-3">
-                  <p className="text-[11px] font-medium text-gray-500">Confirm the details</p>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-medium text-gray-600">Company</label>
-                    <input
-                      type="text"
-                      value={company}
-                      onChange={(e) => setCompany(e.target.value)}
-                      placeholder="e.g. Stripe"
-                      className={inputClass}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-medium text-gray-600">Role</label>
-                    <input
-                      type="text"
-                      value={role}
-                      onChange={(e) => setRole(e.target.value)}
-                      placeholder="e.g. Software Engineer Intern"
-                      className={inputClass}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {!showManual && (
+              <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-gray-600">Or type it in directly</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={company}
-                      onChange={(e) => {
-                        setCompany(e.target.value);
-                        setShowManual(true);
-                      }}
-                      placeholder="Company"
-                      className={inputClass}
-                    />
-                    <input
-                      type="text"
-                      value={role}
-                      onChange={(e) => {
-                        setRole(e.target.value);
-                        setShowManual(true);
-                      }}
-                      placeholder="Role"
-                      className={inputClass}
-                    />
-                  </div>
+                  <label htmlFor="job-company" className="text-sm font-medium text-gray-800">Company</label>
+                  <input
+                    id="job-company"
+                    value={company}
+                    onChange={(e) => {
+                      setCompany(e.target.value);
+                      setJobDetailsTouched(true);
+                    }}
+                    placeholder="Figma"
+                    className={fieldClass}
+                  />
                 </div>
-              )}
-
-              {error && <WarningBanner message={error} variant="error" />}
-
-              <button
-                type="submit"
-                className="w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:bg-brand-700 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
-              >
-                Find my people
-              </button>
-            </form>
-
-            {/* On-demand fill for company-hosted application forms */}
-            <div className="flex flex-col gap-1.5 rounded-xl border border-gray-100 bg-gray-50 p-3">
-              <p className="text-[11px] font-medium text-gray-500">
-                On a company's own application page? Litos can fill it here too.
-              </p>
-              <button
-                type="button"
-                onClick={handleFillThisPage}
-                className="w-full rounded-lg border border-brand-200 bg-white px-4 py-2 text-sm font-semibold text-brand-700 transition-all duration-150 hover:bg-brand-50 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
-              >
-                Fill the form on this page
-              </button>
-              {fillError && <p className="text-[11px] text-red-500">{fillError}</p>}
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="job-role" className="text-sm font-medium text-gray-800">Role</label>
+                  <input
+                    id="job-role"
+                    value={role}
+                    onChange={(e) => {
+                      setRole(e.target.value);
+                      setJobDetailsTouched(true);
+                    }}
+                    placeholder="SWE intern"
+                    className={fieldClass}
+                  />
+                </div>
+              </div>
             </div>
+          )}
 
-            {/* Recent outreach */}
-            <div>
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-                  Recent outreach
-                </h3>
-                <button
-                  onClick={onViewTracking}
-                  className="text-xs font-medium text-brand-600 hover:text-brand-700"
-                >
-                  View all
+          {error && <WarningBanner message={error} variant="error" />}
+
+          <section aria-labelledby="workflow-heading">
+            <div id="workflow-heading"><SectionLabel>Workflow</SectionLabel></div>
+            <div className="mt-2 divide-y divide-gray-200 border-y border-gray-200">
+              <div className="flex min-h-16 items-center gap-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-gray-950">Application</p>
+                  <p className="text-xs text-gray-600">Fill the open form and stop for review</p>
+                </div>
+                <button type="button" onClick={handleFillThisPage} className={secondaryButtonClass}>
+                  Fill page
                 </button>
               </div>
-
-              {eventsLoading ? (
-                <div className="flex flex-col gap-2 rounded-xl border border-gray-100 p-3">
-                  <SkeletonBar width="55%" height={10} />
-                  <SkeletonBar width="40%" height={9} />
+              <div className="flex min-h-16 items-center gap-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-gray-950">Outreach</p>
+                  <p className="text-xs text-gray-600">Find verified people for this role</p>
                 </div>
-              ) : recentEvents.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-3 py-4 text-center">
-                  <p className="text-xs text-gray-400">
-                    No outreach yet. Find your people above to get the ball rolling.
-                  </p>
-                </div>
-              ) : (
-                <div className="flex flex-col divide-y divide-gray-100 overflow-hidden rounded-xl border border-gray-100">
-                  {recentEvents.map((event, i) => (
-                    <div
-                      key={event.id}
-                      className="flex animate-fade-in-up items-center gap-2.5 bg-white px-3 py-2.5"
-                      style={{ animationDelay: `${i * 50}ms` }}
-                    >
-                      <Avatar name={event.contact.full_name} size={28} />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium text-gray-900">
-                          {event.contact.full_name}
-                        </p>
-                        <p className="truncate text-[11px] text-gray-400">
-                          {event.contact.company_domain}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <StatusDot status={event.status} />
-                        <span className="text-[11px] capitalize text-gray-400">{event.status}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                <StatusDot tone={loading ? 'warning' : 'neutral'} />
+              </div>
             </div>
-          </>
-        )}
-      </div>
+            {fillError && <p className="mt-2 text-xs text-danger-700" role="alert">{fillError}</p>}
+          </section>
+
+          <button type="submit" disabled={loading} className={primaryButtonClass}>
+            {loading ? 'Finding contacts…' : 'Find contacts'}
+          </button>
+        </form>
+
+        <section className="flex flex-col gap-2" aria-labelledby="recent-outreach-heading">
+          <div className="flex items-center justify-between gap-3">
+            <div id="recent-outreach-heading"><SectionLabel>Recent outreach</SectionLabel></div>
+            <button type="button" onClick={onViewTracking} className={textButtonClass}>View all</button>
+          </div>
+
+          {eventsLoading ? (
+            <div className="flex min-h-16 flex-col justify-center gap-2 border-y border-gray-200 py-3">
+              <SkeletonBar width="55%" height={10} />
+              <SkeletonBar width="40%" height={9} />
+            </div>
+          ) : recentEvents.length === 0 ? (
+            <p className="border-y border-gray-200 py-4 text-sm text-gray-600">
+              No outreach yet. Find contacts for the current job to start.
+            </p>
+          ) : (
+            <div className="divide-y divide-gray-200 border-y border-gray-200">
+              {recentEvents.map((event) => (
+                <div key={event.id} className="flex min-h-14 items-center gap-3 py-2">
+                  <Avatar name={event.contact.full_name} size={32} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-gray-950">{event.contact.full_name}</p>
+                    <p className="truncate text-xs text-gray-600">{event.contact.company_domain}</p>
+                  </div>
+                  <EventStatus status={event.status} />
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {loading && <p className="sr-only" role="status" aria-live="polite">Finding contacts</p>}
+      </main>
     </div>
   );
 }
