@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   pageShowsSubmissionConfirmation,
+  pageSubmissionFailureMessage,
   resumeGenerationProgress,
   submissionProgress,
 } from './application-progress';
@@ -23,5 +24,12 @@ describe('application progress copy', () => {
     expect(pageShowsSubmissionConfirmation('Thank you for applying. We received your application.')).toBe(true);
     expect(pageShowsSubmissionConfirmation("We've received your application for Software Engineer.")).toBe(true);
     expect(pageShowsSubmissionConfirmation('Apply for this job First Name Last Name')).toBe(false);
+  });
+
+  it('surfaces a portal rejection instead of leaving the task in a waiting state', () => {
+    expect(pageSubmissionFailureMessage(
+      "We couldn't submit your application. Your application submission was flagged as possible spam.",
+    )).toContain('possible spam');
+    expect(pageSubmissionFailureMessage('Apply for this job First Name Last Name')).toBeNull();
   });
 });

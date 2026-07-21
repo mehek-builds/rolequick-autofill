@@ -23,6 +23,7 @@ import type { PostingCompensation } from '../lib/adapters/salary';
 import { buildResumeReviewSummary } from '../lib/resume-review';
 import {
   pageShowsSubmissionConfirmation,
+  pageSubmissionFailureMessage,
   resumeGenerationProgress,
   submissionProgress,
 } from '../lib/application-progress';
@@ -607,12 +608,12 @@ export default defineContentScript({
       card.innerHTML = `
         <div style="position:relative;background:white;border:1.5px solid #e0e7ff;border-radius:14px;padding:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;line-height:1.4;box-shadow:0 8px 32px rgba(79,70,229,0.18);width:272px;box-sizing:border-box;animation:wp-slide-in 0.25s ease-out;">
           <button id="wp-submit-close" aria-label="Close Litos submission status" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
-          <div style="display:flex;align-items:flex-start;gap:9px;">
-            <span id="wp-submit-icon" style="font-size:20px;flex-shrink:0;">⏳</span>
-            <div>
-              <div id="wp-submit-title" style="font-weight:700;font-size:13px;color:#1e1b4b;">Sending your application</div>
-              <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;">${title} at ${company}</div>
-              <div id="wp-submit-status" role="status" aria-live="polite" style="font-size:11px;color:#6b7280;margin-top:8px;">${submissionProgress(0)}</div>
+          <div style="display:flex;align-items:flex-start;gap:9px;line-height:1.4;">
+            <span id="wp-submit-icon" style="font-size:20px;flex-shrink:0;line-height:1.4;">⏳</span>
+            <div style="line-height:1.4;">
+              <div id="wp-submit-title" style="font-weight:700;font-size:13px;color:#1e1b4b;line-height:1.4;">Sending your application</div>
+              <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;line-height:1.4;">${title} at ${company}</div>
+              <div id="wp-submit-status" role="status" aria-live="polite" style="font-size:11px;color:#6b7280;margin-top:8px;line-height:1.4;">${submissionProgress(0)}</div>
             </div>
           </div>
         </div>
@@ -624,9 +625,10 @@ export default defineContentScript({
       const titleEl = card.querySelector<HTMLElement>('#wp-submit-title');
       const iconEl = card.querySelector<HTMLElement>('#wp-submit-icon');
       let finished = false;
+      let outcomeObserver: MutationObserver | null = null;
       const stop = () => {
         clearInterval(timer);
-        confirmationObserver.disconnect();
+        outcomeObserver?.disconnect();
       };
       const confirmIfVisible = () => {
         if (finished || !pageShowsSubmissionConfirmation(document.body.innerText)) return;
@@ -636,17 +638,27 @@ export default defineContentScript({
         if (titleEl) titleEl.textContent = 'Application confirmed';
         if (statusEl) statusEl.textContent = 'The company portal confirmed receipt.';
       };
+      const failIfVisible = () => {
+        if (finished) return false;
+        const failure = pageSubmissionFailureMessage(document.body.innerText);
+        if (!failure) return false;
+        finished = true;
+        stop();
+        if (iconEl) iconEl.textContent = '!';
+        if (titleEl) titleEl.textContent = 'Application not submitted';
+        if (statusEl) statusEl.textContent = failure;
+        return true;
+      };
       const timer = setInterval(() => {
         if (!card.isConnected) {
           stop();
           return;
         }
         const elapsedSeconds = (Date.now() - startedAt) / 1000;
+        if (failIfVisible()) return;
         // Native browser validation can reject a click before any request leaves the page. Do not
         // tell the student Litos is waiting on the company when the form is visibly incomplete.
         if (!finished && elapsedSeconds >= 1 && hasEmptyRequiredFields()) {
-          finished = true;
-          stop();
           if (iconEl) iconEl.textContent = '!';
           if (titleEl) titleEl.textContent = 'Application needs your review';
           if (statusEl) statusEl.textContent = 'The portal did not submit. Complete the required fields, then try again.';
@@ -657,8 +669,10 @@ export default defineContentScript({
           statusEl.textContent = submissionProgress(elapsedSeconds);
         }
       }, 1000);
-      const confirmationObserver = new MutationObserver(confirmIfVisible);
-      confirmationObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+      outcomeObserver = new MutationObserver(() => {
+        if (!failIfVisible()) confirmIfVisible();
+      });
+      outcomeObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
       card.querySelector('#wp-submit-close')?.addEventListener('click', () => {
         stop();
         card.remove();

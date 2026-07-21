@@ -17,3 +17,14 @@ export function pageShowsSubmissionConfirmation(text: string): boolean {
   return /thank you for applying|application (?:has been )?(?:submitted|received)|we(?:'|’)ve received your application|application complete/i
     .test(text.replace(/\s+/g, ' '));
 }
+
+export function pageSubmissionFailureMessage(text: string): string | null {
+  const normalized = text.replace(/\s+/g, ' ');
+  if (/possible spam/i.test(normalized)) {
+    return 'The company portal rejected this submission as possible spam. Review the form before trying again.';
+  }
+  if (/couldn['’]t submit your application|unable to submit (?:your )?application/i.test(normalized)) {
+    return 'The company portal rejected the submission. Review its error message before trying again.';
+  }
+  return null;
+}

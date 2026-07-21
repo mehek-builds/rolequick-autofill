@@ -57,7 +57,7 @@
       "source_file": "tailwind.config.ts",
       "source_location": "L1",
       "id": "tailwind_config",
-      "community": 21
+      "community": 22
     },
     {
       "label": "postcss.config.js",
@@ -65,7 +65,7 @@
       "source_file": "postcss.config.js",
       "source_location": "L1",
       "id": "postcss_config",
-      "community": 22
+      "community": 23
     },
     {
       "label": "globals.test.ts",
@@ -73,7 +73,7 @@
       "source_file": "src/styles/globals.test.ts",
       "source_location": "L1",
       "id": "globals_test",
-      "community": 23
+      "community": 24
     },
     {
       "label": "WarningBanner.tsx",
@@ -964,12 +964,20 @@
       "community": 3
     },
     {
+      "label": "pageSubmissionFailureMessage()",
+      "file_type": "code",
+      "source_file": "src/lib/application-progress.ts",
+      "source_location": "L21",
+      "id": "application_progress_pagesubmissionfailuremessage",
+      "community": 3
+    },
+    {
       "label": "storage.test.ts",
       "file_type": "code",
       "source_file": "src/lib/storage.test.ts",
       "source_location": "L1",
       "id": "storage_test",
-      "community": 19
+      "community": 20
     },
     {
       "label": "lastError()",
@@ -977,7 +985,7 @@
       "source_file": "src/lib/storage.test.ts",
       "source_location": "L10",
       "id": "storage_test_lasterror",
-      "community": 19
+      "community": 20
     },
     {
       "label": "validation-authority.ts",
@@ -1433,7 +1441,7 @@
       "source_file": "src/lib/adapters/ashby-essay-draft.test.ts",
       "source_location": "L1",
       "id": "ashby_essay_draft_test",
-      "community": 3
+      "community": 4
     },
     {
       "label": "ap()",
@@ -1441,7 +1449,7 @@
       "source_file": "src/lib/adapters/ashby-essay-draft.test.ts",
       "source_location": "L24",
       "id": "ashby_essay_draft_test_ap",
-      "community": 3
+      "community": 4
     },
     {
       "label": "fieldEntry()",
@@ -1449,7 +1457,7 @@
       "source_file": "src/lib/adapters/ashby-essay-draft.test.ts",
       "source_location": "L28",
       "id": "ashby_essay_draft_test_fieldentry",
-      "community": 3
+      "community": 4
     },
     {
       "label": "recordingDrafter()",
@@ -1457,7 +1465,7 @@
       "source_file": "src/lib/adapters/ashby-essay-draft.test.ts",
       "source_location": "L38",
       "id": "ashby_essay_draft_test_recordingdrafter",
-      "community": 3
+      "community": 4
     },
     {
       "label": "runFill()",
@@ -1465,7 +1473,7 @@
       "source_file": "src/lib/adapters/ashby-essay-draft.test.ts",
       "source_location": "L47",
       "id": "ashby_essay_draft_test_runfill",
-      "community": 3
+      "community": 4
     },
     {
       "label": "grades.test.ts",
@@ -2145,7 +2153,7 @@
       "source_file": "src/lib/adapters/fill-date-field.test.ts",
       "source_location": "L1",
       "id": "fill_date_field_test",
-      "community": 18
+      "community": 19
     },
     {
       "label": "pickerThatAccepts()",
@@ -2153,7 +2161,7 @@
       "source_file": "src/lib/adapters/fill-date-field.test.ts",
       "source_location": "L16",
       "id": "fill_date_field_test_pickerthataccepts",
-      "community": 18
+      "community": 19
     },
     {
       "label": "monthFirstPicker()",
@@ -2161,7 +2169,7 @@
       "source_file": "src/lib/adapters/fill-date-field.test.ts",
       "source_location": "L33",
       "id": "fill_date_field_test_monthfirstpicker",
-      "community": 18
+      "community": 19
     },
     {
       "label": "isoOnlyPicker()",
@@ -2169,7 +2177,7 @@
       "source_file": "src/lib/adapters/fill-date-field.test.ts",
       "source_location": "L40",
       "id": "fill_date_field_test_isoonlypicker",
-      "community": 18
+      "community": 19
     },
     {
       "label": "dmyPickerNoMask()",
@@ -2177,7 +2185,7 @@
       "source_file": "src/lib/adapters/fill-date-field.test.ts",
       "source_location": "L96",
       "id": "fill_date_field_test_dmypickernomask",
-      "community": 18
+      "community": 19
     },
     {
       "label": "greenhouse.ts",
@@ -2841,7 +2849,7 @@
       "source_file": "src/lib/adapters/languages-fill.test.ts",
       "source_location": "L1",
       "id": "languages_fill_test",
-      "community": 4
+      "community": 18
     },
     {
       "label": "ap()",
@@ -2849,7 +2857,7 @@
       "source_file": "src/lib/adapters/languages-fill.test.ts",
       "source_location": "L20",
       "id": "languages_fill_test_ap",
-      "community": 4
+      "community": 18
     },
     {
       "label": "radioFieldset()",
@@ -2857,7 +2865,7 @@
       "source_file": "src/lib/adapters/languages-fill.test.ts",
       "source_location": "L43",
       "id": "languages_fill_test_radiofieldset",
-      "community": 4
+      "community": 18
     },
     {
       "label": "labelledSelect()",
@@ -2865,7 +2873,7 @@
       "source_file": "src/lib/adapters/languages-fill.test.ts",
       "source_location": "L65",
       "id": "languages_fill_test_labelledselect",
-      "community": 4
+      "community": 18
     },
     {
       "label": "run()",
@@ -2873,7 +2881,7 @@
       "source_file": "src/lib/adapters/languages-fill.test.ts",
       "source_location": "L86",
       "id": "languages_fill_test_run",
-      "community": 4
+      "community": 18
     },
     {
       "label": "fieldEntry()",
@@ -2881,7 +2889,7 @@
       "source_file": "src/lib/adapters/languages-fill.test.ts",
       "source_location": "L164",
       "id": "languages_fill_test_fieldentry",
-      "community": 4
+      "community": 18
     },
     {
       "label": "classify.test.ts",
@@ -3537,7 +3545,7 @@
       "source_file": "src/entrypoints/persistent-badge.ts",
       "source_location": "L1",
       "id": "persistent_badge",
-      "community": 20
+      "community": 21
     },
     {
       "label": "main()",
@@ -3545,7 +3553,7 @@
       "source_file": "src/entrypoints/persistent-badge.ts",
       "source_location": "L18",
       "id": "persistent_badge_main",
-      "community": 20
+      "community": 21
     },
     {
       "label": "content.ts",
@@ -3559,7 +3567,7 @@
       "label": "main()",
       "file_type": "code",
       "source_file": "src/entrypoints/content.ts",
-      "source_location": "L49",
+      "source_location": "L50",
       "id": "content_main",
       "community": 3
     },
@@ -6563,6 +6571,18 @@
       "_tgt": "application_progress_pageshowssubmissionconfirmation",
       "source": "application_progress",
       "target": "application_progress_pageshowssubmissionconfirmation",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/application-progress.ts",
+      "source_location": "L21",
+      "weight": 1.0,
+      "_src": "application_progress",
+      "_tgt": "application_progress_pagesubmissionfailuremessage",
+      "source": "application_progress",
+      "target": "application_progress_pagesubmissionfailuremessage",
       "confidence_score": 1.0
     },
     {
@@ -13541,7 +13561,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/entrypoints/content.ts",
-      "source_location": "L49",
+      "source_location": "L50",
       "weight": 1.0,
       "_src": "content",
       "_tgt": "content_main",
