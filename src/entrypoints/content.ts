@@ -496,7 +496,7 @@ export default defineContentScript({
             <span style="font-size:20px;">⏳</span>
             <div>
               <div style="font-weight:700;font-size:13px;color:#1e1b4b;">Finding contacts &amp; drafting...</div>
-              <div style="font-size:12px;color:#6366f1;margin-top:2px;">Open RoleQuick when ready</div>
+              <div style="font-size:12px;color:#6366f1;margin-top:2px;">Open Litos when ready</div>
             </div>
           </div>
         `;
@@ -1200,7 +1200,7 @@ export default defineContentScript({
               <div style="font-weight:700;font-size:13px;color:#1e1b4b;line-height:1.4;">This employer uses Workday</div>
               <div style="font-size:12px;color:#6b7280;margin-top:2px;line-height:1.4;">
                 You'll need to sign in or create an account first - that part's still on you. Tap below
-                and RoleQuick will take you to the right screen, then speed up account setup and the
+                and Litos will take you to the right screen, then speed up account setup and the
                 application from there.
               </div>
             </div>
@@ -1243,7 +1243,7 @@ export default defineContentScript({
           'position:fixed;bottom:72px;right:20px;z-index:2147483647;background:white;border:1.5px solid #e0e7ff;' +
           'border-radius:14px;padding:12px 16px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;' +
           'font-size:12px;line-height:1.4;color:#374151;box-shadow:0 8px 32px rgba(79,70,229,0.18);max-width:272px;';
-        note.textContent = "RoleQuick couldn't find an application form on this page. Open the page with the actual form fields, then try again.";
+        note.textContent = "Litos couldn't find an application form on this page. Open the page with the actual form fields, then try again.";
         document.getElementById('rolequick-generic-note')?.remove();
         document.body.appendChild(note);
         setTimeout(() => note.remove(), 6000);

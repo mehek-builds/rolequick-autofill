@@ -235,7 +235,7 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
               subtitle={
                 bankIsSeeded
                   ? 'Pulled from your resume. Review each entry, edit the bullet if it needs work.'
-                  : 'Add the jobs and projects RoleQuick should draw from when tailoring a resume.'
+                  : 'Add the jobs and projects Litos should draw from when tailoring a resume.'
               }
             />
 
@@ -369,10 +369,10 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
                 options={['Yes', 'No']}
               />
               {/* Stored for your reference only. Never used to answer forms: work-authorization
-                  questions are location-specific, so RoleQuick always leaves them for you (see
+                  questions are location-specific, so Litos always leaves them for you (see
                   WORK_ELIGIBILITY_QUESTION in adapters/generic.ts). Do not re-wire this into an adapter. */}
               <p className="text-[11px] leading-snug text-gray-400">
-                Kept on your profile for reference. Applications ask this per location, so RoleQuick
+                Kept on your profile for reference. Applications ask this per location, so Litos
                 always leaves work-authorization questions for you to answer.
               </p>
             </div>
@@ -385,11 +385,11 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
                 options={['Yes', 'No']}
               />
               {/* Reference only, same as work_authorized above: sponsorship questions are
-                  location-specific, so RoleQuick never answers them from this flag (see
+                  location-specific, so Litos never answers them from this flag (see
                   WORK_ELIGIBILITY_QUESTION in adapters/generic.ts). Do not re-wire. */}
               <p className="text-[11px] leading-snug text-gray-400">
                 Kept on your profile for reference. Sponsorship questions are asked per location,
-                so RoleQuick always leaves them for you to answer.
+                so Litos always leaves them for you to answer.
               </p>
             </div>
 
@@ -497,7 +497,7 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
                     </div>
                   ))}
                   <p className="text-[11px] text-gray-400">
-                    Left blank = RoleQuick selects "Decline to Self-Identify" on every application.
+                    Left blank = Litos selects "Decline to Self-Identify" on every application.
                   </p>
                 </div>
               )}
@@ -539,8 +539,8 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
                 <span>
                   <span className="block text-xs font-medium text-gray-700">Auto-submit after filling</span>
                   <span className="mt-0.5 block text-[11px] leading-relaxed text-gray-400">
-                    Off by default: RoleQuick fills the form and stops so you can review before hitting
-                    Submit yourself. Turn this on and RoleQuick will submit automatically after a
+                    Off by default: Litos fills the form and stops so you can review before hitting
+                    Submit yourself. Turn this on and Litos will submit automatically after a
                     countdown you can cancel on each application.
                   </span>
                 </span>
@@ -588,7 +588,7 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
             <div>
               <p className="text-sm font-semibold text-gray-900">You're set up</p>
               <p className="mt-0.5 text-xs text-gray-400">
-                Next application, RoleQuick will tailor a resume and fill the form for you
+                Next application, Litos will tailor a resume and fill the form for you
                 {autoSubmit ? ', then submit it after a countdown you can cancel.' : '.'}
               </p>
             </div>
@@ -596,7 +596,7 @@ export default function AutofillSetupScreen({ token, profile, onBack }: Autofill
               onClick={onBack}
               className="mt-2 rounded-lg bg-brand-600 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-700"
             >
-              Back to RoleQuick
+              Back to Litos
             </button>
           </div>
         )}

@@ -498,7 +498,7 @@ export function documentSlotReason(label: string, required: boolean): string | n
   const named = DOCUMENT_LABELS.test(label);
   if (!required && !named) return null; // no positive signal: stay quiet rather than cry wolf
   const what = label.match(DOCUMENT_LABELS)?.[0] ?? 'a document';
-  return `${what} left for you: RoleQuick only generates a resume, so attach this one yourself`;
+  return `${what} left for you: Litos only generates a resume, so attach this one yourself`;
 }
 
 export function unattachableDocumentReasons(resumeEl?: HTMLInputElement | null): string[] {

@@ -43,7 +43,7 @@ export default defineContentScript({
         transition: opacity 0.2s, transform 0.2s;
         font-size: 17px;
         user-select: none;
-      " title="RoleQuick">🔥</div>
+      " title="Litos">🔥</div>
       <div id="rolequick-persistent-tip" style="
         display: none;
         position: fixed;
@@ -61,7 +61,7 @@ export default defineContentScript({
         line-height: 1.4;
         box-shadow: 0 2px 8px rgba(0,0,0,0.25);
         pointer-events: none;
-      ">Click the RoleQuick icon in your toolbar to draft outreach emails</div>
+      ">Click the Litos icon in your toolbar to draft outreach emails</div>
     `;
     document.body.appendChild(el);
 

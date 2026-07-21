@@ -878,7 +878,7 @@ export function isDraftableQuestion(label: string): boolean {
 
 // "left for" again: an essay we declined to draft must hold auto-submit, not sail through blank.
 export function unreadableQuestionSkipReason(): string {
-  return "open-ended question left for you: RoleQuick could not read this question's label";
+  return "open-ended question left for you: Litos could not read this question's label";
 }
 
 // ─── Open-ended question shape (R-033) ──────────────────────────────────────

@@ -753,7 +753,7 @@ export async function fillGreenhouseApplication(params: GreenhouseFillParams): P
       fields_filled = Math.max(0, fields_filled - 1);
       if (t.drafted) ai_drafted = Math.max(0, ai_drafted - 1);
       fields_skipped++;
-      skipped_reasons.push(`${t.what} left for you: the page did not keep the value RoleQuick wrote`);
+      skipped_reasons.push(`${t.what} left for you: the page did not keep the value Litos wrote`);
     });
   }
 
