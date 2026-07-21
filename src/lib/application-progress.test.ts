@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  classifySubmissionOutcome,
+  escapeApplicationText,
   pageShowsSubmissionConfirmation,
   pageSubmissionFailureMessage,
   resumeGenerationProgress,
+  resumeGenerationStatus,
+  SUBMISSION_MONITOR_TIMEOUT_MS,
   submissionProgress,
 } from './application-progress';
 
@@ -31,5 +35,33 @@ describe('application progress copy', () => {
       "We couldn't submit your application. Your application submission was flagged as possible spam.",
     )).toContain('possible spam');
     expect(pageSubmissionFailureMessage('Apply for this job First Name Last Name')).toBeNull();
+  });
+
+  it('keeps a capacity retry visible until generation resolves', () => {
+    expect(resumeGenerationStatus(24, 'The AI is busy. Retrying attempt 2.')).toBe(
+      'The AI is busy. Retrying attempt 2.',
+    );
+    expect(resumeGenerationStatus(24, null)).toBe('Checking layout and accuracy · 24s');
+  });
+
+  it('escapes portal-controlled job metadata before card rendering', () => {
+    expect(escapeApplicationText('<img src=x onerror="alert(1)"> & test')).toBe(
+      '&lt;img src=x onerror=&quot;alert(1)&quot;&gt; &amp; test',
+    );
+  });
+
+  it('gives a portal rejection precedence over generic confirmation text', () => {
+    expect(classifySubmissionOutcome(
+      "Application submitted. We couldn't submit your application because it was possible spam.",
+    )).toEqual({
+      kind: 'failure',
+      message: 'The company portal rejected this submission as possible spam. Review the form before trying again.',
+    });
+    expect(classifySubmissionOutcome('Thank you for applying.')).toEqual({ kind: 'confirmed' });
+    expect(classifySubmissionOutcome('Application form')).toBeNull();
+  });
+
+  it('bounds active portal monitoring to one minute', () => {
+    expect(SUBMISSION_MONITOR_TIMEOUT_MS).toBe(60_000);
   });
 });

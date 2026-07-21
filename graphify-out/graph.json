@@ -9,7 +9,7 @@
       "source_file": "wxt.config.ts",
       "source_location": "L1",
       "id": "wxt_config",
-      "community": 8
+      "community": 3
     },
     {
       "label": "preview.tsx",
@@ -57,7 +57,7 @@
       "source_file": "tailwind.config.ts",
       "source_location": "L1",
       "id": "tailwind_config",
-      "community": 22
+      "community": 19
     },
     {
       "label": "postcss.config.js",
@@ -65,7 +65,7 @@
       "source_file": "postcss.config.js",
       "source_location": "L1",
       "id": "postcss_config",
-      "community": 23
+      "community": 20
     },
     {
       "label": "globals.test.ts",
@@ -73,7 +73,7 @@
       "source_file": "src/styles/globals.test.ts",
       "source_location": "L1",
       "id": "globals_test",
-      "community": 24
+      "community": 21
     },
     {
       "label": "WarningBanner.tsx",
@@ -385,7 +385,7 @@
       "source_file": "src/lib/inactivity-timeout.test.ts",
       "source_location": "L1",
       "id": "inactivity_timeout_test",
-      "community": 7
+      "community": 10
     },
     {
       "label": "overload.ts",
@@ -393,7 +393,7 @@
       "source_file": "src/lib/overload.ts",
       "source_location": "L1",
       "id": "overload",
-      "community": 8
+      "community": 3
     },
     {
       "label": "overloadWaitMs()",
@@ -401,7 +401,7 @@
       "source_file": "src/lib/overload.ts",
       "source_location": "L31",
       "id": "overload_overloadwaitms",
-      "community": 8
+      "community": 3
     },
     {
       "label": "overloadBudgetRemains()",
@@ -409,7 +409,7 @@
       "source_file": "src/lib/overload.ts",
       "source_location": "L41",
       "id": "overload_overloadbudgetremains",
-      "community": 8
+      "community": 3
     },
     {
       "label": "resume-review.ts",
@@ -417,7 +417,7 @@
       "source_file": "src/lib/resume-review.ts",
       "source_location": "L1",
       "id": "resume_review",
-      "community": 3
+      "community": 6
     },
     {
       "label": "buildResumeReviewSummary()",
@@ -425,7 +425,7 @@
       "source_file": "src/lib/resume-review.ts",
       "source_location": "L3",
       "id": "resume_review_buildresumereviewsummary",
-      "community": 3
+      "community": 6
     },
     {
       "label": "buildResumeReviewMessage()",
@@ -433,7 +433,7 @@
       "source_file": "src/lib/resume-review.ts",
       "source_location": "L14",
       "id": "resume_review_buildresumereviewmessage",
-      "community": 3
+      "community": 6
     },
     {
       "label": "product.ts",
@@ -441,7 +441,7 @@
       "source_file": "src/lib/product.ts",
       "source_location": "L1",
       "id": "product",
-      "community": 8
+      "community": 3
     },
     {
       "label": "litosClientHeaders()",
@@ -449,7 +449,7 @@
       "source_file": "src/lib/product.ts",
       "source_location": "L5",
       "id": "product_litosclientheaders",
-      "community": 8
+      "community": 3
     },
     {
       "label": "validation-authority.test.ts",
@@ -457,7 +457,7 @@
       "source_file": "src/lib/validation-authority.test.ts",
       "source_location": "L1",
       "id": "validation_authority_test",
-      "community": 3
+      "community": 6
     },
     {
       "label": "autosubmit-gate.ts",
@@ -465,7 +465,7 @@
       "source_file": "src/lib/autosubmit-gate.ts",
       "source_location": "L1",
       "id": "autosubmit_gate",
-      "community": 3
+      "community": 4
     },
     {
       "label": "skippedReasonsNeedReview()",
@@ -473,7 +473,7 @@
       "source_file": "src/lib/autosubmit-gate.ts",
       "source_location": "L17",
       "id": "autosubmit_gate_skippedreasonsneedreview",
-      "community": 3
+      "community": 4
     },
     {
       "label": "selectNeedsYouReasons()",
@@ -481,7 +481,7 @@
       "source_file": "src/lib/autosubmit-gate.ts",
       "source_location": "L26",
       "id": "autosubmit_gate_selectneedsyoureasons",
-      "community": 3
+      "community": 4
     },
     {
       "label": "resume-review.test.ts",
@@ -489,7 +489,7 @@
       "source_file": "src/lib/resume-review.test.ts",
       "source_location": "L1",
       "id": "resume_review_test",
-      "community": 3
+      "community": 6
     },
     {
       "label": "storage.ts",
@@ -609,7 +609,7 @@
       "source_file": "src/lib/harvest.ts",
       "source_location": "L1",
       "id": "harvest",
-      "community": 11
+      "community": 12
     },
     {
       "label": "isOurNode()",
@@ -617,7 +617,7 @@
       "source_file": "src/lib/harvest.ts",
       "source_location": "L45",
       "id": "harvest_isournode",
-      "community": 11
+      "community": 12
     },
     {
       "label": "readControlValue()",
@@ -625,7 +625,7 @@
       "source_file": "src/lib/harvest.ts",
       "source_location": "L58",
       "id": "harvest_readcontrolvalue",
-      "community": 11
+      "community": 12
     },
     {
       "label": "keyFor()",
@@ -633,7 +633,7 @@
       "source_file": "src/lib/harvest.ts",
       "source_location": "L106",
       "id": "harvest_keyfor",
-      "community": 11
+      "community": 12
     },
     {
       "label": "escapeId()",
@@ -641,7 +641,7 @@
       "source_file": "src/lib/harvest.ts",
       "source_location": "L122",
       "id": "harvest_escapeid",
-      "community": 11
+      "community": 12
     },
     {
       "label": "readIdentity()",
@@ -649,7 +649,7 @@
       "source_file": "src/lib/harvest.ts",
       "source_location": "L128",
       "id": "harvest_readidentity",
-      "community": 11
+      "community": 12
     },
     {
       "label": "readQuestion()",
@@ -657,7 +657,7 @@
       "source_file": "src/lib/harvest.ts",
       "source_location": "L143",
       "id": "harvest_readquestion",
-      "community": 11
+      "community": 12
     },
     {
       "label": "collect()",
@@ -665,7 +665,7 @@
       "source_file": "src/lib/harvest.ts",
       "source_location": "L152",
       "id": "harvest_collect",
-      "community": 11
+      "community": 12
     },
     {
       "label": "schedule()",
@@ -673,7 +673,7 @@
       "source_file": "src/lib/harvest.ts",
       "source_location": "L168",
       "id": "harvest_schedule",
-      "community": 11
+      "community": 12
     },
     {
       "label": "flush()",
@@ -681,7 +681,7 @@
       "source_file": "src/lib/harvest.ts",
       "source_location": "L173",
       "id": "harvest_flush",
-      "community": 11
+      "community": 12
     },
     {
       "label": "handleInput()",
@@ -689,7 +689,7 @@
       "source_file": "src/lib/harvest.ts",
       "source_location": "L203",
       "id": "harvest_handleinput",
-      "community": 11
+      "community": 12
     },
     {
       "label": "startHarvest()",
@@ -697,7 +697,7 @@
       "source_file": "src/lib/harvest.ts",
       "source_location": "L210",
       "id": "harvest_startharvest",
-      "community": 11
+      "community": 12
     },
     {
       "label": "__resetHarvest()",
@@ -705,7 +705,7 @@
       "source_file": "src/lib/harvest.ts",
       "source_location": "L226",
       "id": "harvest_resetharvest",
-      "community": 11
+      "community": 12
     },
     {
       "label": "gmail.ts",
@@ -724,12 +724,20 @@
       "community": 0
     },
     {
+      "label": "application-task-controller.test.ts",
+      "file_type": "code",
+      "source_file": "src/lib/application-task-controller.test.ts",
+      "source_location": "L1",
+      "id": "application_task_controller_test",
+      "community": 6
+    },
+    {
       "label": "application-progress.test.ts",
       "file_type": "code",
       "source_file": "src/lib/application-progress.test.ts",
       "source_location": "L1",
       "id": "application_progress_test",
-      "community": 3
+      "community": 6
     },
     {
       "label": "api.ts",
@@ -737,7 +745,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L1",
       "id": "api",
-      "community": 10
+      "community": 3
     },
     {
       "label": "throwApiError()",
@@ -745,7 +753,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L19",
       "id": "api_throwapierror",
-      "community": 10
+      "community": 3
     },
     {
       "label": "request()",
@@ -753,7 +761,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L30",
       "id": "api_request",
-      "community": 10
+      "community": 3
     },
     {
       "label": "createSession()",
@@ -761,7 +769,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L56",
       "id": "api_createsession",
-      "community": 10
+      "community": 3
     },
     {
       "label": "requestCode()",
@@ -769,7 +777,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L65",
       "id": "api_requestcode",
-      "community": 10
+      "community": 3
     },
     {
       "label": "verifyCode()",
@@ -777,7 +785,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L72",
       "id": "api_verifycode",
-      "community": 10
+      "community": 3
     },
     {
       "label": "uploadProfile()",
@@ -785,7 +793,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L79",
       "id": "api_uploadprofile",
-      "community": 10
+      "community": 3
     },
     {
       "label": "getProductMeta()",
@@ -793,7 +801,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L101",
       "id": "api_getproductmeta",
-      "community": 10
+      "community": 3
     },
     {
       "label": "getProfile()",
@@ -801,7 +809,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L105",
       "id": "api_getprofile",
-      "community": 10
+      "community": 3
     },
     {
       "label": "resolveContacts()",
@@ -809,7 +817,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L136",
       "id": "api_resolvecontacts",
-      "community": 10
+      "community": 3
     },
     {
       "label": "generateDraft()",
@@ -817,7 +825,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L179",
       "id": "api_generatedraft",
-      "community": 10
+      "community": 3
     },
     {
       "label": "trackEvent()",
@@ -825,7 +833,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L201",
       "id": "api_trackevent",
-      "community": 10
+      "community": 3
     },
     {
       "label": "getEvents()",
@@ -833,7 +841,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L215",
       "id": "api_getevents",
-      "community": 10
+      "community": 3
     },
     {
       "label": "getExperienceBank()",
@@ -841,7 +849,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L221",
       "id": "api_getexperiencebank",
-      "community": 10
+      "community": 3
     },
     {
       "label": "putExperienceBank()",
@@ -849,7 +857,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L226",
       "id": "api_putexperiencebank",
-      "community": 10
+      "community": 3
     },
     {
       "label": "getApplicationProfile()",
@@ -857,7 +865,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L240",
       "id": "api_getapplicationprofile",
-      "community": 10
+      "community": 3
     },
     {
       "label": "putApplicationProfile()",
@@ -865,7 +873,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L244",
       "id": "api_putapplicationprofile",
-      "community": 10
+      "community": 3
     },
     {
       "label": "generateResume()",
@@ -873,7 +881,7 @@
       "source_file": "src/lib/api.ts",
       "source_location": "L262",
       "id": "api_generateresume",
-      "community": 10
+      "community": 3
     },
     {
       "label": "inactivity-timeout.ts",
@@ -881,7 +889,7 @@
       "source_file": "src/lib/inactivity-timeout.ts",
       "source_location": "L1",
       "id": "inactivity_timeout",
-      "community": 7
+      "community": 10
     },
     {
       "label": "withInactivityTimeout()",
@@ -889,7 +897,7 @@
       "source_file": "src/lib/inactivity-timeout.ts",
       "source_location": "L1",
       "id": "inactivity_timeout_withinactivitytimeout",
-      "community": 7
+      "community": 10
     },
     {
       "label": "harvest.test.ts",
@@ -897,7 +905,7 @@
       "source_file": "src/lib/harvest.test.ts",
       "source_location": "L1",
       "id": "harvest_test",
-      "community": 11
+      "community": 12
     },
     {
       "label": "mount()",
@@ -905,7 +913,7 @@
       "source_file": "src/lib/harvest.test.ts",
       "source_location": "L11",
       "id": "harvest_test_mount",
-      "community": 11
+      "community": 12
     },
     {
       "label": "evt()",
@@ -913,7 +921,7 @@
       "source_file": "src/lib/harvest.test.ts",
       "source_location": "L179",
       "id": "harvest_test_evt",
-      "community": 11
+      "community": 12
     },
     {
       "label": "type()",
@@ -921,7 +929,7 @@
       "source_file": "src/lib/harvest.test.ts",
       "source_location": "L183",
       "id": "harvest_test_type",
-      "community": 11
+      "community": 12
     },
     {
       "label": "types.ts",
@@ -937,7 +945,7 @@
       "source_file": "src/lib/application-progress.ts",
       "source_location": "L1",
       "id": "application_progress",
-      "community": 3
+      "community": 6
     },
     {
       "label": "resumeGenerationProgress()",
@@ -945,31 +953,55 @@
       "source_file": "src/lib/application-progress.ts",
       "source_location": "L1",
       "id": "application_progress_resumegenerationprogress",
-      "community": 3
+      "community": 6
+    },
+    {
+      "label": "resumeGenerationStatus()",
+      "file_type": "code",
+      "source_file": "src/lib/application-progress.ts",
+      "source_location": "L9",
+      "id": "application_progress_resumegenerationstatus",
+      "community": 6
+    },
+    {
+      "label": "escapeApplicationText()",
+      "file_type": "code",
+      "source_file": "src/lib/application-progress.ts",
+      "source_location": "L13",
+      "id": "application_progress_escapeapplicationtext",
+      "community": 6
     },
     {
       "label": "submissionProgress()",
       "file_type": "code",
       "source_file": "src/lib/application-progress.ts",
-      "source_location": "L9",
+      "source_location": "L21",
       "id": "application_progress_submissionprogress",
-      "community": 3
+      "community": 6
     },
     {
       "label": "pageShowsSubmissionConfirmation()",
       "file_type": "code",
       "source_file": "src/lib/application-progress.ts",
-      "source_location": "L16",
+      "source_location": "L28",
       "id": "application_progress_pageshowssubmissionconfirmation",
-      "community": 3
+      "community": 6
     },
     {
       "label": "pageSubmissionFailureMessage()",
       "file_type": "code",
       "source_file": "src/lib/application-progress.ts",
-      "source_location": "L21",
+      "source_location": "L33",
       "id": "application_progress_pagesubmissionfailuremessage",
-      "community": 3
+      "community": 6
+    },
+    {
+      "label": "classifySubmissionOutcome()",
+      "file_type": "code",
+      "source_file": "src/lib/application-progress.ts",
+      "source_location": "L49",
+      "id": "application_progress_classifysubmissionoutcome",
+      "community": 6
     },
     {
       "label": "storage.test.ts",
@@ -977,7 +1009,7 @@
       "source_file": "src/lib/storage.test.ts",
       "source_location": "L1",
       "id": "storage_test",
-      "community": 20
+      "community": 17
     },
     {
       "label": "lastError()",
@@ -985,7 +1017,7 @@
       "source_file": "src/lib/storage.test.ts",
       "source_location": "L10",
       "id": "storage_test_lasterror",
-      "community": 20
+      "community": 17
     },
     {
       "label": "validation-authority.ts",
@@ -993,7 +1025,7 @@
       "source_file": "src/lib/validation-authority.ts",
       "source_location": "L1",
       "id": "validation_authority",
-      "community": 3
+      "community": 6
     },
     {
       "label": "label()",
@@ -1001,7 +1033,7 @@
       "source_file": "src/lib/validation-authority.ts",
       "source_location": "L19",
       "id": "validation_authority_label",
-      "community": 3
+      "community": 6
     },
     {
       "label": "extractValidationErrors()",
@@ -1009,7 +1041,7 @@
       "source_file": "src/lib/validation-authority.ts",
       "source_location": "L30",
       "id": "validation_authority_extractvalidationerrors",
-      "community": 3
+      "community": 6
     },
     {
       "label": "nearestFieldEntryLabel()",
@@ -1017,7 +1049,7 @@
       "source_file": "src/lib/validation-authority.ts",
       "source_location": "L77",
       "id": "validation_authority_nearestfieldentrylabel",
-      "community": 3
+      "community": 6
     },
     {
       "label": "cssEscape()",
@@ -1025,7 +1057,7 @@
       "source_file": "src/lib/validation-authority.ts",
       "source_location": "L84",
       "id": "validation_authority_cssescape",
-      "community": 3
+      "community": 6
     },
     {
       "label": "validationErrorsToReasons()",
@@ -1033,7 +1065,7 @@
       "source_file": "src/lib/validation-authority.ts",
       "source_location": "L92",
       "id": "validation_authority_validationerrorstoreasons",
-      "community": 3
+      "community": 6
     },
     {
       "label": "mergeValidationReasons()",
@@ -1041,7 +1073,7 @@
       "source_file": "src/lib/validation-authority.ts",
       "source_location": "L99",
       "id": "validation_authority_mergevalidationreasons",
-      "community": 3
+      "community": 6
     },
     {
       "label": "resume-fetch.test.ts",
@@ -1049,7 +1081,7 @@
       "source_file": "src/lib/resume-fetch.test.ts",
       "source_location": "L1",
       "id": "resume_fetch_test",
-      "community": 3
+      "community": 4
     },
     {
       "label": "pdfResponse()",
@@ -1057,7 +1089,7 @@
       "source_file": "src/lib/resume-fetch.test.ts",
       "source_location": "L13",
       "id": "resume_fetch_test_pdfresponse",
-      "community": 3
+      "community": 4
     },
     {
       "label": "resume-fetch.ts",
@@ -1065,7 +1097,7 @@
       "source_file": "src/lib/resume-fetch.ts",
       "source_location": "L1",
       "id": "resume_fetch",
-      "community": 3
+      "community": 4
     },
     {
       "label": "fetchResumeBlob()",
@@ -1073,7 +1105,7 @@
       "source_file": "src/lib/resume-fetch.ts",
       "source_location": "L34",
       "id": "resume_fetch_fetchresumeblob",
-      "community": 3
+      "community": 4
     },
     {
       "label": "autosubmit-gate.test.ts",
@@ -1081,7 +1113,7 @@
       "source_file": "src/lib/autosubmit-gate.test.ts",
       "source_location": "L1",
       "id": "autosubmit_gate_test",
-      "community": 3
+      "community": 4
     },
     {
       "label": "overload.test.ts",
@@ -1089,7 +1121,7 @@
       "source_file": "src/lib/overload.test.ts",
       "source_location": "L1",
       "id": "overload_test",
-      "community": 8
+      "community": 3
     },
     {
       "label": "config.ts",
@@ -1097,7 +1129,7 @@
       "source_file": "src/lib/config.ts",
       "source_location": "L1",
       "id": "config",
-      "community": 8
+      "community": 3
     },
     {
       "label": "resolveApiBase()",
@@ -1105,7 +1137,7 @@
       "source_file": "src/lib/config.ts",
       "source_location": "L4",
       "id": "config_resolveapibase",
-      "community": 8
+      "community": 3
     },
     {
       "label": "config.test.ts",
@@ -1113,7 +1145,47 @@
       "source_file": "src/lib/config.test.ts",
       "source_location": "L1",
       "id": "config_test",
-      "community": 8
+      "community": 3
+    },
+    {
+      "label": "application-task-controller.ts",
+      "file_type": "code",
+      "source_file": "src/lib/application-task-controller.ts",
+      "source_location": "L1",
+      "id": "application_task_controller",
+      "community": 6
+    },
+    {
+      "label": "createSubmissionOutcomeController()",
+      "file_type": "code",
+      "source_file": "src/lib/application-task-controller.ts",
+      "source_location": "L10",
+      "id": "application_task_controller_createsubmissionoutcomecontroller",
+      "community": 6
+    },
+    {
+      "label": "createResumeGenerationController()",
+      "file_type": "code",
+      "source_file": "src/lib/application-task-controller.ts",
+      "source_location": "L57",
+      "id": "application_task_controller_createresumegenerationcontroller",
+      "community": 6
+    },
+    {
+      "label": "createResumeReviewPrompt()",
+      "file_type": "code",
+      "source_file": "src/lib/application-task-controller.ts",
+      "source_location": "L83",
+      "id": "application_task_controller_createresumereviewprompt",
+      "community": 6
+    },
+    {
+      "label": "restoreResumeReviewControls()",
+      "file_type": "code",
+      "source_file": "src/lib/application-task-controller.ts",
+      "source_location": "L114",
+      "id": "application_task_controller_restoreresumereviewcontrols",
+      "community": 6
     },
     {
       "label": "product.test.ts",
@@ -1121,7 +1193,7 @@
       "source_file": "src/lib/product.test.ts",
       "source_location": "L1",
       "id": "product_test",
-      "community": 8
+      "community": 3
     },
     {
       "label": "r030-candidates.test.ts",
@@ -1129,7 +1201,7 @@
       "source_file": "src/lib/adapters/r030-candidates.test.ts",
       "source_location": "L1",
       "id": "r030_candidates_test",
-      "community": 17
+      "community": 5
     },
     {
       "label": "markReactManaged()",
@@ -1137,7 +1209,7 @@
       "source_file": "src/lib/adapters/r030-candidates.test.ts",
       "source_location": "L31",
       "id": "r030_candidates_test_markreactmanaged",
-      "community": 17
+      "community": 5
     },
     {
       "label": "wrapper()",
@@ -1145,7 +1217,7 @@
       "source_file": "src/lib/adapters/r030-candidates.test.ts",
       "source_location": "L35",
       "id": "r030_candidates_test_wrapper",
-      "community": 17
+      "community": 5
     },
     {
       "label": "textInput()",
@@ -1153,7 +1225,7 @@
       "source_file": "src/lib/adapters/r030-candidates.test.ts",
       "source_location": "L46",
       "id": "r030_candidates_test_textinput",
-      "community": 17
+      "community": 5
     },
     {
       "label": "coreFields()",
@@ -1161,7 +1233,7 @@
       "source_file": "src/lib/adapters/r030-candidates.test.ts",
       "source_location": "L53",
       "id": "r030_candidates_test_corefields",
-      "community": 17
+      "community": 5
     },
     {
       "label": "essayLink()",
@@ -1169,7 +1241,7 @@
       "source_file": "src/lib/adapters/r030-candidates.test.ts",
       "source_location": "L122",
       "id": "r030_candidates_test_essaylink",
-      "community": 17
+      "community": 5
     },
     {
       "label": "salary.test.ts",
@@ -1177,7 +1249,7 @@
       "source_file": "src/lib/adapters/salary.test.ts",
       "source_location": "L1",
       "id": "salary_test",
-      "community": 3
+      "community": 4
     },
     {
       "label": "ctx()",
@@ -1185,7 +1257,7 @@
       "source_file": "src/lib/adapters/salary.test.ts",
       "source_location": "L25",
       "id": "salary_test_ctx",
-      "community": 3
+      "community": 4
     },
     {
       "label": "payload()",
@@ -1193,7 +1265,7 @@
       "source_file": "src/lib/adapters/salary.test.ts",
       "source_location": "L127",
       "id": "salary_test_payload",
-      "community": 3
+      "community": 4
     },
     {
       "label": "verify-persist.test.ts",
@@ -1249,7 +1321,7 @@
       "source_file": "src/lib/adapters/documents.test.ts",
       "source_location": "L1",
       "id": "documents_test",
-      "community": 3
+      "community": 4
     },
     {
       "label": "languages.test.ts",
@@ -1257,7 +1329,7 @@
       "source_file": "src/lib/adapters/languages.test.ts",
       "source_location": "L1",
       "id": "languages_test",
-      "community": 3
+      "community": 4
     },
     {
       "label": "ap()",
@@ -1265,7 +1337,7 @@
       "source_file": "src/lib/adapters/languages.test.ts",
       "source_location": "L18",
       "id": "languages_test_ap",
-      "community": 3
+      "community": 4
     },
     {
       "label": "opts()",
@@ -1273,7 +1345,7 @@
       "source_file": "src/lib/adapters/languages.test.ts",
       "source_location": "L21",
       "id": "languages_test_opts",
-      "community": 3
+      "community": 4
     },
     {
       "label": "phone-label.test.ts",
@@ -1321,7 +1393,7 @@
       "source_file": "src/lib/adapters/linkedin.ts",
       "source_location": "L1",
       "id": "linkedin",
-      "community": 12
+      "community": 10
     },
     {
       "label": "getModal()",
@@ -1329,7 +1401,7 @@
       "source_file": "src/lib/adapters/linkedin.ts",
       "source_location": "L56",
       "id": "linkedin_getmodal",
-      "community": 12
+      "community": 10
     },
     {
       "label": "isLinkedInApplicationPage()",
@@ -1337,7 +1409,7 @@
       "source_file": "src/lib/adapters/linkedin.ts",
       "source_location": "L64",
       "id": "linkedin_islinkedinapplicationpage",
-      "community": 12
+      "community": 10
     },
     {
       "label": "extractLinkedInJdText()",
@@ -1345,7 +1417,7 @@
       "source_file": "src/lib/adapters/linkedin.ts",
       "source_location": "L69",
       "id": "linkedin_extractlinkedinjdtext",
-      "community": 12
+      "community": 10
     },
     {
       "label": "questionBlocksIn()",
@@ -1353,7 +1425,7 @@
       "source_file": "src/lib/adapters/linkedin.ts",
       "source_location": "L83",
       "id": "linkedin_questionblocksin",
-      "community": 12
+      "community": 10
     },
     {
       "label": "labelTextFor()",
@@ -1361,7 +1433,7 @@
       "source_file": "src/lib/adapters/linkedin.ts",
       "source_location": "L89",
       "id": "linkedin_labeltextfor",
-      "community": 12
+      "community": 10
     },
     {
       "label": "isNeverFillField()",
@@ -1369,7 +1441,7 @@
       "source_file": "src/lib/adapters/linkedin.ts",
       "source_location": "L99",
       "id": "linkedin_isneverfillfield",
-      "community": 12
+      "community": 10
     },
     {
       "label": "fillCombobox()",
@@ -1377,7 +1449,7 @@
       "source_file": "src/lib/adapters/linkedin.ts",
       "source_location": "L108",
       "id": "linkedin_fillcombobox",
-      "community": 12
+      "community": 10
     },
     {
       "label": "comboControlIn()",
@@ -1385,7 +1457,7 @@
       "source_file": "src/lib/adapters/linkedin.ts",
       "source_location": "L119",
       "id": "linkedin_combocontrolin",
-      "community": 12
+      "community": 10
     },
     {
       "label": "answerChoiceBlock()",
@@ -1393,7 +1465,7 @@
       "source_file": "src/lib/adapters/linkedin.ts",
       "source_location": "L128",
       "id": "linkedin_answerchoiceblock",
-      "community": 12
+      "community": 10
     },
     {
       "label": "markForReview()",
@@ -1401,7 +1473,7 @@
       "source_file": "src/lib/adapters/linkedin.ts",
       "source_location": "L160",
       "id": "linkedin_markforreview",
-      "community": 12
+      "community": 10
     },
     {
       "label": "checkRadio()",
@@ -1409,7 +1481,7 @@
       "source_file": "src/lib/adapters/linkedin.ts",
       "source_location": "L169",
       "id": "linkedin_checkradio",
-      "community": 12
+      "community": 10
     },
     {
       "label": "fillResumeFile()",
@@ -1417,7 +1489,7 @@
       "source_file": "src/lib/adapters/linkedin.ts",
       "source_location": "L176",
       "id": "linkedin_fillresumefile",
-      "community": 12
+      "community": 10
     },
     {
       "label": "blockAlreadyAnsweredForGrade()",
@@ -1425,7 +1497,7 @@
       "source_file": "src/lib/adapters/linkedin.ts",
       "source_location": "L192",
       "id": "linkedin_blockalreadyansweredforgrade",
-      "community": 12
+      "community": 10
     },
     {
       "label": "fillLinkedInApplication()",
@@ -1433,7 +1505,7 @@
       "source_file": "src/lib/adapters/linkedin.ts",
       "source_location": "L218",
       "id": "linkedin_filllinkedinapplication",
-      "community": 12
+      "community": 10
     },
     {
       "label": "ashby-essay-draft.test.ts",
@@ -1481,7 +1553,7 @@
       "source_file": "src/lib/adapters/grades.test.ts",
       "source_location": "L1",
       "id": "grades_test",
-      "community": 16
+      "community": 8
     },
     {
       "label": "ap()",
@@ -1489,7 +1561,7 @@
       "source_file": "src/lib/adapters/grades.test.ts",
       "source_location": "L6",
       "id": "grades_test_ap",
-      "community": 16
+      "community": 8
     },
     {
       "label": "at()",
@@ -1497,7 +1569,7 @@
       "source_file": "src/lib/adapters/grades.test.ts",
       "source_location": "L64",
       "id": "grades_test_at",
-      "community": 16
+      "community": 8
     },
     {
       "label": "salary.ts",
@@ -1505,7 +1577,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L1",
       "id": "salary",
-      "community": 6
+      "community": 9
     },
     {
       "label": "parseAshbyPostingRef()",
@@ -1513,7 +1585,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L39",
       "id": "salary_parseashbypostingref",
-      "community": 6
+      "community": 9
     },
     {
       "label": "rec()",
@@ -1521,7 +1593,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L62",
       "id": "salary_rec",
-      "community": 6
+      "community": 9
     },
     {
       "label": "selectPostingCompensation()",
@@ -1529,7 +1601,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L74",
       "id": "salary_selectpostingcompensation",
-      "community": 6
+      "community": 9
     },
     {
       "label": "mapCurrencyToken()",
@@ -1537,7 +1609,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L157",
       "id": "salary_mapcurrencytoken",
-      "community": 6
+      "community": 9
     },
     {
       "label": "collectCurrencies()",
@@ -1545,7 +1617,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L178",
       "id": "salary_collectcurrencies",
-      "community": 6
+      "community": 9
     },
     {
       "label": "detectCurrency()",
@@ -1553,7 +1625,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L193",
       "id": "salary_detectcurrency",
-      "community": 6
+      "community": 9
     },
     {
       "label": "normalizeStoredCurrency()",
@@ -1561,7 +1633,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L199",
       "id": "salary_normalizestoredcurrency",
-      "community": 6
+      "community": 9
     },
     {
       "label": "parseNumToken()",
@@ -1569,7 +1641,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L226",
       "id": "salary_parsenumtoken",
-      "community": 6
+      "community": 9
     },
     {
       "label": "groupDigits()",
@@ -1577,7 +1649,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L237",
       "id": "salary_groupdigits",
-      "community": 6
+      "community": 9
     },
     {
       "label": "currencyPrefixAt()",
@@ -1585,7 +1657,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L256",
       "id": "salary_currencyprefixat",
-      "community": 6
+      "community": 9
     },
     {
       "label": "suffixAt()",
@@ -1593,7 +1665,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L267",
       "id": "salary_suffixat",
-      "community": 6
+      "community": 9
     },
     {
       "label": "findStatedRanges()",
@@ -1601,7 +1673,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L285",
       "id": "salary_findstatedranges",
-      "community": 6
+      "community": 9
     },
     {
       "label": "dedupeRanges()",
@@ -1609,7 +1681,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L343",
       "id": "salary_deduperanges",
-      "community": 6
+      "community": 9
     },
     {
       "label": "statedRangeInLabel()",
@@ -1617,7 +1689,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L350",
       "id": "salary_statedrangeinlabel",
-      "community": 6
+      "community": 9
     },
     {
       "label": "statedRangeInJd()",
@@ -1625,7 +1697,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L362",
       "id": "salary_statedrangeinjd",
-      "community": 6
+      "community": 9
     },
     {
       "label": "salaryAdjacentCurrencyInJd()",
@@ -1633,7 +1705,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L373",
       "id": "salary_salaryadjacentcurrencyinjd",
-      "community": 6
+      "community": 9
     },
     {
       "label": "storedSalaryOf()",
@@ -1641,7 +1713,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L402",
       "id": "salary_storedsalaryof",
-      "community": 6
+      "community": 9
     },
     {
       "label": "salarySkipReason()",
@@ -1649,7 +1721,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L413",
       "id": "salary_salaryskipreason",
-      "community": 6
+      "community": 9
     },
     {
       "label": "isProseSalary()",
@@ -1657,7 +1729,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L418",
       "id": "salary_isprosesalary",
-      "community": 6
+      "community": 9
     },
     {
       "label": "storedFigureFor()",
@@ -1665,7 +1737,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L424",
       "id": "salary_storedfigurefor",
-      "community": 6
+      "community": 9
     },
     {
       "label": "resolveSalary()",
@@ -1673,7 +1745,7 @@
       "source_file": "src/lib/adapters/salary.ts",
       "source_location": "L438",
       "id": "salary_resolvesalary",
-      "community": 6
+      "community": 9
     },
     {
       "label": "greenhouse.fill.test.ts",
@@ -1825,7 +1897,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L1",
       "id": "workday",
-      "community": 9
+      "community": 11
     },
     {
       "label": "fillCombobox()",
@@ -1833,7 +1905,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L52",
       "id": "workday_fillcombobox",
-      "community": 9
+      "community": 11
     },
     {
       "label": "comboControlIn()",
@@ -1841,7 +1913,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L65",
       "id": "workday_combocontrolin",
-      "community": 9
+      "community": 11
     },
     {
       "label": "answerChoiceBlock()",
@@ -1849,7 +1921,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L74",
       "id": "workday_answerchoiceblock",
-      "community": 9
+      "community": 11
     },
     {
       "label": "markForReview()",
@@ -1857,7 +1929,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L109",
       "id": "workday_markforreview",
-      "community": 9
+      "community": 11
     },
     {
       "label": "hasAccountCreationMarkers()",
@@ -1865,7 +1937,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L118",
       "id": "workday_hasaccountcreationmarkers",
-      "community": 9
+      "community": 11
     },
     {
       "label": "hasApplicationFormMarkers()",
@@ -1873,7 +1945,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L132",
       "id": "workday_hasapplicationformmarkers",
-      "community": 9
+      "community": 11
     },
     {
       "label": "looksLikeApplyUrl()",
@@ -1881,7 +1953,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L142",
       "id": "workday_lookslikeapplyurl",
-      "community": 9
+      "community": 11
     },
     {
       "label": "isWorkdayApplicationPage()",
@@ -1889,7 +1961,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L147",
       "id": "workday_isworkdayapplicationpage",
-      "community": 9
+      "community": 11
     },
     {
       "label": "isWorkdayAccountCreationPage()",
@@ -1897,7 +1969,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L161",
       "id": "workday_isworkdayaccountcreationpage",
-      "community": 9
+      "community": 11
     },
     {
       "label": "isWorkdayStartScreen()",
@@ -1905,7 +1977,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L175",
       "id": "workday_isworkdaystartscreen",
-      "community": 9
+      "community": 11
     },
     {
       "label": "findApplyManuallyButton()",
@@ -1913,7 +1985,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L187",
       "id": "workday_findapplymanuallybutton",
-      "community": 9
+      "community": 11
     },
     {
       "label": "extractWorkdayJdText()",
@@ -1921,7 +1993,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L192",
       "id": "workday_extractworkdayjdtext",
-      "community": 9
+      "community": 11
     },
     {
       "label": "fillResumeFile()",
@@ -1929,7 +2001,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L208",
       "id": "workday_fillresumefile",
-      "community": 9
+      "community": 11
     },
     {
       "label": "labelTextFor()",
@@ -1937,7 +2009,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L233",
       "id": "workday_labeltextfor",
-      "community": 9
+      "community": 11
     },
     {
       "label": "isNeverFillField()",
@@ -1945,7 +2017,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L252",
       "id": "workday_isneverfillfield",
-      "community": 9
+      "community": 11
     },
     {
       "label": "blockAlreadyAnsweredForGrade()",
@@ -1953,7 +2025,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L258",
       "id": "workday_blockalreadyansweredforgrade",
-      "community": 9
+      "community": 11
     },
     {
       "label": "fillWorkdayApplication()",
@@ -1961,7 +2033,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L284",
       "id": "workday_fillworkdayapplication",
-      "community": 9
+      "community": 11
     },
     {
       "label": "fillWorkdayAccountCreation()",
@@ -1969,7 +2041,7 @@
       "source_file": "src/lib/adapters/workday.ts",
       "source_location": "L565",
       "id": "workday_fillworkdayaccountcreation",
-      "community": 9
+      "community": 11
     },
     {
       "label": "ashby.ts",
@@ -1977,7 +2049,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L1",
       "id": "ashby",
-      "community": 4
+      "community": 7
     },
     {
       "label": "waitForStableDom()",
@@ -1985,7 +2057,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L64",
       "id": "ashby_waitforstabledom",
-      "community": 4
+      "community": 7
     },
     {
       "label": "labelTextFor()",
@@ -1993,7 +2065,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L89",
       "id": "ashby_labeltextfor",
-      "community": 4
+      "community": 7
     },
     {
       "label": "isNeverFillField()",
@@ -2001,7 +2073,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L103",
       "id": "ashby_isneverfillfield",
-      "community": 4
+      "community": 7
     },
     {
       "label": "writeReactText()",
@@ -2009,7 +2081,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L112",
       "id": "ashby_writereacttext",
-      "community": 4
+      "community": 7
     },
     {
       "label": "fillCombobox()",
@@ -2017,7 +2089,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L125",
       "id": "ashby_fillcombobox",
-      "community": 4
+      "community": 7
     },
     {
       "label": "comboControlIn()",
@@ -2025,7 +2097,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L138",
       "id": "ashby_combocontrolin",
-      "community": 4
+      "community": 7
     },
     {
       "label": "buttonOptionsIn()",
@@ -2033,7 +2105,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L153",
       "id": "ashby_buttonoptionsin",
-      "community": 4
+      "community": 7
     },
     {
       "label": "answerChoiceBlock()",
@@ -2041,7 +2113,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L168",
       "id": "ashby_answerchoiceblock",
-      "community": 4
+      "community": 7
     },
     {
       "label": "markForReview()",
@@ -2049,7 +2121,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L259",
       "id": "ashby_markforreview",
-      "community": 4
+      "community": 7
     },
     {
       "label": "checkRadio()",
@@ -2057,7 +2129,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L268",
       "id": "ashby_checkradio",
-      "community": 4
+      "community": 7
     },
     {
       "label": "fillBySelector()",
@@ -2065,7 +2137,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L276",
       "id": "ashby_fillbyselector",
-      "community": 4
+      "community": 7
     },
     {
       "label": "fillResumeFile()",
@@ -2073,7 +2145,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L287",
       "id": "ashby_fillresumefile",
-      "community": 4
+      "community": 7
     },
     {
       "label": "blockAlreadyAnsweredForGrade()",
@@ -2081,7 +2153,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L306",
       "id": "ashby_blockalreadyansweredforgrade",
-      "community": 4
+      "community": 7
     },
     {
       "label": "isAshbyApplicationPage()",
@@ -2089,7 +2161,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L337",
       "id": "ashby_isashbyapplicationpage",
-      "community": 4
+      "community": 7
     },
     {
       "label": "selectPostingJd()",
@@ -2097,7 +2169,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L377",
       "id": "ashby_selectpostingjd",
-      "community": 4
+      "community": 7
     },
     {
       "label": "fetchAshbyJdFromApi()",
@@ -2105,7 +2177,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L387",
       "id": "ashby_fetchashbyjdfromapi",
-      "community": 4
+      "community": 7
     },
     {
       "label": "extractDescriptionHtmlFromSource()",
@@ -2113,7 +2185,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L403",
       "id": "ashby_extractdescriptionhtmlfromsource",
-      "community": 4
+      "community": 7
     },
     {
       "label": "fetchAshbyJdFromPage()",
@@ -2121,7 +2193,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L415",
       "id": "ashby_fetchashbyjdfrompage",
-      "community": 4
+      "community": 7
     },
     {
       "label": "extractAshbyJdText()",
@@ -2129,7 +2201,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L438",
       "id": "ashby_extractashbyjdtext",
-      "community": 4
+      "community": 7
     },
     {
       "label": "extractAshbyJd()",
@@ -2137,7 +2209,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L449",
       "id": "ashby_extractashbyjd",
-      "community": 4
+      "community": 7
     },
     {
       "label": "fillAshbyApplication()",
@@ -2145,7 +2217,7 @@
       "source_file": "src/lib/adapters/ashby.ts",
       "source_location": "L464",
       "id": "ashby_fillashbyapplication",
-      "community": 4
+      "community": 7
     },
     {
       "label": "fill-date-field.test.ts",
@@ -2153,7 +2225,7 @@
       "source_file": "src/lib/adapters/fill-date-field.test.ts",
       "source_location": "L1",
       "id": "fill_date_field_test",
-      "community": 19
+      "community": 16
     },
     {
       "label": "pickerThatAccepts()",
@@ -2161,7 +2233,7 @@
       "source_file": "src/lib/adapters/fill-date-field.test.ts",
       "source_location": "L16",
       "id": "fill_date_field_test_pickerthataccepts",
-      "community": 19
+      "community": 16
     },
     {
       "label": "monthFirstPicker()",
@@ -2169,7 +2241,7 @@
       "source_file": "src/lib/adapters/fill-date-field.test.ts",
       "source_location": "L33",
       "id": "fill_date_field_test_monthfirstpicker",
-      "community": 19
+      "community": 16
     },
     {
       "label": "isoOnlyPicker()",
@@ -2177,7 +2249,7 @@
       "source_file": "src/lib/adapters/fill-date-field.test.ts",
       "source_location": "L40",
       "id": "fill_date_field_test_isoonlypicker",
-      "community": 19
+      "community": 16
     },
     {
       "label": "dmyPickerNoMask()",
@@ -2185,7 +2257,7 @@
       "source_file": "src/lib/adapters/fill-date-field.test.ts",
       "source_location": "L96",
       "id": "fill_date_field_test_dmypickernomask",
-      "community": 19
+      "community": 16
     },
     {
       "label": "greenhouse.ts",
@@ -2337,7 +2409,7 @@
       "source_file": "src/lib/adapters/lever.ts",
       "source_location": "L1",
       "id": "lever",
-      "community": 7
+      "community": 8
     },
     {
       "label": "labelTextFor()",
@@ -2345,7 +2417,7 @@
       "source_file": "src/lib/adapters/lever.ts",
       "source_location": "L27",
       "id": "lever_labeltextfor",
-      "community": 7
+      "community": 8
     },
     {
       "label": "isNeverFillField()",
@@ -2353,7 +2425,7 @@
       "source_file": "src/lib/adapters/lever.ts",
       "source_location": "L32",
       "id": "lever_isneverfillfield",
-      "community": 7
+      "community": 8
     },
     {
       "label": "fillCombobox()",
@@ -2361,7 +2433,7 @@
       "source_file": "src/lib/adapters/lever.ts",
       "source_location": "L42",
       "id": "lever_fillcombobox",
-      "community": 7
+      "community": 8
     },
     {
       "label": "comboControlIn()",
@@ -2369,7 +2441,7 @@
       "source_file": "src/lib/adapters/lever.ts",
       "source_location": "L53",
       "id": "lever_combocontrolin",
-      "community": 7
+      "community": 8
     },
     {
       "label": "answerChoiceBlock()",
@@ -2377,7 +2449,7 @@
       "source_file": "src/lib/adapters/lever.ts",
       "source_location": "L62",
       "id": "lever_answerchoiceblock",
-      "community": 7
+      "community": 8
     },
     {
       "label": "markForReview()",
@@ -2385,7 +2457,7 @@
       "source_file": "src/lib/adapters/lever.ts",
       "source_location": "L97",
       "id": "lever_markforreview",
-      "community": 7
+      "community": 8
     },
     {
       "label": "fillResumeFile()",
@@ -2393,7 +2465,7 @@
       "source_file": "src/lib/adapters/lever.ts",
       "source_location": "L109",
       "id": "lever_fillresumefile",
-      "community": 7
+      "community": 8
     },
     {
       "label": "blockAlreadyAnsweredForGrade()",
@@ -2401,7 +2473,7 @@
       "source_file": "src/lib/adapters/lever.ts",
       "source_location": "L120",
       "id": "lever_blockalreadyansweredforgrade",
-      "community": 7
+      "community": 8
     },
     {
       "label": "isLeverApplicationPage()",
@@ -2409,7 +2481,7 @@
       "source_file": "src/lib/adapters/lever.ts",
       "source_location": "L146",
       "id": "lever_isleverapplicationpage",
-      "community": 7
+      "community": 8
     },
     {
       "label": "extractLeverJdText()",
@@ -2417,7 +2489,7 @@
       "source_file": "src/lib/adapters/lever.ts",
       "source_location": "L150",
       "id": "lever_extractleverjdtext",
-      "community": 7
+      "community": 8
     },
     {
       "label": "fillLeverApplication()",
@@ -2425,7 +2497,7 @@
       "source_file": "src/lib/adapters/lever.ts",
       "source_location": "L156",
       "id": "lever_fillleverapplication",
-      "community": 7
+      "community": 8
     },
     {
       "label": "generic.answers.test.ts",
@@ -2849,7 +2921,7 @@
       "source_file": "src/lib/adapters/languages-fill.test.ts",
       "source_location": "L1",
       "id": "languages_fill_test",
-      "community": 18
+      "community": 4
     },
     {
       "label": "ap()",
@@ -2857,7 +2929,7 @@
       "source_file": "src/lib/adapters/languages-fill.test.ts",
       "source_location": "L20",
       "id": "languages_fill_test_ap",
-      "community": 18
+      "community": 4
     },
     {
       "label": "radioFieldset()",
@@ -2865,7 +2937,7 @@
       "source_file": "src/lib/adapters/languages-fill.test.ts",
       "source_location": "L43",
       "id": "languages_fill_test_radiofieldset",
-      "community": 18
+      "community": 4
     },
     {
       "label": "labelledSelect()",
@@ -2873,7 +2945,7 @@
       "source_file": "src/lib/adapters/languages-fill.test.ts",
       "source_location": "L65",
       "id": "languages_fill_test_labelledselect",
-      "community": 18
+      "community": 4
     },
     {
       "label": "run()",
@@ -2881,7 +2953,7 @@
       "source_file": "src/lib/adapters/languages-fill.test.ts",
       "source_location": "L86",
       "id": "languages_fill_test_run",
-      "community": 18
+      "community": 4
     },
     {
       "label": "fieldEntry()",
@@ -2889,7 +2961,7 @@
       "source_file": "src/lib/adapters/languages-fill.test.ts",
       "source_location": "L164",
       "id": "languages_fill_test_fieldentry",
-      "community": 18
+      "community": 4
     },
     {
       "label": "classify.test.ts",
@@ -2897,7 +2969,7 @@
       "source_file": "src/lib/adapters/classify.test.ts",
       "source_location": "L1",
       "id": "classify_test",
-      "community": 0
+      "community": 1
     },
     {
       "label": "salary-fill.test.ts",
@@ -2905,7 +2977,7 @@
       "source_file": "src/lib/adapters/salary-fill.test.ts",
       "source_location": "L1",
       "id": "salary_fill_test",
-      "community": 3
+      "community": 4
     },
     {
       "label": "ap()",
@@ -2913,7 +2985,7 @@
       "source_file": "src/lib/adapters/salary-fill.test.ts",
       "source_location": "L20",
       "id": "salary_fill_test_ap",
-      "community": 3
+      "community": 4
     },
     {
       "label": "fieldEntry()",
@@ -2921,7 +2993,7 @@
       "source_file": "src/lib/adapters/salary-fill.test.ts",
       "source_location": "L28",
       "id": "salary_fill_test_fieldentry",
-      "community": 3
+      "community": 4
     },
     {
       "label": "runAshby()",
@@ -2929,7 +3001,7 @@
       "source_file": "src/lib/adapters/salary-fill.test.ts",
       "source_location": "L35",
       "id": "salary_fill_test_runashby",
-      "community": 3
+      "community": 4
     },
     {
       "label": "genericField()",
@@ -2937,7 +3009,7 @@
       "source_file": "src/lib/adapters/salary-fill.test.ts",
       "source_location": "L55",
       "id": "salary_fill_test_genericfield",
-      "community": 3
+      "community": 4
     },
     {
       "label": "runGeneric()",
@@ -2945,7 +3017,7 @@
       "source_file": "src/lib/adapters/salary-fill.test.ts",
       "source_location": "L68",
       "id": "salary_fill_test_rungeneric",
-      "community": 3
+      "community": 4
     },
     {
       "label": "open-ended.test.ts",
@@ -2961,7 +3033,7 @@
       "source_file": "src/lib/adapters/ashby-jd.test.ts",
       "source_location": "L1",
       "id": "ashby_jd_test",
-      "community": 4
+      "community": 7
     },
     {
       "label": "realJd()",
@@ -2969,7 +3041,7 @@
       "source_file": "src/lib/adapters/ashby-jd.test.ts",
       "source_location": "L7",
       "id": "ashby_jd_test_realjd",
-      "community": 4
+      "community": 7
     },
     {
       "label": "location-combobox.test.ts",
@@ -3009,7 +3081,7 @@
       "source_file": "src/lib/adapters/grades.ts",
       "source_location": "L1",
       "id": "grades",
-      "community": 16
+      "community": 8
     },
     {
       "label": "ukBand()",
@@ -3017,7 +3089,7 @@
       "source_file": "src/lib/adapters/grades.ts",
       "source_location": "L76",
       "id": "grades_ukband",
-      "community": 16
+      "community": 8
     },
     {
       "label": "isFourPointScale()",
@@ -3025,7 +3097,7 @@
       "source_file": "src/lib/adapters/grades.ts",
       "source_location": "L82",
       "id": "grades_isfourpointscale",
-      "community": 16
+      "community": 8
     },
     {
       "label": "gradeQuestion()",
@@ -3033,7 +3105,7 @@
       "source_file": "src/lib/adapters/grades.ts",
       "source_location": "L87",
       "id": "grades_gradequestion",
-      "community": 16
+      "community": 8
     },
     {
       "label": "gradeReviewReason()",
@@ -3041,7 +3113,7 @@
       "source_file": "src/lib/adapters/grades.ts",
       "source_location": "L136",
       "id": "grades_gradereviewreason",
-      "community": 16
+      "community": 8
     },
     {
       "label": "gradeSkipReason()",
@@ -3049,7 +3121,7 @@
       "source_file": "src/lib/adapters/grades.ts",
       "source_location": "L141",
       "id": "grades_gradeskipreason",
-      "community": 16
+      "community": 8
     },
     {
       "label": "r039-location-commitment.test.ts",
@@ -3081,7 +3153,7 @@
       "source_file": "src/lib/adapters/draft-queue.integration.test.ts",
       "source_location": "L1",
       "id": "draft_queue_integration_test",
-      "community": 7
+      "community": 8
     },
     {
       "label": "labelledTextarea()",
@@ -3089,7 +3161,7 @@
       "source_file": "src/lib/adapters/draft-queue.integration.test.ts",
       "source_location": "L42",
       "id": "draft_queue_integration_test_labelledtextarea",
-      "community": 7
+      "community": 8
     },
     {
       "label": "dom.ts",
@@ -3441,7 +3513,7 @@
       "source_file": "src/lib/adapters/shared/drafts.ts",
       "source_location": "L1",
       "id": "drafts",
-      "community": 7
+      "community": 10
     },
     {
       "label": "isDraftTargetAvailable()",
@@ -3449,7 +3521,7 @@
       "source_file": "src/lib/adapters/shared/drafts.ts",
       "source_location": "L13",
       "id": "drafts_isdrafttargetavailable",
-      "community": 7
+      "community": 10
     },
     {
       "label": "runDraftQueue()",
@@ -3457,7 +3529,7 @@
       "source_file": "src/lib/adapters/shared/drafts.ts",
       "source_location": "L21",
       "id": "drafts_rundraftqueue",
-      "community": 7
+      "community": 10
     },
     {
       "label": "phone.test.ts",
@@ -3473,7 +3545,7 @@
       "source_file": "src/lib/adapters/shared/jd.ts",
       "source_location": "L1",
       "id": "jd",
-      "community": 4
+      "community": 7
     },
     {
       "label": "looksLikeJobDescription()",
@@ -3481,7 +3553,7 @@
       "source_file": "src/lib/adapters/shared/jd.ts",
       "source_location": "L30",
       "id": "jd_lookslikejobdescription",
-      "community": 4
+      "community": 7
     },
     {
       "label": "htmlToPlainText()",
@@ -3489,7 +3561,7 @@
       "source_file": "src/lib/adapters/shared/jd.ts",
       "source_location": "L38",
       "id": "jd_htmltoplaintext",
-      "community": 4
+      "community": 7
     },
     {
       "label": "drafts.test.ts",
@@ -3497,7 +3569,7 @@
       "source_file": "src/lib/adapters/shared/drafts.test.ts",
       "source_location": "L1",
       "id": "drafts_test",
-      "community": 7
+      "community": 10
     },
     {
       "label": "phone.ts",
@@ -3545,7 +3617,7 @@
       "source_file": "src/entrypoints/persistent-badge.ts",
       "source_location": "L1",
       "id": "persistent_badge",
-      "community": 21
+      "community": 18
     },
     {
       "label": "main()",
@@ -3553,7 +3625,7 @@
       "source_file": "src/entrypoints/persistent-badge.ts",
       "source_location": "L18",
       "id": "persistent_badge_main",
-      "community": 21
+      "community": 18
     },
     {
       "label": "content.ts",
@@ -3561,15 +3633,15 @@
       "source_file": "src/entrypoints/content.ts",
       "source_location": "L1",
       "id": "content",
-      "community": 3
+      "community": 6
     },
     {
       "label": "main()",
       "file_type": "code",
       "source_file": "src/entrypoints/content.ts",
-      "source_location": "L50",
+      "source_location": "L54",
       "id": "content_main",
-      "community": 3
+      "community": 6
     },
     {
       "label": "background.ts",
@@ -3577,7 +3649,7 @@
       "source_file": "src/entrypoints/background.ts",
       "source_location": "L1",
       "id": "background",
-      "community": 8
+      "community": 3
     },
     {
       "label": "harvestFields()",
@@ -3585,7 +3657,7 @@
       "source_file": "src/entrypoints/background.ts",
       "source_location": "L25",
       "id": "background_harvestfields",
-      "community": 8
+      "community": 3
     },
     {
       "label": "timeoutFetch()",
@@ -3593,7 +3665,7 @@
       "source_file": "src/entrypoints/background.ts",
       "source_location": "L59",
       "id": "background_timeoutfetch",
-      "community": 8
+      "community": 3
     },
     {
       "label": "sleep()",
@@ -3601,7 +3673,7 @@
       "source_file": "src/entrypoints/background.ts",
       "source_location": "L92",
       "id": "background_sleep",
-      "community": 8
+      "community": 3
     },
     {
       "label": "resolveAndDraft()",
@@ -3609,7 +3681,7 @@
       "source_file": "src/entrypoints/background.ts",
       "source_location": "L131",
       "id": "background_resolveanddraft",
-      "community": 8
+      "community": 3
     },
     {
       "label": "fetchAshbyPostingCompensation()",
@@ -3617,7 +3689,7 @@
       "source_file": "src/entrypoints/background.ts",
       "source_location": "L235",
       "id": "background_fetchashbypostingcompensation",
-      "community": 8
+      "community": 3
     },
     {
       "label": "generateResumeAndProfile()",
@@ -3625,7 +3697,7 @@
       "source_file": "src/entrypoints/background.ts",
       "source_location": "L255",
       "id": "background_generateresumeandprofile",
-      "community": 8
+      "community": 3
     },
     {
       "label": "notifyRetry()",
@@ -3633,7 +3705,7 @@
       "source_file": "src/entrypoints/background.ts",
       "source_location": "L450",
       "id": "background_notifyretry",
-      "community": 8
+      "community": 3
     },
     {
       "label": "App.tsx",
@@ -5784,6 +5856,18 @@
     {
       "relation": "imports_from",
       "confidence": "EXTRACTED",
+      "source_file": "src/lib/application-task-controller.test.ts",
+      "source_location": "L3",
+      "weight": 1.0,
+      "_src": "application_task_controller_test",
+      "_tgt": "application_task_controller",
+      "source": "application_task_controller_test",
+      "target": "application_task_controller",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
       "source_file": "src/lib/application-progress.test.ts",
       "source_location": "L2",
       "weight": 1.0,
@@ -6556,6 +6640,30 @@
       "source_location": "L9",
       "weight": 1.0,
       "_src": "application_progress",
+      "_tgt": "application_progress_resumegenerationstatus",
+      "source": "application_progress",
+      "target": "application_progress_resumegenerationstatus",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/application-progress.ts",
+      "source_location": "L13",
+      "weight": 1.0,
+      "_src": "application_progress",
+      "_tgt": "application_progress_escapeapplicationtext",
+      "source": "application_progress",
+      "target": "application_progress_escapeapplicationtext",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/application-progress.ts",
+      "source_location": "L21",
+      "weight": 1.0,
+      "_src": "application_progress",
       "_tgt": "application_progress_submissionprogress",
       "source": "application_progress",
       "target": "application_progress_submissionprogress",
@@ -6565,7 +6673,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/application-progress.ts",
-      "source_location": "L16",
+      "source_location": "L28",
       "weight": 1.0,
       "_src": "application_progress",
       "_tgt": "application_progress_pageshowssubmissionconfirmation",
@@ -6577,12 +6685,36 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/lib/application-progress.ts",
-      "source_location": "L21",
+      "source_location": "L33",
       "weight": 1.0,
       "_src": "application_progress",
       "_tgt": "application_progress_pagesubmissionfailuremessage",
       "source": "application_progress",
       "target": "application_progress_pagesubmissionfailuremessage",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/application-progress.ts",
+      "source_location": "L49",
+      "weight": 1.0,
+      "_src": "application_progress",
+      "_tgt": "application_progress_classifysubmissionoutcome",
+      "source": "application_progress",
+      "target": "application_progress_classifysubmissionoutcome",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/application-task-controller.ts",
+      "source_location": "L1",
+      "weight": 1.0,
+      "_src": "application_task_controller",
+      "_tgt": "application_progress",
+      "source": "application_progress",
+      "target": "application_task_controller",
       "confidence_score": 1.0
     },
     {
@@ -6595,6 +6727,42 @@
       "_tgt": "application_progress",
       "source": "application_progress",
       "target": "content",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/application-progress.ts",
+      "source_location": "L10",
+      "weight": 1.0,
+      "_src": "application_progress_resumegenerationstatus",
+      "_tgt": "application_progress_resumegenerationprogress",
+      "source": "application_progress_resumegenerationprogress",
+      "target": "application_progress_resumegenerationstatus",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/application-progress.ts",
+      "source_location": "L52",
+      "weight": 1.0,
+      "_src": "application_progress_classifysubmissionoutcome",
+      "_tgt": "application_progress_pageshowssubmissionconfirmation",
+      "source": "application_progress_pageshowssubmissionconfirmation",
+      "target": "application_progress_classifysubmissionoutcome",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/application-progress.ts",
+      "source_location": "L50",
+      "weight": 1.0,
+      "_src": "application_progress_classifysubmissionoutcome",
+      "_tgt": "application_progress_pagesubmissionfailuremessage",
+      "source": "application_progress_pagesubmissionfailuremessage",
+      "target": "application_progress_classifysubmissionoutcome",
       "confidence_score": 1.0
     },
     {
@@ -6835,6 +7003,66 @@
       "_tgt": "config",
       "source": "config",
       "target": "background",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/application-task-controller.ts",
+      "source_location": "L10",
+      "weight": 1.0,
+      "_src": "application_task_controller",
+      "_tgt": "application_task_controller_createsubmissionoutcomecontroller",
+      "source": "application_task_controller",
+      "target": "application_task_controller_createsubmissionoutcomecontroller",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/application-task-controller.ts",
+      "source_location": "L57",
+      "weight": 1.0,
+      "_src": "application_task_controller",
+      "_tgt": "application_task_controller_createresumegenerationcontroller",
+      "source": "application_task_controller",
+      "target": "application_task_controller_createresumegenerationcontroller",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/application-task-controller.ts",
+      "source_location": "L83",
+      "weight": 1.0,
+      "_src": "application_task_controller",
+      "_tgt": "application_task_controller_createresumereviewprompt",
+      "source": "application_task_controller",
+      "target": "application_task_controller_createresumereviewprompt",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/lib/application-task-controller.ts",
+      "source_location": "L114",
+      "weight": 1.0,
+      "_src": "application_task_controller",
+      "_tgt": "application_task_controller_restoreresumereviewcontrols",
+      "source": "application_task_controller",
+      "target": "application_task_controller_restoreresumereviewcontrols",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "src/entrypoints/content.ts",
+      "source_location": "L28",
+      "weight": 1.0,
+      "_src": "content",
+      "_tgt": "application_task_controller",
+      "source": "application_task_controller",
+      "target": "content",
       "confidence_score": 1.0
     },
     {
@@ -13561,7 +13789,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/entrypoints/content.ts",
-      "source_location": "L50",
+      "source_location": "L54",
       "weight": 1.0,
       "_src": "content",
       "_tgt": "content_main",
