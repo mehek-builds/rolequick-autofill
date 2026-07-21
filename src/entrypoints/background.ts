@@ -534,6 +534,49 @@ export default defineBackground(() => {
         return false;
       }
 
+      case 'APPLICATION_REVIEW_READY': {
+        const tabId = _sender.tab?.id;
+        getStoredToken().then(async (token) => {
+          if (!token || tabId === undefined) {
+            sendResponse({ error: 'The application tab is no longer available.' });
+            return;
+          }
+          const payload = message.payload as {
+            applicationId: string;
+            atsName: string;
+            portalUrl: string;
+            questions: Array<{ id: string; question: string; answer: string; kind: 'essay' | 'required'; required: boolean }>;
+            skippedReasons: string[];
+          };
+          try {
+            const res = await timeoutFetch(`${API_BASE}/applications/${payload.applicationId}/review`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({
+                ats_name: payload.atsName,
+                portal_url: payload.portalUrl,
+                questions: payload.questions,
+                skipped_reasons: payload.skippedReasons,
+              }),
+            });
+            if (!res.ok) throw new Error(`review handoff failed (${res.status})`);
+            const stored = await chrome.storage.session.get('litos_application_tabs');
+            const tabs = (stored.litos_application_tabs ?? {}) as Record<string, number>;
+            await chrome.storage.session.set({
+              litos_application_tabs: { ...tabs, [payload.applicationId]: tabId },
+            });
+            await chrome.tabs.create({
+              url: `https://trylitos.com/dashboard/applications?application=${encodeURIComponent(payload.applicationId)}`,
+              active: true,
+            });
+            sendResponse({ ok: true });
+          } catch (error) {
+            sendResponse({ error: error instanceof Error ? error.message : 'Could not prepare dashboard review.' });
+          }
+        });
+        return true;
+      }
+
       // Fields the student typed by hand into a real application during onboarding. The content
       // script has no token and no host_permissions, so every write goes through here.
       //
@@ -548,5 +591,55 @@ export default defineBackground(() => {
       default:
         return false;
     }
+  });
+
+  chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+    const origin = (() => {
+      try {
+        return sender.url ? new URL(sender.url).origin : '';
+      } catch {
+        return '';
+      }
+    })();
+    const allowed =
+      origin === 'https://trylitos.com' ||
+      origin === 'https://www.trylitos.com' ||
+      origin === 'https://role-quick-website.vercel.app' ||
+      /^http:\/\/localhost(?::\d+)?$/.test(origin);
+    if (!allowed) {
+      sendResponse({ error: 'This page is not allowed to control Litos.' });
+      return false;
+    }
+    if (message?.type === 'LITOS_PING') {
+      sendResponse({ ok: true });
+      return false;
+    }
+    if (message?.type !== 'LITOS_SUBMIT_APPLICATION') return false;
+
+    const applicationId = String(message.applicationId ?? '');
+    const questions = Array.isArray(message.questions) ? message.questions : [];
+    Promise.all([getStoredToken(), chrome.storage.session.get('litos_application_tabs')])
+      .then(async ([token, stored]) => {
+        const tabId = ((stored.litos_application_tabs ?? {}) as Record<string, number>)[applicationId];
+        if (!token || tabId === undefined) throw new Error('The company portal tab is no longer open. Return to the posting and prepare it again.');
+        await timeoutFetch(`${API_BASE}/applications/${applicationId}/status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ status: 'submitting' }),
+        });
+        const result = await chrome.tabs.sendMessage(tabId, {
+          type: 'SUBMIT_FROM_DASHBOARD',
+          payload: { applicationId, questions },
+        }) as { ok?: boolean; error?: string };
+        await timeoutFetch(`${API_BASE}/applications/${applicationId}/status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(result?.ok ? { status: 'submitted' } : { status: 'failed', error: result?.error }),
+        });
+        if (!result?.ok) throw new Error(result?.error ?? 'The company portal did not confirm submission.');
+        sendResponse({ ok: true });
+      })
+      .catch((error) => sendResponse({ error: error instanceof Error ? error.message : 'Submission failed.' }));
+    return true;
   });
 });

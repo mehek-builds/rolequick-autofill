@@ -154,6 +154,7 @@ export interface ResumeContact {
 }
 
 export interface GeneratedResume {
+  resume_id: string;
   resume_url: string;
   file_name: string;
   spec: unknown;

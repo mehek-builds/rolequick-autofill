@@ -69,6 +69,17 @@ export default defineContentScript({
 
     let cardInjected = false;
     let approved = false; // true once user taps "Yes" on either card
+    let submitFromDashboard: ((questions: Array<{ id: string; question: string; answer: string }>) => Promise<{ ok: boolean; error?: string }>) | null = null;
+
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (message?.type !== 'SUBMIT_FROM_DASHBOARD') return false;
+      if (!submitFromDashboard) {
+        sendResponse({ ok: false, error: 'This portal is no longer ready for dashboard submission.' });
+        return false;
+      }
+      submitFromDashboard(message.payload?.questions ?? []).then(sendResponse);
+      return true;
+    });
 
     // ─── Job title/company extraction ───────────────────────────────────────
 
@@ -889,41 +900,9 @@ export default defineContentScript({
           return;
         }
 
-        const approvedResume = await new Promise<boolean>((resolve) => {
-          if (!statusEl || !yesBtn || !noBtn) {
-            resolve(false);
-            return;
-          }
-          statusEl.textContent = buildResumeReviewSummary(resume.quality);
-          const actions = document.createElement('div');
-          actions.style.cssText = 'display:flex;gap:8px;margin-top:10px;';
-          const attach = document.createElement('button');
-          attach.type = 'button';
-          attach.textContent = 'Attach and fill';
-          attach.style.cssText = 'flex:1;background:#4f46e5;color:white;border:none;border-radius:8px;padding:8px 6px;font-size:11px;font-weight:600;cursor:pointer;';
-          const cancel = document.createElement('button');
-          cancel.type = 'button';
-          cancel.textContent = 'Not now';
-          cancel.style.cssText = 'flex:1;background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:8px 6px;font-size:11px;font-weight:600;cursor:pointer;';
-          actions.append(attach, cancel);
-          statusEl.appendChild(actions);
-          yesBtn.style.display = 'none';
-          noBtn.style.display = 'none';
-          attach.addEventListener('click', () => resolve(true), { once: true });
-          cancel.addEventListener('click', () => resolve(false), { once: true });
-        });
-        if (!approvedResume) {
-          if (statusEl) statusEl.textContent = 'Resume ready, but not attached. You can review the form or try again.';
-          if (yesBtn) {
-            yesBtn.style.display = '';
-            yesBtn.disabled = false;
-            yesBtn.textContent = 'Review again';
-          }
-          if (noBtn) noBtn.style.display = '';
-          return;
-        }
-
-        if (statusEl) statusEl.textContent = 'Filling the application...';
+        if (statusEl) statusEl.textContent = `${buildResumeReviewSummary(resume.quality)} Preparing your dashboard review...`;
+        if (yesBtn) yesBtn.style.display = 'none';
+        if (noBtn) noBtn.style.display = 'none';
 
         // R-041: this fetch used to swallow every failure in a bare catch - the card stayed
         // clean, the fill read as a success, and the student could submit resume-less without
@@ -945,6 +924,7 @@ export default defineContentScript({
         // reporting) may have left labels behind. Discard them so THIS report only ever carries
         // labels recorded by this fill.
         drainR030CandidateLabels();
+        const draftedQuestions: Array<{ id: string; question: string; answer: string; kind: 'essay'; required: boolean }> = [];
         let fillResult: AutofillResult;
         try {
           fillResult = await withInactivityTimeout(
@@ -973,6 +953,15 @@ export default defineContentScript({
                     if (resolved) return;
                     resolved = true;
                     signal.removeEventListener('abort', onAbort);
+                    if (answer) {
+                      draftedQuestions.push({
+                        id: `essay-${draftedQuestions.length + 1}`,
+                        question,
+                        answer,
+                        kind: 'essay',
+                        required: true,
+                      });
+                    }
                     resolve(answer);
                   };
                   const onAbort = () => finish(null);
@@ -1074,38 +1063,62 @@ export default defineContentScript({
         const autoSubmitHeld =
           autoSubmitOn &&
           (!finalSubmitBtn || resumeMissing || aiDrafted || needsReview || hasEmptyRequiredFields() || document.hidden);
-        if (autoSubmitOn && !autoSubmitHeld && finalSubmitBtn) {
-          runAutoSubmitCountdown(
-            card, statusEl,
-            card.querySelector<HTMLButtonElement>('#wp-resume-yes'),
-            card.querySelector<HTMLButtonElement>('#wp-resume-no'),
-            finalSubmitBtn, fillResult, reportEvent, 'Submitting',
-          );
-          return;
-        }
-
         reportEvent(false);
 
-        // Surface WHAT still needs the student (resume, agreements, unmatched/required blanks), not
-        // just a filled count - the adapters compute this precisely and it used to be discarded.
-        renderFillSummary(statusEl, fillResult, { resumeMissing, autoSubmitHeld });
+        const dashboardQuestions = [
+          ...draftedQuestions,
+          ...selectNeedsYouReasons(fillResult.skipped_reasons, 20).map((reason, index) => ({
+            id: `required-${index + 1}`,
+            question: reason,
+            answer: '',
+            kind: 'required' as const,
+            required: true,
+          })),
+        ];
 
-        // E-015: after the student's own submit attempt, the form may refuse with a validation
-        // list naming required fields no sweep saw. That list is the authority - re-read it and
-        // re-render the card from it.
-        armValidationAuthority(statusEl, fillResult, resumeMissing);
+        submitFromDashboard = async (approvedQuestions) => {
+          if (!finalSubmitBtn || !finalSubmitBtn.isConnected) {
+            return { ok: false, error: 'The portal no longer has a final Submit button.' };
+          }
+          for (const approvedQuestion of approvedQuestions) {
+            const original = draftedQuestions.find((item) => item.id === approvedQuestion.id);
+            if (!original || original.answer === approvedQuestion.answer) continue;
+            const target = [...document.querySelectorAll<HTMLTextAreaElement>('textarea')]
+              .find((field) => field.value.trim() === original.answer.trim());
+            if (!target) return { ok: false, error: `Could not apply the edited answer for: ${approvedQuestion.question}` };
+            const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+            setter?.call(target, approvedQuestion.answer);
+            target.dispatchEvent(new Event('input', { bubbles: true }));
+            target.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          if (hasEmptyRequiredFields()) return { ok: false, error: 'The portal still has required fields that need an answer.' };
+          finalSubmitBtn.click();
+          const started = Date.now();
+          while (Date.now() - started < 45_000) {
+            const text = document.body.innerText;
+            const failure = pageSubmissionFailureMessage(text);
+            if (failure) return { ok: false, error: failure };
+            if (pageShowsSubmissionConfirmation(text)) return { ok: true };
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+          return { ok: false, error: 'The company portal did not confirm submission within 45 seconds.' };
+        };
 
-        // Highlight the real final-submit control if there is one; never click it here (PRD-v2
-        // Section 5 Step 4). On a multi-step form still mid-flow there is no final submit yet, so
-        // nothing is highlighted rather than pointing the student at a misleading "Next".
-        if (finalSubmitBtn instanceof HTMLElement) {
-          finalSubmitBtn.style.outline = '3px solid #4f46e5';
-          finalSubmitBtn.style.outlineOffset = '2px';
-        }
-
-        // Keep the handoff visible until the student closes it, submits, or navigates. A timed
-        // dismissal made long forms look finished even though required and sensitive questions
-        // were still waiting below the fold.
+        chrome.runtime.sendMessage({
+          type: 'APPLICATION_REVIEW_READY',
+          payload: {
+            applicationId: resume.resume_id,
+            atsName: fillResult.ats_name,
+            portalUrl: window.location.href,
+            questions: dashboardQuestions,
+            skippedReasons: fillResult.skipped_reasons,
+          },
+        }, (response: { ok?: boolean; error?: string } | undefined) => {
+          if (!statusEl) return;
+          statusEl.textContent = response?.ok
+            ? 'Review ready in your Litos dashboard. This portal will stay open in the background.'
+            : response?.error ?? 'Could not open the dashboard review. This portal was not submitted.';
+        });
       });
     }
 

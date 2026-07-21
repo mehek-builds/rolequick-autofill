@@ -18,5 +18,14 @@ export default defineConfig({
     // tab the student invoked it from.
     permissions: ['activeTab', 'scripting', 'storage', 'clipboardWrite'],
     host_permissions: command === 'serve' ? ['http://localhost:3001/*'] : [],
+    externally_connectable: {
+      matches: [
+        'https://trylitos.com/*',
+        'https://www.trylitos.com/*',
+        'https://role-quick-website.vercel.app/*',
+        'http://localhost/*',
+        'http://localhost:*/*',
+      ],
+    },
   }),
 });
