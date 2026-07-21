@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildResumeReviewMessage } from './resume-review';
+import { buildResumeReviewMessage, buildResumeReviewSummary } from './resume-review';
 
 describe('resume review message', () => {
   it('shows one-page omissions before the student approves attachment', () => {
@@ -30,5 +30,22 @@ describe('resume review message', () => {
       omissions: [],
     });
     expect(message).toContain('Unsupported generated claims were removed');
+  });
+
+  it('builds concise inline review copy without browser-dialog instructions', () => {
+    const summary = buildResumeReviewSummary({
+      ready_to_attach: true,
+      issues: [],
+      warnings: [],
+      ats_keyword_coverage_pct: 30,
+      trimmed_for_one_page_fit: true,
+      sparse_add_more_experience: false,
+      grounding_removed: ['invented claim'],
+      omissions: ['lower-fit project'],
+    });
+    expect(summary).toContain('One-page resume ready');
+    expect(summary).toContain('1 lower-fit item omitted');
+    expect(summary).toContain('1 unsupported generated claim removed');
+    expect(summary).not.toContain('Select OK');
   });
 });

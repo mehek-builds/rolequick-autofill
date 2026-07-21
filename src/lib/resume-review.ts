@@ -1,5 +1,16 @@
 import type { ResumeQuality } from './types';
 
+export function buildResumeReviewSummary(quality: ResumeQuality): string {
+  const details: string[] = ['One-page resume ready. Review it before Litos attaches it.'];
+  if (quality.omissions.length > 0) {
+    details.push(`${quality.omissions.length} lower-fit item${quality.omissions.length === 1 ? '' : 's'} omitted to keep it to one page.`);
+  }
+  if (quality.grounding_removed.length > 0) {
+    details.push(`${quality.grounding_removed.length} unsupported generated claim${quality.grounding_removed.length === 1 ? '' : 's'} removed.`);
+  }
+  return details.join(' ');
+}
+
 export function buildResumeReviewMessage(quality: ResumeQuality): string {
   const lines = [
     'Litos prepared a one-page resume for this job.',
