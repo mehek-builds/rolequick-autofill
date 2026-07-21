@@ -20,9 +20,19 @@ const ALL_KEYS: string[] = KEY_GROUPS.flatMap((group) => [...group]);
 
 // Prefer the new key; fall back to the legacy Volley-era key so an existing install that has
 // not migrated yet still reads its saved value.
+function lastStorageError(): Error | null {
+  const message = chrome.runtime.lastError?.message;
+  return message ? new Error(`Could not access extension storage: ${message}`) : null;
+}
+
 function chromeStorageGetCompat<T>(key: string, aliases: readonly string[]): Promise<T | null> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     chrome.storage.local.get([key, ...aliases], (result) => {
+      const error = lastStorageError();
+      if (error) {
+        reject(error);
+        return;
+      }
       const current = result[key] as T | undefined;
       const migrated = aliases.map((alias) => result[alias] as T | undefined).find((value) => value !== undefined);
       resolve(current ?? migrated ?? null);
@@ -31,14 +41,22 @@ function chromeStorageGetCompat<T>(key: string, aliases: readonly string[]): Pro
 }
 
 function chromeStorageSet(key: string, value: unknown): Promise<void> {
-  return new Promise((resolve) => {
-    chrome.storage.local.set({ [key]: value }, resolve);
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set({ [key]: value }, () => {
+      const error = lastStorageError();
+      if (error) reject(error);
+      else resolve();
+    });
   });
 }
 
 function chromeStorageRemove(keys: string | string[]): Promise<void> {
-  return new Promise((resolve) => {
-    chrome.storage.local.remove(keys, resolve);
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.remove(keys, () => {
+      const error = lastStorageError();
+      if (error) reject(error);
+      else resolve();
+    });
   });
 }
 
@@ -69,7 +87,8 @@ export async function getToken(): Promise<string | null> {
 }
 
 export async function setToken(token: string): Promise<void> {
-  return chromeStorageSet(TOKEN_KEY, token);
+  await chromeStorageSet(TOKEN_KEY, token);
+  if ((await getToken()) !== token) throw new Error('Your sign-in could not be saved. Please try again.');
 }
 
 export async function clearToken(): Promise<void> {
@@ -82,7 +101,8 @@ export async function getProfile(): Promise<Profile | null> {
 }
 
 export async function setProfile(profile: Profile): Promise<void> {
-  return chromeStorageSet(PROFILE_KEY, profile);
+  await chromeStorageSet(PROFILE_KEY, profile);
+  if (!(await getProfile())) throw new Error('Your profile could not be saved. Please try again.');
 }
 
 export async function clearAll(): Promise<void> {

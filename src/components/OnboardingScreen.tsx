@@ -206,7 +206,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@university.edu"
+                placeholder="you@example.com"
                 className={fieldClass}
                 required
               />
