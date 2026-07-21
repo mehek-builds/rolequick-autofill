@@ -7057,7 +7057,7 @@
       "relation": "imports_from",
       "confidence": "EXTRACTED",
       "source_file": "src/entrypoints/content.ts",
-      "source_location": "L28",
+      "source_location": "L30",
       "weight": 1.0,
       "_src": "content",
       "_tgt": "application_task_controller",
