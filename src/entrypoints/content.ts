@@ -23,6 +23,8 @@ import type { PostingCompensation } from '../lib/adapters/salary';
 import { buildResumeReviewSummary } from '../lib/resume-review';
 import {
   escapeApplicationText,
+  pageShowsSubmissionConfirmation,
+  pageSubmissionFailureMessage,
   submissionProgress,
 } from '../lib/application-progress';
 import {
