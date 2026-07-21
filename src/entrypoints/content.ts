@@ -332,12 +332,12 @@ export default defineContentScript({
       const needsYou = selectNeedsYouReasons(fillResult.skipped_reasons, opts.capOverride);
       statusEl.style.display = 'block';
       statusEl.innerHTML =
-        head.map((l) => `<div>${escapeHtml(l)}</div>`).join('') +
+        head.map((l) => `<div style="line-height:1.4;">${escapeHtml(l)}</div>`).join('') +
         (needsYou.length
-          ? `<div style="margin-top:4px;font-weight:600;">Still needs you:</div>` +
-            needsYou.map((r) => `<div>• ${escapeHtml(r)}</div>`).join('')
+          ? `<div style="margin-top:4px;font-weight:600;line-height:1.4;">Still needs you:</div>` +
+            needsYou.map((r) => `<div style="line-height:1.4;">• ${escapeHtml(r)}</div>`).join('')
           : '') +
-        `<div style="margin-top:4px;">Review, then submit yourself.</div>`;
+        `<div style="margin-top:4px;line-height:1.4;">Review, then submit yourself.</div>`;
     }
 
     // E-015 watcher. A MutationObserver, deliberately NOT an event listener: a capture-phase
