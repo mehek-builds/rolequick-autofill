@@ -595,7 +595,7 @@ export default defineContentScript({
       attachCardHandlers(card, title, company, url);
     }
 
-    // Card 2: fires when Submit button is clicked (only if not already approved)
+    // Submission status replaces the application card when the portal's Submit button is clicked.
     function injectSubmitCard(title: string, company: string, url: string) {
       if (document.getElementById('litos-submit-card')) return;
       cardInjected = true;
@@ -641,9 +641,20 @@ export default defineContentScript({
           stop();
           return;
         }
+        const elapsedSeconds = (Date.now() - startedAt) / 1000;
+        // Native browser validation can reject a click before any request leaves the page. Do not
+        // tell the student Litos is waiting on the company when the form is visibly incomplete.
+        if (!finished && elapsedSeconds >= 1 && hasEmptyRequiredFields()) {
+          finished = true;
+          stop();
+          if (iconEl) iconEl.textContent = '!';
+          if (titleEl) titleEl.textContent = 'Application needs your review';
+          if (statusEl) statusEl.textContent = 'The portal did not submit. Complete the required fields, then try again.';
+          return;
+        }
         confirmIfVisible();
         if (!finished && statusEl) {
-          statusEl.textContent = submissionProgress((Date.now() - startedAt) / 1000);
+          statusEl.textContent = submissionProgress(elapsedSeconds);
         }
       }, 1000);
       const confirmationObserver = new MutationObserver(confirmIfVisible);
@@ -1078,7 +1089,9 @@ export default defineContentScript({
           finalSubmitBtn.style.outlineOffset = '2px';
         }
 
-        setTimeout(dismiss, 9000);
+        // Keep the handoff visible until the student closes it, submits, or navigates. A timed
+        // dismissal made long forms look finished even though required and sensitive questions
+        // were still waiting below the fold.
       });
     }
 
