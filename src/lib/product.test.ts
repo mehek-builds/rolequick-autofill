@@ -5,10 +5,10 @@ describe('Litos product contract', () => {
   it('pins the offline identity and API compatibility fallback', () => {
     expect(PRODUCT_NAME).toBe('Litos');
     expect(API_VERSION).toBe('1');
-    expect(EXTENSION_VERSION).toBe('0.4.7');
+    expect(EXTENSION_VERSION).toBe('0.4.8');
     expect(litosClientHeaders()).toEqual({
       'X-Litos-Client': 'extension',
-      'X-Litos-Version': '0.4.7',
+      'X-Litos-Version': '0.4.8',
     });
   });
 });
