@@ -20,6 +20,7 @@ import {
 // currency-gated stored answer. Pure and shared, so this adapter, the ATS adapters and the
 // background all read the same decision.
 import { resolveSalary, storedSalaryOf } from './salary';
+import { isDraftTargetAvailable, runDraftQueue } from './shared/drafts';
 
 // Generic adapter for companies that build their OWN application form on their own domain
 // against an ATS's API (live-tested targets 2026-07-04: vercel.com/careers - Greenhouse API
@@ -184,7 +185,7 @@ function candidateInputs(): Array<HTMLInputElement | HTMLTextAreaElement> {
   // the filler and left silently blank with no skip reason.
   return [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
     'input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input[type="date"], input:not([type]), textarea',
-  )].filter((el) => !el.closest('[id*="rolequick"]') && !el.disabled && !el.readOnly && isVisible(el));
+  )].filter((el) => !el.closest('[id*="litos"]') && !el.disabled && !el.readOnly && isVisible(el));
 }
 
 export function isLikelyApplicationForm(): boolean {
@@ -254,7 +255,7 @@ export function eeoAnswer(pref: string | undefined): Desired {
 // ("legally authorized to work in the location where this role is based?", "require sponsorship
 // to work in the US?") but the profile stores single global flags, so deriving Yes/No shipped a
 // false declaration on non-local roles (live QA 2026-07-16, Lever/Xsolla; sponsorship extended to
-// always-ask on Mehek's 2026-07-16 decision). RoleQuick NEVER answers either: the adapters skip
+// always-ask on Mehek's 2026-07-16 decision). Litos NEVER answers either: the adapters skip
 // the question with workEligibilitySkipReason(), whose "left for" wording makes the auto-submit
 // gate HOLD (autosubmit-gate.ts REVIEW_FLAG) while it sits unanswered. This is the ONE classifier
 // every adapter must use: whitespace-tolerant (\s+, labels keep raw internal whitespace from
@@ -314,7 +315,7 @@ export type ProfileKey =
   | 'referral_source_default';
 
 /**
- * Is this a question RoleQuick must never answer AND never learn?
+ * Is this a question Litos must never answer AND never learn?
  *
  * The single source of refusal truth, exported because harvest has to ask the same question of a
  * control's own label AND of its surrounding question stem: a work-auth question rendered as a
@@ -334,7 +335,7 @@ export function isRefusedQuestion(label: string): boolean {
  * The single source of field identity, with two consumers that must never disagree:
  * `desiredAnswer` (fill: key -> look up the stored value) and harvest (read: key -> store what the
  * student typed). Two copies of these regexes would drift, and the drift would be invisible until
- * RoleQuick filled one field and learned a different one.
+ * Litos filled one field and learned a different one.
  *
  * Why this exists rather than reusing desiredAnswer: desiredAnswer's branches are guarded on the
  * value being present (`&& ap.desired_salary`), so on an empty profile - which is exactly the
@@ -357,9 +358,17 @@ export function classifyField(label: string, type?: string): ProfileKey | null {
   // Input type beats label text where the browser already told us what this is.
   if (type === 'tel') return 'phone';
 
+  // R-039: a location-COMMITMENT question ("can you commit to being in-office three days per
+  // week...?", "are you open to relocating...?") contains location vocabulary but is not a
+  // location field - a stored place answers neither, and the unguarded matcher filled "Dubai"
+  // into both live labels. Computed once, it gates the three residence branches
+  // (country/state/city) below. Citizenship stays unconditional: "are you a citizen..." is its
+  // own always-ask story and must not change here.
+  const locationCommitment = isLocationCommitmentQuestion(l);
+
   // Citizenship before residence: "country of citizenship" contains "country".
   if (CITIZENSHIP_QUESTION.test(l)) return 'citizenship';
-  if (RESIDENCE_QUESTION.test(l)) return 'address_country';
+  if (!locationCommitment && RESIDENCE_QUESTION.test(l)) return 'address_country';
 
   if (REFERRAL_QUESTION.test(l)) return 'referral_source_default';
   if (SALARY_QUESTION.test(l)) return 'desired_salary';
@@ -388,12 +397,18 @@ export function classifyField(label: string, type?: string): ProfileKey | null {
   // The lookahead keeps "state" the NOUN: "please state your current location" is a city question
   // that merely uses the verb, and without the guard it would classify as address_state. No
   // plural: "are you located in the United States?" names a country, not a state field.
-  if (/\b(state|province|prefecture)\b(?!\s+(?:your|the|you|it|why|how|what|when|where))|state\s*\/\s*province/i.test(l))
+  if (
+    !locationCommitment &&
+    /\b(state|province|prefecture)\b(?!\s+(?:your|the|you|it|why|how|what|when|where))|state\s*\/\s*province/i.test(l)
+  )
     return 'address_state';
   // The phrase alternatives are R-002's: live misses were question-shaped labels ("where are you
   // currently living?") that a bare \bcity\b never matched. "where are you based" classifies as
   // address_country first (RESIDENCE_QUESTION), which is also the order the R-002 branch chose.
-  if (/\b(city|town)\b|\blocation\b|where are you (currently )?(located|living|based)|current location|where do you live/i.test(l))
+  if (
+    !locationCommitment &&
+    /\b(city|town)\b|\blocation\b|where are you (currently )?(located|living|based)|current location|where do you live/i.test(l)
+  )
     return 'address_city';
   if (/zip|postal/i.test(l)) return 'address_zip';
 
@@ -427,7 +442,7 @@ export const REFERRAL_QUESTION = /how did you hear|referral source|hear about (t
 // "When can you start", broadened by R-014: "starting date" / "earliest possible starting date"
 // (Enpal's verbatim label) matched neither "start date" nor "earliest start". Hoisted out of
 // desiredAnswer so classifyField reads the SAME regex - two copies would drift, and the drift is
-// invisible: RoleQuick would fill one field and learn a different one.
+// invisible: Litos would fill one field and learn a different one.
 export const START_DATE_QUESTION =
   /availab|start(ing)?\s+date|date.*you.*start|when can you start|earliest.*start/i;
 const SALARY_QUESTION = /salary|compensation|desired pay|expected pay|pay expectation/i;
@@ -439,6 +454,25 @@ const CITIZENSHIP_QUESTION = /citizen|nationalit/i;
 // residence)` alternative catches the same phrasing with the pronoun dropped (R-002).
 const RESIDENCE_QUESTION =
   /country of residence|which country|country you.{0,20}(based|resid|work from|located)|where are you based|based in which country|current country|country.{0,20}(residing|residence)|\bcountry\b/i;
+
+// R-039's live evidence (register, 2026-07-18): the city matcher committed "Dubai" into two
+// location-COMMITMENT questions - Faire's "This role will be in-office on a hybrid schedule, can
+// you commit to being in-office three days per week...?" and Gemini's "This role is required to
+// be based near our New York City, NY office. Are you open to relocating...?". Both are yes/no
+// commitment asks that merely CONTAIN location vocabulary; a stored city answers neither. The
+// veto requires BOTH shapes at once - an auxiliary-verb question aimed at "you" AND
+// office/relocation vocabulary - so residence asks keep filling: "where are you currently
+// located?" and "where are you based" carry the stem but none of the vocabulary ("located" is not
+// "relocat"), and "office address" has vocabulary but no stem. A vetoed label falls through to
+// the unanswered-question machinery, which flags rather than fills - the safe direction (a
+// non-fill is recoverable, a mis-fill is not). Designed against the two REAL labels above per the
+// R-030 doctrine; do not widen it against hypotheticals - that is how the phone matcher shipped
+// five attempts (R-020/R-028).
+const LOCATION_COMMITMENT_STEM = /\b(?:are|can|could|do|did|will|would|should|may|might|have)\s+you\b/i;
+const LOCATION_COMMITMENT_VOCAB = /\boffice\b|in[\s-]?office|on[\s-]?site|\bonsite\b|\bhybrid\b|relocat|commut/i;
+export function isLocationCommitmentQuestion(label: string): boolean {
+  return LOCATION_COMMITMENT_STEM.test(label) && LOCATION_COMMITMENT_VOCAB.test(label);
+}
 
 export function linkQuestion(label: string, ap: ApplicationProfile): LinkQuestion | null {
   // A referral question is NOT a link question, even though it routinely names LinkedIn or the
@@ -504,6 +538,21 @@ export function drainR030CandidateLabels(): string[] {
   return r030CandidateLabels.splice(0, r030CandidateLabels.length);
 }
 
+// ── R-039 instrumentation: the same channel, two more observed populations ──
+// 'veto': every label isLocationCommitmentQuestion suppressed, so prod telemetry can audit the
+// veto's breadth (the failure mode to watch for is this veto quietly eating real residence asks).
+// 'third-party': the generic identity chain's bare name/email/city matchers firing on a label
+// with a possessive/third-party word - R-039's still-unguarded shape. Observation only there: the
+// fill is deliberately unchanged until a real label decides the fix, exactly R-030's doctrine.
+// Tag-prefixed into r030CandidateLabels so the existing AUTOFILL_EVENT field, backend zod
+// contract (strings <= 200 chars, 50 max) and prod column carry them with no backend change; the
+// prefix keeps the populations separable in SQL. Capped under the zod 50 so a pathological form
+// cannot make the backend reject the whole telemetry event.
+export function noteR039Candidate(kind: 'veto' | 'third-party', label: string): void {
+  if (r030CandidateLabels.length >= 40) return;
+  r030CandidateLabels.push(`r039-${kind}:${label}`.slice(0, 200));
+}
+
 // A question asking WHERE the student lives (city / state / country of residence). Live QA
 // 2026-07-16 left a required location field blank on 3 of 12 real forms (Monzo "Location (City)*",
 // ElevenLabs "Location* / Country you're currently residing in", Global Relay "Country*") while
@@ -535,8 +584,18 @@ export function locationQuestion(label: string, ap: ApplicationProfile): Locatio
   // location-scoped legal question, shipping a false declaration). It must fall through to
   // WORK_ELIGIBILITY_QUESTION and be left for the student.
   if (WORK_ELIGIBILITY_QUESTION.test(label)) return null;
+  // R-039: refuse location-commitment questions here too, with telemetry. classifyField already
+  // vetoes them internally (so harvest and desiredAnswer agree), but this is the one call site
+  // that is fill-only on every adapter, which makes recording drain-safe: a label noted here can
+  // only ever ride the fill run that produced it. The work-eligibility guard stays above so an
+  // "authorized to work in the location where this role is based" label lands on its own
+  // always-ask reason, not in R-039's sample.
+  if (isLocationCommitmentQuestion(label)) {
+    noteR039Candidate('veto', label);
+    return null;
+  }
   // Field identity is delegated to classifyField, the same classifier harvest reads with, so a
-  // label RoleQuick fills as a city can never be harvested back as a country. classifyField
+  // label Litos fills as a city can never be harvested back as a country. classifyField
   // re-checks the two refusals above internally (plus EEO and never-fill), so the delegation
   // cannot weaken them; they stay spelled out here, first, because this ordering is the R-004
   // lock and must survive any future classifyField edit.
@@ -603,7 +662,7 @@ export function locationComboQueries(field: LocationQuestion['field'], ap: Appli
 // Enpal-style level selects "Wie gut sind deine Deutschkenntnisse?" / "German level" /
 // "English level".
 //
-// RoleQuick answers these from EXACTLY ONE source: the languages the student DECLARED
+// Litos answers these from EXACTLY ONE source: the languages the student DECLARED
 // (ApplicationProfile.languages). Never the resume, never citizenship, never the JD - a language
 // "inferred" from adjacent data is R-015's exact failure (JD keywords lifted onto a submitted
 // resume as if they were hers) re-expressed as a spoken claim. The mis-fill asymmetry each arm
@@ -627,7 +686,7 @@ export function locationComboQueries(field: LocationQuestion['field'], ap: Appli
 // ("Spanish", "German"), which is exactly how a language classifier could re-open R-004.
 
 // Curated vocabulary: label variant -> canonical name. Curated rather than open-ended on purpose:
-// only a language RoleQuick can NAME can ever be matched against the declared list, so a language
+// only a language Litos can NAME can ever be matched against the declared list, so a language
 // outside this table degrades to the existing unrecognized-question flags instead of a guess.
 // Native names (Deutsch, Espanol, Francais, Italiano, ...) are included because the form may ask
 // in its own language; diacritics are stripped by normalizeLanguageText before lookup, so one
@@ -767,7 +826,7 @@ function languageMembership(lang: string, declared: Set<string>): 'declared' | '
   return 'not-declared';
 }
 
-// The level options RoleQuick may commit for a DECLARED language, fullest-claim-first, matched
+// The level options Litos may commit for a DECLARED language, fullest-claim-first, matched
 // through matchOption's oneof (first value landing an unambiguous option wins). Deliberately no
 // native tier - see NATIVE_CLAIM. C1 before C2 on the same conservatism: both are fluent-tier,
 // C2 is the stronger claim, so it is only reached when the form offers no C1. German option
@@ -946,7 +1005,7 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
   //   - negated phrasings ("are you UNDER 18?", "younger than 18 years"), which would answer Yes
   //     to being a minor;
   //   - the number 18 used for TENURE rather than age. "Do you have 18+ months of experience?" and
-  //     "at least 18 years of experience" both satisfied the alternatives above, so RoleQuick
+  //     "at least 18 years of experience" both satisfied the alternatives above, so Litos
   //     claimed experience the student never stated - the same class of false declaration the
   //     always-ask work-eligibility rule exists to prevent.
   if (
@@ -969,7 +1028,7 @@ export function desiredAnswer(label: string, ap: ApplicationProfile, eeo: Record
 
   // Everything below is a profile-field lookup, so the FIELD IDENTITY now comes from
   // classifyField - the same classifier harvest reads with. Two copies of these regexes would
-  // drift, and the drift would be invisible: RoleQuick would fill one field and learn a different
+  // drift, and the drift would be invisible: Litos would fill one field and learn a different
   // one. From here desiredAnswer's only job is shaping a stored value for the option matcher.
   //
   // Only the keys that were already answered here are handled. classifyField recognises more
@@ -1203,16 +1262,22 @@ export async function fillDateField(el: HTMLInputElement, stored: string): Promi
   return false;
 }
 
-async function fillTextField(el: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
+async function fillTextField(
+  el: HTMLInputElement | HTMLTextAreaElement,
+  value: string,
+  canWrite: () => boolean = () => true,
+): Promise<boolean> {
   await randomDelay();
+  if (!canWrite()) return false;
   el.focus();
   setNativeValue(el, value);
   el.blur();
+  return true;
 }
 
 function findResumeFileInput(): HTMLInputElement | null {
   const fileInputs = [...document.querySelectorAll<HTMLInputElement>('input[type="file"]')].filter(
-    (el) => !el.closest('[id*="rolequick"]'),
+    (el) => !el.closest('[id*="litos"]'),
   );
   if (fileInputs.length === 0) return null;
   const scored = fileInputs.map((el) => {
@@ -1236,8 +1301,22 @@ export interface GenericFillParams {
   resumeBlob?: Blob;
   resumeFileName?: string;
   draftAnswer?: (question: string) => Promise<string | null>;
+  signal?: AbortSignal;
   onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
 }
+
+// The identity-first chain's bare name/email/city matchers, hoisted so the R-039 third-party
+// observation below records against EXACTLY the expressions that fill - a second copy would
+// drift, and the drift would be invisible (the same reason desiredAnswer delegates to
+// classifyField).
+const CHAIN_FIRST_NAME = /first\s*name|given\s*name|preferred\s*name/;
+const CHAIN_LAST_NAME = /last\s*name|family\s*name|surname/;
+const CHAIN_FULL_NAME = /full\s*name|legal\s*name|your\s*name|^\s*name\b/;
+const CHAIN_EMAIL = /e-?mail/;
+const CHAIN_CITY = /\bcity\b|\blocation\b/;
+// R-039's third-party population: labels where her value would land in a field about someone
+// else ("Manager's email", "Reference contact"). Observed, never yet guarded.
+const R039_THIRD_PARTY = /manager|referr|reference|supervisor|emergency|previous\s+employer/;
 
 export async function fillGenericApplication(params: GenericFillParams): Promise<AutofillResult> {
   const { fullName, email, applicationProfile: ap, resumeBlob, resumeFileName, draftAnswer } = params;
@@ -1284,19 +1363,32 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
       continue;
     }
 
-    // Identity-first mapping (input type beats label text).
+    // Identity-first mapping (input type beats label text). The city leg carries R-039's veto: a
+    // location-commitment question must be left for the student, never handed a city. The
+    // third-party note is observation only (R-030 doctrine) - it changes nothing about the fill.
+    const cityVetoed = CHAIN_CITY.test(id) && isLocationCommitmentQuestion(id);
+    if (cityVetoed) noteR039Candidate('veto', id);
+    if (
+      R039_THIRD_PARTY.test(id) &&
+      (CHAIN_FIRST_NAME.test(id) ||
+        CHAIN_LAST_NAME.test(id) ||
+        CHAIN_FULL_NAME.test(id) ||
+        CHAIN_EMAIL.test(id) ||
+        CHAIN_CITY.test(id))
+    )
+      noteR039Candidate('third-party', id);
     let value =
       type === 'email' ? email :
       type === 'tel' ? ap.phone :
-      /first\s*name|given\s*name|preferred\s*name/.test(id) ? firstName :
-      /last\s*name|family\s*name|surname/.test(id) ? lastName :
-      /full\s*name|legal\s*name|your\s*name|^\s*name\b/.test(id) ? fullName :
-      /e-?mail/.test(id) ? email :
+      CHAIN_FIRST_NAME.test(id) ? firstName :
+      CHAIN_LAST_NAME.test(id) ? lastName :
+      CHAIN_FULL_NAME.test(id) ? fullName :
+      CHAIN_EMAIL.test(id) ? email :
       /phone|mobile/.test(id) ? ap.phone :
       /linkedin/.test(id) ? ap.linkedin_url :
       /github/.test(id) ? ap.github_url :
       /portfolio|personal\s*(web)?site|\bwebsite\b/.test(id) ? ap.portfolio_url :
-      /\bcity\b|\blocation\b/.test(id) ? ap.address_city :
+      CHAIN_CITY.test(id) && !cityVetoed ? ap.address_city :
       undefined;
 
     // Salary (R-031 + R-011), before the generic value lookup: this branch owns free-text,
@@ -1430,7 +1522,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
 
   // ── <select> dropdowns ──
   for (const select of [...document.querySelectorAll<HTMLSelectElement>('select')]) {
-    if (select.closest('[id*="rolequick"]') || select.disabled || !isVisible(select)) continue;
+    if (select.closest('[id*="litos"]') || select.disabled || !isVisible(select)) continue;
     if (select.selectedIndex > 0 && select.value && !/select|choose|^$/i.test(select.options[select.selectedIndex]?.text ?? '')) continue; // already answered
     const label = questionLabel(select);
     const options = [...select.options]
@@ -1476,7 +1568,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
 
   // ── Radio groups (grouped by name) ──
   const radios = [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')].filter(
-    (el) => !el.closest('[id*="rolequick"]') && !el.disabled && isInteractableChoice(el),
+    (el) => !el.closest('[id*="litos"]') && !el.disabled && isInteractableChoice(el),
   );
   const radioGroups = new Map<string, HTMLInputElement[]>();
   for (const r of radios) {
@@ -1537,7 +1629,7 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
   //    way as before. ──
   const checkboxGroups = new Map<string | HTMLInputElement, HTMLInputElement[]>();
   for (const cb of [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]) {
-    if (cb.closest('[id*="rolequick"]') || cb.disabled || cb.checked || !isInteractableChoice(cb)) continue;
+    if (cb.closest('[id*="litos"]') || cb.disabled || cb.checked || !isInteractableChoice(cb)) continue;
     const key = cb.name || cb; // unnamed checkboxes each form their own group of one
     (checkboxGroups.get(key) ?? checkboxGroups.set(key, []).get(key)!).push(cb);
   }
@@ -1619,33 +1711,30 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
     skipped_reasons.push('resume: no generated resume file available');
   }
 
-  // Documents this form requires that RoleQuick cannot produce (R-010). Reported at fill time, in
+  // Documents this form requires that Litos cannot produce (R-010). Reported at fill time, in
   // the card, so the student learns the form wants a transcript NOW rather than at submit; the
   // "left for" wording holds auto-submit while it sits unattached.
   const documentReasons = unattachableDocumentReasons();
   fields_skipped += documentReasons.length;
   skipped_reasons.push(...documentReasons);
 
-  // ── Open-ended answers: all instant fields are filled by now, so draft every textarea
-  //    CONCURRENTLY (each is an independent LLM round trip). Wall-clock is the slowest single
-  //    draft, not the sum - a form with 4 essay boxes takes ~1 draft's time, not 4. Each result
-  //    is written into the DOM and reported via onProgress as soon as IT resolves, rather than
-  //    batching behind Promise.all so the student watches essays fill in one at a time. ──
-  if (pendingDrafts.length > 0) {
-    let pendingEssays = pendingDrafts.length;
-    params.onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-
-    await Promise.all(
-      pendingDrafts.map(async ({ el, question }) => {
-        let drafted: string | null = null;
-        try {
-          drafted = (await params.draftAnswer!(question))?.trim() || null;
-        } catch {
-          drafted = null;
-        }
-
+  // Open-ended answers use a shared worker pool. Each result still streams into this adapter as
+  // soon as it resolves, but a form cannot fire an unbounded burst of drafting requests.
+  if (pendingDrafts.length > 0 && draftAnswer) {
+    await runDraftQueue({
+      items: pendingDrafts,
+      draftAnswer,
+      signal: params.signal,
+      promptFor: ({ question }) => question,
+      onSettled: async ({ el, question }, drafted) => {
+        if (!isDraftTargetAvailable(el)) return;
         if (drafted) {
-          await fillTextField(el, drafted);
+          const written = await fillTextField(
+            el,
+            drafted,
+            () => !params.signal?.aborted && isDraftTargetAvailable(el),
+          );
+          if (!written) return;
           markForReview(el);
           ai_drafted++;
           fields_filled++;
@@ -1653,11 +1742,10 @@ export async function fillGenericApplication(params: GenericFillParams): Promise
           fields_skipped++;
           skipped_reasons.push(`open-ended question left blank: "${short(question)}"`);
         }
-
-        pendingEssays--;
-        params.onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-      }),
-    );
+      },
+      onProgress: (pendingEssays) =>
+        params.onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays }),
+    });
   }
 
   if (ai_drafted > 0) {

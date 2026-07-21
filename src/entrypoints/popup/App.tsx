@@ -146,14 +146,14 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <div className="w-[380px] min-h-[200px] flex items-center justify-center bg-white font-sans">
-        <LoadingSpinner size="md" />
+      <div className="flex min-h-[200px] w-[380px] items-center justify-center bg-white font-sans">
+        <LoadingSpinner size="md" message="Loading Litos…" />
       </div>
     );
   }
 
   return (
-    <div className="w-[380px] max-h-[580px] overflow-y-auto bg-white flex flex-col font-sans text-gray-900 antialiased">
+    <div className="flex h-[580px] w-[380px] flex-col overflow-y-auto bg-white font-sans text-gray-950 antialiased">
       {screen === 'onboarding' && (
         <OnboardingScreen onComplete={handleOnboardingComplete} />
       )}

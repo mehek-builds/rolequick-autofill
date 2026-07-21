@@ -1,12 +1,12 @@
-# RoleQuick: Tailored Resumes and Application Autofill
+# Litos: Tailored Resumes and Application Autofill
 
-Every job application makes you re-enter the same information and rewrite your resume for the role. RoleQuick is a Chrome extension that autofills applications with AI-tailored resumes and essays generated from your profile.
+Every job application makes you re-enter the same information and rewrite your resume for the role. Litos is a Chrome extension that autofills applications with AI-tailored resumes and essays generated from your profile.
 
 Install: https://chromewebstore.google.com/detail/rolequick-tailored-resume/bdbedbmkjpfioknfpmhookefabipjaad
 
 ## System architecture
 
-The extension is a thin, careful client. Every piece of AI generation happens on the RoleQuick backend; the extension detects, orchestrates, fills, and guards.
+The extension is a thin, careful client. Every piece of AI generation happens on the Litos backend; the extension detects, orchestrates, fills, and guards.
 
 ```
         ┌───────────────────────────────────────────────────────────────┐
@@ -20,7 +20,7 @@ The extension is a thin, careful client. Every piece of AI generation happens on
         └───────────────▲───────────────────────────────────────────────┘
                         │ REST (Bearer JWT), VITE_API_BASE
         ┌───────────────┴───────────────────────────────────────────────┐
- BACKEND│  RoleQuick backend API (separate repo, not in this codebase)   │
+ BACKEND│  Litos backend API (separate repo, not in this codebase)   │
         │  /auth · /profile · /resolve · /draft · /resume/generate ·    │
         │  /application/answer · /track · /autofill/event               │
         └───────────────────────────────────────────────────────────────┘
@@ -50,12 +50,12 @@ Data flows two ways. When a student lands on a posting, a content script detects
 |-------|--------------|
 | **Extension framework** | [WXT](https://wxt.dev) 0.20.26 (`wxt.config.ts`), Manifest V3, `@wxt-dev/module-react`, entrypoint conventions for background / content / popup, `wxt zip` packaging (Chrome + Firefox targets) |
 | **Language / UI** | TypeScript 5.4.5, React 18.3.1, react-dom 18.3.1, JSX via `react-jsx`, `@types/chrome` |
-| **Styling** | Tailwind CSS 3.4.4 (custom `brand` indigo scale + a full keyframe/animation set in `tailwind.config.ts`), PostCSS 8.4.38, autoprefixer, Inter Variable via `@fontsource-variable/inter` |
+| **Styling** | Tailwind CSS 3.4.4 with a compact utility design system in `src/components/ui.tsx`, PostCSS 8.4.38, autoprefixer, Geist Variable via `@fontsource-variable/geist` |
 | **Content-script fill engine** | Native-setter value writes (`Object.getOwnPropertyDescriptor(proto,'value').set`), click-first `commitChoice` for controlled radios, real `PointerEvent`/`MouseEvent`/`KeyboardEvent` sequences to open react-select, ARIA `aria-controls`/`aria-owns` scoping to read portal-mounted option menus, `MutationObserver` SPA-navigation and Workday stage polling, `DataTransfer` file injection for resume upload |
 | **Answer resolution** | A pure, DOM-free engine in `src/lib/adapters/generic.ts` (`desiredAnswer`, `matchOption`, `workAuthWantYes`, `eeoAnswer`) reused verbatim by every ATS adapter |
 | **Extension APIs** | `chrome.runtime` messaging, `chrome.storage.local` + `chrome.storage.session`, `chrome.scripting.executeScript` (on-demand injection), `chrome.action` badge, `chrome.tabs` |
 | **Backend client** | `fetch` with `AbortSignal.timeout` budgets, Bearer-JWT `Authorization`, typed request/response layer in `src/lib/api.ts`, base URL from `VITE_API_BASE` |
-| **Testing** | Vitest 4.1.10 (`generic.answers.test.ts`, `ats-answer.test.ts`) covering the pure answer engine |
+| **Testing** | Vitest 4.1.10 for unit and integration coverage, plus Testing Library, user-event, and jsdom for popup workflow behavior |
 | **Dev tooling** | `tsc --noEmit` type-check, a standalone Vite preview harness (`preview.tsx` + `preview/mock-server.mjs`) that renders every popup screen with mock data |
 
 ---
@@ -69,7 +69,7 @@ The popup is a small React app (`App.tsx`) that routes between six screens with 
 - **Main** (`MainScreen.tsx`): shows the job spotted on the current page, a "Find my people" form that calls `/resolve`, and a "Fill the form on this page" button that injects the content script on demand via `chrome.scripting.executeScript` for company career sites the manifest cannot match.
 - **Contacts / Draft / Tracking** (`ContactList.tsx`, `DraftEditor.tsx`, `TrackingDashboard.tsx`): review resolved contacts, edit a generated outreach email, open it prefilled in Gmail (`buildGmailComposeLink` in `src/lib/gmail.ts` builds a `mail.google.com` compose URL), and log sends to `/track/event`.
 
-The visual system lives in `tailwind.config.ts`: a single indigo `brand` scale applied only to primary CTAs and key accents, plus animation keyframes (`fade-in-up`, `reveal`, `check-pop`, `confetti-fall`, `blob-drift`, `gradient-pan`) used across the screens.
+The visual system lives in `tailwind.config.ts` and `src/components/ui.tsx`: a restrained blue accent, warm neutrals, shared form and button primitives, and short functional transitions. [DESIGN.md](DESIGN.md) records the interface rules, and [CHANGELOG.md](CHANGELOG.md) tracks each release.
 
 ## The content script and card system (`src/entrypoints/content.ts`)
 
@@ -91,7 +91,7 @@ If (and only if) the student turned on auto-submit in setup, `runAutoSubmitCount
 
 Each ATS renders the same question differently, so each gets its own adapter, but they all share one answer engine and one set of DOM primitives. Every adapter returns an `AutofillResult` (`ats_name`, `fields_filled`, `fields_skipped`, `skipped_reasons`) so the UI can report exactly what was and was not touched.
 
-- **`generic.ts`** (621 lines): the adapter for company-hosted forms that build their own UI against an ATS API, and the home of the shared pure answer engine. It matches every field by the text a human reads (label, aria-label, placeholder, name, id, in that order of trust), groups radios and checkboxes by shared `name`, derives a radio group's question stem by climbing to the ancestor that contains exactly the group's options and subtracting each option's label, drives comboboxes, AI-drafts open-ended textareas concurrently and flags each with an amber "review before submitting" badge, and injects the generated resume through a `DataTransfer`. It only ever runs when the student explicitly clicked "Fill the form on this page," so running is itself proof of an intentional request.
+- **`generic.ts`**: the adapter for company-hosted forms that build their own UI against an ATS API, and the home of the shared pure answer engine. It matches every field by the text a human reads (label, aria-label, placeholder, name, id, in that order of trust), groups radios and checkboxes by shared `name`, derives a radio group's question stem by climbing to the ancestor that contains exactly the group's options and subtracting each option's label, drives comboboxes, AI-drafts open-ended textareas through a bounded three-worker queue and flags each with an amber "review before submitting" badge, and injects the generated resume through a `DataTransfer`. It only ever runs when the student explicitly clicked "Fill the form on this page," so running is itself proof of an intentional request.
 - **`greenhouse.ts`** (401 lines): handles both the current id-based template (`#first_name`, `#candidate-location`, `#resume`, empty `name` attributes) and legacy `job_application[...]` name-based boards, drives the react-select yes/no, EEO, and location comboboxes verified live against a real posting, and works inside the cross-origin iframe embed.
 - **`lever.ts`** (318 lines): the recommended first-ship ATS (simple same-page static form), label-matched custom questions.
 - **`ashby.ts`** (482 lines): stable `_systemfield_*` identity fields, with the live-tested fix for Ashby's two file inputs (its own resume-parser widget comes first in DOM order; the real application field is `#_systemfield_resume`).
@@ -109,7 +109,7 @@ Two files keep every adapter honest:
 
 The background worker is the only component that holds the auth token, so it owns every authenticated backend call. It routes `chrome.runtime` messages: `JOB_DETECTED` / `GET_LAST_JOB` (badge + session cache), `JOB_APPROVED` (resolve contacts and draft the best two, ranked by reply likelihood so an alumni or near-peer outranks a busy exec), `GENERATE_RESUME_AND_FILL_DATA` (fetch the resume profile and the more-sensitive application profile in parallel, then generate a JD-tailored resume), `ANSWER_QUESTION` (draft one open-ended application answer), `GET_ACCOUNT_CREATION_DATA` (email only, for Workday signup), and `AUTOFILL_EVENT` (telemetry). It is careful about Manifest V3 service-worker teardown, only keeping the message channel open when a response is genuinely coming.
 
-`src/lib/api.ts` is the typed client for the RoleQuick backend, base URL from `VITE_API_BASE` (default `http://localhost:3001`). Endpoints the extension calls:
+`src/lib/api.ts` is the typed client for the Litos backend. Development defaults to `http://localhost:3001`, production defaults to `https://student-outreach-backend.vercel.app`, and `VITE_API_BASE` overrides either mode. Endpoints the extension calls:
 
 | Purpose | Endpoint | What the backend does |
 |---------|----------|-----------------------|
@@ -134,7 +134,7 @@ The published extension is on the Chrome Web Store (link at the top). To build a
 ```bash
 npm install                 # runs `wxt prepare` on postinstall
 
-# Point the extension at your backend (defaults to http://localhost:3001).
+# Point development or QA builds at a different backend when needed.
 # Copy .env.example to .env and set:
 #   VITE_API_BASE=https://your-backend.example.com
 
@@ -153,7 +153,7 @@ npm run preview             # mock API on :3001 + Vite on :4700
 # open http://localhost:4700/preview.html
 ```
 
-`preview.tsx` renders all seven popup screens side by side with canned data from `preview/mock-server.mjs`, so the UI can be eyeballed without loading the extension. It is dev-only; WXT bundles `src/` for production.
+`preview.tsx` renders seven popup states side by side with canned data from `preview/mock-server.mjs`, including both loaded and loading contact states, so the UI can be eyeballed without loading the extension. It is dev-only; WXT bundles `src/` for production. See [preview/README.md](preview/README.md) for the harness layout and extension points.
 
 ## Testing
 
@@ -163,7 +163,7 @@ npm test                    # vitest run
 npm run test:watch          # vitest watch
 ```
 
-The unit tests deliberately target the layer most likely to cause real-world harm: answer resolution. `generic.answers.test.ts` and `ats-answer.test.ts` lock in the visa-phrasing inversion (an OPT student authorized now but needing future sponsorship must answer "No" to "authorized to work without sponsorship"), EEO decline-by-default, the word-boundary option matcher (so "Asian" is not selected as "Caucasian" and "Male" is not selected as "Female"), the "leave ambiguous groups blank" rule, negative options phrased without "no" ("I am not a protected veteran"), and normalization of the zero-width and padding characters that react-select puts around option text. Because every ATS adapter imports these same functions, the tests cover all of them at once.
+The suite covers the fill decisions most likely to cause real-world harm and the popup workflows users rely on. `generic.answers.test.ts` and `ats-answer.test.ts` lock in visa-phrasing inversion, EEO decline-by-default, exact option matching, and the "leave ambiguous groups blank" rule across every ATS adapter. `redesign.behavior.test.tsx` covers signup validation, asynchronous job detection, contact resolution, Gmail handoff, outreach tracking, and recoverable error states. Production configuration tests also verify the release version and backend defaults.
 
 ## Permissions (`wxt.config.ts`)
 
@@ -171,7 +171,7 @@ The manifest requests only `activeTab`, `scripting`, `storage`, and `clipboardWr
 
 ## Naming and storage compatibility
 
-The product is RoleQuick. It first shipped to the Chrome Web Store under the earlier name Volley, so the source keeps that history in one deliberate place: the persisted `chrome.storage.local` keys have new `rolequick_*` names but read with a backward-compatible fallback to their old `volley_*` names (see `src/lib/storage.ts` and `migrateLegacyStorage`), so an existing user's saved token and profile survive the update. The package name, injected DOM ids, window globals, and everything else use the `rolequick` name.
+The product is Litos. It previously shipped as RoleQuick and, before that, Volley. Persisted `chrome.storage.local` values now use `litos_*` keys with backward-compatible reads from both earlier key families (see `src/lib/storage.ts` and `migrateLegacyStorage`), so existing users keep their saved token, profile, and settings through the update. The package name, injected DOM ids, window globals, and all new identifiers use the `litos` name.
 
 ## Scope
 

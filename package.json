@@ -1,6 +1,6 @@
 {
-  "name": "rolequick-extension",
-  "version": "0.3.7",
+  "name": "litos-extension",
+  "version": "0.4.7",
   "private": true,
   "type": "module",
   "scripts": {
@@ -17,11 +17,13 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@fontsource-variable/inter": "^5.2.8",
+    "@fontsource-variable/geist": "^5.3.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/chrome": "^0.1.43",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",

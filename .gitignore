@@ -5,3 +5,6 @@ dist/
 *.local
 
 .env
+
+graphify-out/
+.gstack/

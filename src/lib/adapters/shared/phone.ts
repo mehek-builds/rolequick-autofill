@@ -143,6 +143,19 @@ export function splitInternationalPhone(stored: string): InternationalPhone | nu
   return null;
 }
 
+/**
+ * The E.164 compact form of a split phone: "+" then dial code then national significant number,
+ * no spaces or punctuation ("+971567417451"). This is the write for a phone box that a widget
+ * wraps WITHOUT a drivable paired selector (Greenhouse CLASSIC's old intl-tel-input, the R-032
+ * classic variant): the leading + and dial code travel with the digits, so the widget reads the
+ * country from the value itself instead of reinterpreting the number as local, and a form that
+ * submits the raw box value delivers the full international number either way. The trunk zero
+ * is already gone by construction - splitInternationalPhone stripped it.
+ */
+export function toE164(phone: InternationalPhone): string {
+  return `+${phone.dialCode}${phone.national}`;
+}
+
 // Escape a string for literal use inside a RegExp (option text is page-authored).
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

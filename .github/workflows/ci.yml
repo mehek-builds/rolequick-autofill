@@ -28,3 +28,5 @@ jobs:
       # vitest already exits non-zero on zero test files, so no separate guard is needed here.
       - name: Test
         run: npm test
+      - name: Production build
+        run: npm run build

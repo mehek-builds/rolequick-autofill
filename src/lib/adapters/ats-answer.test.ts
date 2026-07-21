@@ -25,7 +25,7 @@ describe('desiredAnswer on ATS full-block label text', () => {
 
   it('never answers a combined authorized-without-sponsorship question from needs_sponsorship', () => {
     // The auth branch must win over the sponsorship branch for combined phrasings: this is the
-    // exact question RoleQuick mis-filled on the Xsolla/Lever form.
+    // exact question Litos mis-filled on the Xsolla/Lever form.
     expect(
       desiredAnswer(
         'are you legally authorized to work without sponsorship in the location where this role is based? yes no',

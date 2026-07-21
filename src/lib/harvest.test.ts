@@ -161,9 +161,9 @@ describe('keyFor', () => {
 
 /* The safety property the whole design rests on.
  *
- * RoleQuick's own fills dispatch synthetic input/change events (setNativeValue in shared/dom.ts
+ * Litos's own fills dispatch synthetic input/change events (setNativeValue in shared/dom.ts
  * does exactly this, because React will not notice a value change otherwise). Those events carry
- * isTrusted=false. If harvest did not check it, RoleQuick would observe the values it just wrote
+ * isTrusted=false. If harvest did not check it, Litos would observe the values it just wrote
  * and store them as though the student had confirmed them - laundering its own guesses into the
  * profile, and then replaying them onto every later application as fact.
  *
@@ -208,22 +208,22 @@ describe('handleInput: only learns what a human typed', () => {
 
   it('IGNORES a programmatic fill - the same edit, untrusted, is not learned', async () => {
     // Byte-for-byte the test above with trusted=false. This is exactly what setNativeValue does
-    // when RoleQuick fills a field, so it is the real scenario rather than a contrived one.
+    // when Litos fills a field, so it is the real scenario rather than a contrived one.
     mount('<label for="p">Phone number</label><input id="p">');
     type(document.getElementById('p')!, '+1 555 000 0000', false);
     await vi.advanceTimersByTimeAsync(5000);
     expect(sent).toEqual([]);
   });
 
-  it("ignores edits inside RoleQuick's own card", async () => {
-    mount('<div id="rolequick-card-stack"><label for="q">Phone number</label><input id="q"></div>');
+  it("ignores edits inside Litos's own card", async () => {
+    mount('<div id="litos-card-stack"><label for="q">Phone number</label><input id="q"></div>');
     type(document.getElementById('q')!, '+1 555 000 0000', true);
     await vi.advanceTimersByTimeAsync(5000);
     expect(sent).toEqual([]);
   });
 
   it('never learns a refused field even when the student types it themselves', async () => {
-    // A student answering a work-auth question by hand is the NORMAL case - RoleQuick leaves it
+    // A student answering a work-auth question by hand is the NORMAL case - Litos leaves it
     // blank for exactly that reason. Watching them answer it must still not store it.
     mount(`
       <fieldset>

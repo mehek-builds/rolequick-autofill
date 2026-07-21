@@ -3,13 +3,13 @@ import { classifyField, isRefusedQuestion, type ProfileKey } from './adapters/ge
 /* Harvest: learn the student's profile from the ONE application they fill by hand.
  *
  * The bargain, and it is the whole product: fill one real application yourself, and never type
- * any of it again. RoleQuick watches that form, keeps what a form can legitimately teach it, and
+ * any of it again. Litos watches that form, keeps what a form can legitimately teach it, and
  * stops the moment onboarding completes.
  *
  * Three properties this file exists to guarantee:
  *
  *  1. WE ONLY LEARN WHAT THE STUDENT TYPED. Every listener checks `e.isTrusted`, which is false
- *     for events RoleQuick's own fills dispatch. Without it, harvest would "learn" the values it
+ *     for events Litos's own fills dispatch. Without it, harvest would "learn" the values it
  *     just wrote and launder its own guesses into the profile as though the student had confirmed
  *     them. This check is not an optimisation; it is the difference between observing and
  *     fabricating. (content.ts:939 already relies on the same property to cancel auto-submit only
@@ -43,7 +43,7 @@ let started = false;
 let stopped = false;
 
 function isOurNode(t: EventTarget | null): boolean {
-  return t instanceof Element && !!t.closest('[id*="rolequick"]');
+  return t instanceof Element && !!t.closest('[id*="litos"]');
 }
 
 /**

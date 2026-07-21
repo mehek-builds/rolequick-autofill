@@ -1,28 +1,22 @@
 import type { Profile } from './types';
 
-// Storage keys. The product was renamed from Volley to RoleQuick after it shipped to the
-// Chrome Web Store, so every persisted key now has a new `rolequick_*` name alongside the
-// original `volley_*` name it may already exist under in an installed user's
-// chrome.storage.local. To avoid orphaning saved profiles/tokens/settings across a published
-// update: reads prefer the new key and fall back to the legacy one; writes only ever touch the
-// new key; clears remove BOTH names (so a fallback read cannot resurrect a cleared value); and
-// migrateLegacyStorage() does a one-time copy old -> new. No update should lose user data.
-const TOKEN_KEY = 'rolequick_token';
-const PROFILE_KEY = 'rolequick_profile';
-const AUTO_SUBMIT_KEY = 'rolequick_auto_submit_enabled';
+// Litos is the current product name. RoleQuick and Volley keys remain read-only migration
+// aliases so an extension update never signs out an existing user or loses their settings.
+const TOKEN_KEY = 'litos_token';
+const PROFILE_KEY = 'litos_profile';
+const AUTO_SUBMIT_KEY = 'litos_auto_submit_enabled';
 
-const LEGACY_TOKEN_KEY = 'volley_token';
-const LEGACY_PROFILE_KEY = 'volley_profile';
-const LEGACY_AUTO_SUBMIT_KEY = 'volley_auto_submit_enabled';
+const TOKEN_ALIASES = ['rolequick_token', 'volley_token'] as const;
+const PROFILE_ALIASES = ['rolequick_profile', 'volley_profile'] as const;
+const AUTO_SUBMIT_ALIASES = ['rolequick_auto_submit_enabled', 'volley_auto_submit_enabled'] as const;
 
-// Each current key paired with the legacy key it superseded, for migration and fallback.
-const KEY_PAIRS: ReadonlyArray<readonly [current: string, legacy: string]> = [
-  [TOKEN_KEY, LEGACY_TOKEN_KEY],
-  [PROFILE_KEY, LEGACY_PROFILE_KEY],
-  [AUTO_SUBMIT_KEY, LEGACY_AUTO_SUBMIT_KEY],
+const KEY_GROUPS: ReadonlyArray<readonly [current: string, ...aliases: string[]]> = [
+  [TOKEN_KEY, ...TOKEN_ALIASES],
+  [PROFILE_KEY, ...PROFILE_ALIASES],
+  [AUTO_SUBMIT_KEY, ...AUTO_SUBMIT_ALIASES],
 ];
 
-const ALL_KEYS: string[] = KEY_PAIRS.flatMap(([current, legacy]) => [current, legacy]);
+const ALL_KEYS: string[] = KEY_GROUPS.flatMap((group) => [...group]);
 
 // Prefer the new key; fall back to the legacy Volley-era key so an existing install that has
 // not migrated yet still reads its saved value.
@@ -31,16 +25,17 @@ function lastStorageError(): Error | null {
   return message ? new Error(`Could not access extension storage: ${message}`) : null;
 }
 
-function chromeStorageGetCompat<T>(key: string, legacyKey: string): Promise<T | null> {
+function chromeStorageGetCompat<T>(key: string, aliases: readonly string[]): Promise<T | null> {
   return new Promise((resolve, reject) => {
-    chrome.storage.local.get([key, legacyKey], (result) => {
+    chrome.storage.local.get([key, ...aliases], (result) => {
       const error = lastStorageError();
       if (error) {
         reject(error);
         return;
       }
       const current = result[key] as T | undefined;
-      resolve(current ?? (result[legacyKey] as T | undefined) ?? null);
+      const migrated = aliases.map((alias) => result[alias] as T | undefined).find((value) => value !== undefined);
+      resolve(current ?? migrated ?? null);
     });
   });
 }
@@ -72,9 +67,10 @@ export async function migrateLegacyStorage(): Promise<void> {
   await new Promise<void>((resolve) => {
     chrome.storage.local.get(ALL_KEYS, (result) => {
       const patch: Record<string, unknown> = {};
-      for (const [current, legacy] of KEY_PAIRS) {
-        if (result[current] === undefined && result[legacy] !== undefined) {
-          patch[current] = result[legacy];
+      for (const [current, ...aliases] of KEY_GROUPS) {
+        const migrated = aliases.map((alias) => result[alias]).find((value) => value !== undefined);
+        if (result[current] === undefined && migrated !== undefined) {
+          patch[current] = migrated;
         }
       }
       if (Object.keys(patch).length === 0) {
@@ -87,7 +83,7 @@ export async function migrateLegacyStorage(): Promise<void> {
 }
 
 export async function getToken(): Promise<string | null> {
-  return chromeStorageGetCompat<string>(TOKEN_KEY, LEGACY_TOKEN_KEY);
+  return chromeStorageGetCompat<string>(TOKEN_KEY, TOKEN_ALIASES);
 }
 
 export async function setToken(token: string): Promise<void> {
@@ -97,11 +93,11 @@ export async function setToken(token: string): Promise<void> {
 
 export async function clearToken(): Promise<void> {
   // Remove both names so the legacy-key fallback in getToken() cannot bring a cleared token back.
-  return chromeStorageRemove([TOKEN_KEY, LEGACY_TOKEN_KEY]);
+  return chromeStorageRemove([TOKEN_KEY, ...TOKEN_ALIASES]);
 }
 
 export async function getProfile(): Promise<Profile | null> {
-  return chromeStorageGetCompat<Profile>(PROFILE_KEY, LEGACY_PROFILE_KEY);
+  return chromeStorageGetCompat<Profile>(PROFILE_KEY, PROFILE_ALIASES);
 }
 
 export async function setProfile(profile: Profile): Promise<void> {
@@ -112,13 +108,13 @@ export async function setProfile(profile: Profile): Promise<void> {
 export async function clearAll(): Promise<void> {
   // Logout clears the token and profile (both new and legacy names). The auto-submit
   // preference is intentionally left in place, matching the original logout behavior.
-  await chromeStorageRemove([TOKEN_KEY, LEGACY_TOKEN_KEY, PROFILE_KEY, LEGACY_PROFILE_KEY]);
+  await chromeStorageRemove([TOKEN_KEY, ...TOKEN_ALIASES, PROFILE_KEY, ...PROFILE_ALIASES]);
 }
 
 // Off by default: fill-and-stop (highlight Submit, student clicks) unless the student has
 // explicitly opted in to the cancelable auto-submit countdown in the extension popup.
 export async function getAutoSubmitEnabled(): Promise<boolean> {
-  return (await chromeStorageGetCompat<boolean>(AUTO_SUBMIT_KEY, LEGACY_AUTO_SUBMIT_KEY)) ?? false;
+  return (await chromeStorageGetCompat<boolean>(AUTO_SUBMIT_KEY, AUTO_SUBMIT_ALIASES)) ?? false;
 }
 
 export async function setAutoSubmitEnabled(enabled: boolean): Promise<void> {

@@ -17,10 +17,15 @@ This starts:
 
 Then open **http://localhost:4700/preview.html**.
 
+For Chrome Web Store canvases, add `?store=onboarding`, `?store=main`, or
+`?store=contacts`. Each route renders a 1280 by 800 store image around the
+corresponding popup state.
+
 ## Files
 - `preview.html` / `preview.tsx` (repo root) — the harness page; mounts the real
   components from `src/components` with mock props.
 - `preview/mock-server.mjs` — hardcoded fake API responses. Edit to change the
   sample contacts, draft, or outreach events.
 
-To add a screen, drop another `<Frame>` into `preview.tsx`.
+To add a side-by-side state, drop another `<Frame>` into `preview.tsx`. To add a
+store canvas, add the screen and its copy to `storeScreens` in the same file.

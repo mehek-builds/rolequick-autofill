@@ -10,9 +10,17 @@ import { isLinkedInApplicationPage, extractLinkedInJdText, fillLinkedInApplicati
 import { isLikelyApplicationForm, extractGenericJdText, getGenericJobDetails, fillGenericApplication, drainR030CandidateLabels } from '../lib/adapters/generic';
 import { getAutoSubmitEnabled } from '../lib/storage';
 import { selectNeedsYouReasons, skippedReasonsNeedReview } from '../lib/autosubmit-gate';
+import {
+  extractValidationErrors,
+  mergeValidationReasons,
+  validationErrorsToReasons,
+} from '../lib/validation-authority';
+import { fetchResumeBlob, resumeFetchSkipReason } from '../lib/resume-fetch';
 import { startHarvest } from '../lib/harvest';
-import type { Profile, ApplicationProfile, AutofillResult } from '../lib/types';
+import { withInactivityTimeout } from '../lib/inactivity-timeout';
+import type { Profile, ApplicationProfile, AutofillResult, GeneratedResume } from '../lib/types';
 import type { PostingCompensation } from '../lib/adapters/salary';
+import { buildResumeReviewMessage } from '../lib/resume-review';
 
 export default defineContentScript({
   matches: [
@@ -46,12 +54,12 @@ export default defineContentScript({
     // that host their own application form. A second click re-executes the whole bundle in
     // the same isolated world, so guard against double-running: the repeat call just re-shows
     // the generic card instead of standing up a second set of observers.
-    const w = window as unknown as { __rolequickLoaded?: boolean; __rolequickGenericInit?: () => void };
-    if (w.__rolequickLoaded) {
-      w.__rolequickGenericInit?.();
+    const w = window as unknown as { __litosLoaded?: boolean; __litosGenericInit?: () => void };
+    if (w.__litosLoaded) {
+      w.__litosGenericInit?.();
       return;
     }
-    w.__rolequickLoaded = true;
+    w.__litosLoaded = true;
 
     let cardInjected = false;
     let approved = false; // true once user taps "Yes" on either card
@@ -181,7 +189,7 @@ export default defineContentScript({
         ...document.querySelectorAll<HTMLElement>(
           'button, input[type="submit"], input[type="button"], [role="button"], a[role="button"]',
         ),
-      ].filter((el) => !el.closest('[id*="rolequick"]') && el.offsetParent !== null);
+      ].filter((el) => !el.closest('[id*="litos"]') && el.offsetParent !== null);
 
       const EXCLUDE =
         /resume|cover\s*letter|\bsave\b|cancel|\bback\b|\bedit\b|sign\s*in|log\s*in|create account|\bupload\b|add another|remove|delete|\bsearch\b|ask ai|previous|learn more/i;
@@ -226,7 +234,7 @@ export default defineContentScript({
         ...document.querySelectorAll<HTMLElement>('button, input[type="submit"], [role="button"]'),
       ];
       for (const el of candidates) {
-        if (el.closest('[id*="rolequick"]')) continue;
+        if (el.closest('[id*="litos"]')) continue;
         if ((el as HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true') continue;
         // Must be visible: a multi-step form can pre-render a later step's "Submit" hidden in the
         // DOM; anchoring or firing on an off-screen button would submit a step the student can't see.
@@ -248,7 +256,7 @@ export default defineContentScript({
     function hasEmptyRequiredFields(): boolean {
       const req = [...document.querySelectorAll<HTMLElement>('[required], [aria-required="true"]')];
       for (const el of req) {
-        if (el.closest('[id*="rolequick"]')) continue;
+        if (el.closest('[id*="litos"]')) continue;
         const style = getComputedStyle(el);
         if (style.display === 'none' || style.visibility === 'hidden') continue;
         const tag = el.tagName.toLowerCase();
@@ -303,7 +311,7 @@ export default defineContentScript({
     function renderFillSummary(
       statusEl: HTMLElement | null,
       fillResult: AutofillResult,
-      opts: { resumeMissing: boolean; autoSubmitHeld: boolean },
+      opts: { resumeMissing: boolean; autoSubmitHeld: boolean; capOverride?: number },
     ): void {
       if (!statusEl) return;
       const head: string[] = [`Filled ${fillResult.fields_filled} field${fillResult.fields_filled === 1 ? '' : 's'}.`];
@@ -313,8 +321,9 @@ export default defineContentScript({
       // required blanks. Selection + ordering live in the pure selectNeedsYouReasons (autosubmit-
       // gate.ts) so it stays unit-tested: required blanks sort ahead of the cap, because a card
       // that truncated a REQUIRED blank off its list read as complete over an empty required
-      // field (R-033's second half).
-      const needsYou = selectNeedsYouReasons(fillResult.skipped_reasons);
+      // field (R-033's second half). capOverride exists for the E-015 path: the form's own
+      // validation list is authoritative and must never be truncated.
+      const needsYou = selectNeedsYouReasons(fillResult.skipped_reasons, opts.capOverride);
       statusEl.style.display = 'block';
       statusEl.innerHTML =
         head.map((l) => `<div>${escapeHtml(l)}</div>`).join('') +
@@ -325,6 +334,66 @@ export default defineContentScript({
         `<div style="margin-top:4px;">Review, then submit yourself.</div>`;
     }
 
+    // E-015 watcher. A MutationObserver, deliberately NOT an event listener: a capture-phase
+    // click listener on document measurably broke keyboard input into Ashby's React fields on
+    // the live QA build (typed characters vanished with the input focused; removing the listener
+    // restored typing; bisected 2026-07-18). Watching for the ATS's own error nodes appearing is
+    // passive with respect to the page's input pipeline and needs no knowledge of when submit was
+    // clicked - validation errors only exist after a refusal. Re-fires on later refusals too; the
+    // latest fill's card state rides module vars so a refill redirects the same observer.
+    let validationCardState: {
+      statusEl: HTMLElement | null;
+      fillResult: AutofillResult;
+      resumeMissing: boolean;
+    } | null = null;
+    let validationObserver: MutationObserver | null = null;
+    let validationDebounce: ReturnType<typeof setTimeout> | null = null;
+
+    function armValidationAuthority(
+      statusEl: HTMLElement | null,
+      fillResult: AutofillResult,
+      resumeMissing: boolean,
+    ): void {
+      validationCardState = { statusEl, fillResult, resumeMissing };
+      if (validationObserver) return;
+      validationObserver = new MutationObserver(() => {
+        // Debounce: refusals render many nodes in one burst, and the extract walks the DOM.
+        if (validationDebounce) clearTimeout(validationDebounce);
+        validationDebounce = setTimeout(() => {
+          const state = validationCardState;
+          if (!state) return;
+          const errors = extractValidationErrors(document);
+          if (!errors.length) return;
+          const merged = mergeValidationReasons(
+            state.fillResult.skipped_reasons,
+            validationErrorsToReasons(errors),
+          );
+          if (merged.length === state.fillResult.skipped_reasons.length) return;
+          state.fillResult.skipped_reasons = merged;
+          // The summary card self-dismisses ~9s after the fill, so by the time the student
+          // submits, statusEl is usually detached. The refusal verdict needs somewhere to
+          // land: re-inject a minimal status host rather than rendering into a ghost node.
+          if (!state.statusEl || !state.statusEl.isConnected) {
+            document.getElementById('litos-validation-card')?.remove();
+            const host = document.createElement('div');
+            host.id = 'litos-validation-card';
+            host.style.cssText =
+              'position:fixed;right:16px;bottom:16px;z-index:2147483646;max-width:340px;' +
+              'background:#fff;border:1px solid #c7c9d1;border-radius:10px;box-shadow:0 4px 18px rgba(0,0,0,.18);' +
+              'padding:12px 14px;font:13px/1.45 system-ui,sans-serif;color:#111;';
+            document.documentElement.appendChild(host);
+            state.statusEl = host;
+          }
+          renderFillSummary(state.statusEl, state.fillResult, {
+            resumeMissing: state.resumeMissing,
+            autoSubmitHeld: true,
+            capOverride: merged.length,
+          });
+        }, 700);
+      });
+      validationObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
     // Result of the background resume-gen round trip, cached per job (company|role) for the tab's
     // life so a multi-step flow reuses step 1's resume instead of paying for - and being metered
     // for - a fresh generation on every step.
@@ -332,7 +401,7 @@ export default defineContentScript({
       error?: string;
       profile?: Profile;
       applicationProfile?: ApplicationProfile;
-      resume?: { resume_url: string; file_name: string };
+      resume?: GeneratedResume;
       // This posting's structured salary range (R-031), fetched by the background from Ashby's
       // posting API off the tab URL; null/absent on every other ATS or when nothing usable exists.
       posting_compensation?: PostingCompensation | null;
@@ -356,7 +425,7 @@ export default defineContentScript({
         btn.addEventListener('click', () => {
           if (approved) return; // Already drafting from card 1
           // Remove card 1 if still showing
-          document.getElementById('rolequick-action-card')?.remove();
+          document.getElementById('litos-action-card')?.remove();
           cardInjected = false;
           injectSubmitCard(title, company, url);
         });
@@ -427,10 +496,10 @@ export default defineContentScript({
     // outright if a third ever fired. Cards keep their own ids; removing one collapses the
     // stack naturally, and an empty container is invisible.
     function getCardStack(): HTMLElement {
-      let stack = document.getElementById('rolequick-card-stack');
+      let stack = document.getElementById('litos-card-stack');
       if (!stack) {
         stack = document.createElement('div');
-        stack.id = 'rolequick-card-stack';
+        stack.id = 'litos-card-stack';
         stack.style.cssText =
           'position:fixed;bottom:72px;right:20px;z-index:2147483647;display:flex;flex-direction:column;align-items:flex-end;gap:12px;';
         document.body.appendChild(stack);
@@ -507,13 +576,13 @@ export default defineContentScript({
 
     // Card 1: fires when application form loads
     function injectActionCard(title: string, company: string, url: string) {
-      if (cardInjected || document.getElementById('rolequick-action-card')) return;
+      if (cardInjected || document.getElementById('litos-action-card')) return;
       cardInjected = true;
 
       chrome.runtime.sendMessage({ type: 'JOB_DETECTED', payload: { title, company, url } });
 
       const card = document.createElement('div');
-      card.id = 'rolequick-action-card';
+      card.id = 'litos-action-card';
       card.innerHTML = cardShell(
         'Draft recruiter emails?',
         `${title} at ${company}`
@@ -524,11 +593,11 @@ export default defineContentScript({
 
     // Card 2: fires when Submit button is clicked (only if not already approved)
     function injectSubmitCard(title: string, company: string, url: string) {
-      if (approved || document.getElementById('rolequick-submit-card')) return;
+      if (approved || document.getElementById('litos-submit-card')) return;
       cardInjected = true;
 
       const card = document.createElement('div');
-      card.id = 'rolequick-submit-card';
+      card.id = 'litos-submit-card';
       card.innerHTML = cardShell(
         "You're applying - draft outreach emails while you wait?",
         `${title} at ${company}`
@@ -584,6 +653,7 @@ export default defineContentScript({
       // demographic prefs for EEO questions; draftAnswer AI-drafts an open-ended textarea.
       eeo?: Record<string, string>;
       draftAnswer?: (question: string) => Promise<string | null>;
+      signal?: AbortSignal;
       onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
       // Ashby-only today (the other adapters ignore it): the posting's structured salary range,
       // for the R-031 median rule.
@@ -593,9 +663,9 @@ export default defineContentScript({
     // Shared by every ATS adapter: generate the JD-tailored resume, then run that adapter's
     // client-side fill-and-stop. Only the JD-extraction and fill functions differ per ATS.
     function injectResumeFillCard(title: string, company: string, extractJdText: () => string, fill: FillFn) {
-      if (document.getElementById('rolequick-resume-card')) return;
+      if (document.getElementById('litos-resume-card')) return;
       const card = document.createElement('div');
-      card.id = 'rolequick-resume-card';
+      card.id = 'litos-resume-card';
       card.innerHTML = resumeFillCardShell(title, company);
       getCardStack().appendChild(card);
 
@@ -710,62 +780,86 @@ export default defineContentScript({
           if (statusEl) statusEl.textContent = result?.error || 'Could not generate a resume - fill this one manually.';
           return;
         }
+        const { profile, applicationProfile, resume } = result;
+
+        if (!result.resume.quality?.ready_to_attach || result.resume.quality.issues.length > 0) {
+          if (statusEl) statusEl.textContent = 'This resume did not pass Litos quality checks, so the form was left unchanged.';
+          if (yesBtn) yesBtn.disabled = false;
+          return;
+        }
+
+        const approvedResume = window.confirm(buildResumeReviewMessage(result.resume.quality));
+        if (!approvedResume) {
+          if (statusEl) statusEl.textContent = 'Resume ready, but not attached. You can review the form or try again.';
+          if (yesBtn) yesBtn.disabled = false;
+          return;
+        }
 
         if (statusEl) statusEl.textContent = 'Filling the application...';
 
-        let resumeBlob: Blob | undefined;
-        try {
-          const blobRes = await fetch(result.resume.resume_url);
-          // Without the ok check, a 403/404 error page would be handed to the file input as if
-          // it were the PDF; better to skip the file (the adapter flags it) than upload garbage.
-          if (!blobRes.ok) throw new Error(`resume fetch ${blobRes.status}`);
-          resumeBlob = await blobRes.blob();
-        } catch {
-          // No resume file available client-side; the adapter will skip the file input
-          // and flag it rather than fail the whole fill.
-        }
+        // R-041: this fetch used to swallow every failure in a bare catch - the card stayed
+        // clean, the fill read as a success, and the student could submit resume-less without
+        // ever being told (Eight Sleep AI/ML, 2026-07-18, during the R-040 discovery).
+        // fetchResumeBlob returns null on anything that is not a usable file (error status,
+        // network throw, empty or HTML body), and that null is surfaced after the fill as
+        // resumeFetchSkipReason. The fill itself still runs either way: a missing resume must
+        // not cost the student the forty other fields the adapter can fill.
+        const resumeBlob = (await fetchResumeBlob(result.resume.resume_url)) ?? undefined;
 
         // Safety net: a stuck field (an unexpected widget, a listener that never fires) must
-        // never leave the student staring at "Filling the application..." forever with no way
-        // to know what happened. This is a true-hang backstop, NOT a routine budget: every
-        // adapter now AI-drafts open-ended essays inside fill() (parallel LLM round trips, each
-        // able to fire a grounding-retry), so a form with a few essays can legitimately run well
-        // past 20s. At the old 20s this race routinely tripped on essay-heavy forms, dismissed
-        // the card, and let the essays fill in AFTER the student was told to finish manually.
-        // 90s only fires on a genuine hang; onProgress streams field counts meanwhile so the
-        // student is never staring at a frozen status.
-        const FILL_TIMEOUT_MS = 90000;
+        // never leave the student staring at "Filling the application..." forever. This is an
+        // INACTIVITY budget, not a total runtime budget. The shared draft queue deliberately
+        // limits concurrent LLM calls, so a form may need multiple request waves. Every progress
+        // event resets the clock, allowing healthy queued work to finish while still detecting a
+        // worker that has genuinely stopped making progress.
+        const FILL_INACTIVITY_TIMEOUT_MS = 90000;
         // R-030 observation: a previous run that timed out (the catch below returns without
         // reporting) may have left labels behind. Discard them so THIS report only ever carries
         // labels recorded by this fill.
         drainR030CandidateLabels();
         let fillResult: AutofillResult;
         try {
-          fillResult = await Promise.race([
-            fill({
-              fullName: result.profile.full_name ?? '',
-              email: result.profile.email,
-              profile: result.profile,
-              applicationProfile: result.applicationProfile,
+          fillResult = await withInactivityTimeout(
+            (reportProgress, signal) => fill({
+              fullName: profile.full_name ?? '',
+              email: profile.email,
+              profile,
+              applicationProfile,
               resumeBlob,
-              resumeFileName: result.resume.file_name,
+              resumeFileName: resume.file_name,
               // Generic-adapter extras (ATS adapters ignore them): EEO prefs for demographic
               // questions, and an AI-draft hook for open-ended textareas routed through the
               // background to the backend. jdText/company/title are already in scope here.
-              eeo: (result.applicationProfile?.eeo_prefs as Record<string, string> | undefined) ?? {},
+              eeo: (applicationProfile.eeo_prefs as Record<string, string> | undefined) ?? {},
               // The posting's structured salary range (R-031), when the background resolved one.
               postingCompensation: result.posting_compensation ?? null,
+              signal,
               draftAnswer: (question: string) =>
                 new Promise<string | null>((resolve) => {
+                  if (signal.aborted) {
+                    resolve(null);
+                    return;
+                  }
+                  let resolved = false;
+                  const finish = (answer: string | null): void => {
+                    if (resolved) return;
+                    resolved = true;
+                    signal.removeEventListener('abort', onAbort);
+                    resolve(answer);
+                  };
+                  const onAbort = () => finish(null);
+                  signal.addEventListener('abort', onAbort, { once: true });
                   chrome.runtime.sendMessage(
                     { type: 'ANSWER_QUESTION', payload: { company, role: title, jd_text: getJd(), question } },
-                    (r: { answer?: string | null } | undefined) => resolve(r?.answer ?? null),
+                    (r: { answer?: string | null } | undefined) =>
+                      finish(signal.aborted ? null : (r?.answer ?? null)),
                   );
                 }),
               // Streamed progress: instant fields report immediately, then each essay updates
               // the count as its own draft call resolves, instead of the status text sitting on
               // "Filling the application..." until every essay in the form is done.
               onProgress: (partial) => {
+                reportProgress();
                 if (!statusEl) return;
                 const essayNote = partial.pendingEssays > 0
                   ? ` Drafting ${partial.pendingEssays} more essay${partial.pendingEssays === 1 ? '' : 's'}...`
@@ -773,15 +867,23 @@ export default defineContentScript({
                 statusEl.textContent = `Filled ${partial.fields_filled} field${partial.fields_filled === 1 ? '' : 's'}.${essayNote}`;
               },
             }),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('timed out')), FILL_TIMEOUT_MS),
-            ),
-          ]);
+            FILL_INACTIVITY_TIMEOUT_MS,
+          );
         } catch {
           if (statusEl) statusEl.textContent = 'This form is taking too long to fill - some fields may be partially filled. Review and finish it yourself.';
           if (yesBtn) yesBtn.style.display = 'none';
           setTimeout(dismiss, 8000);
           return;
+        }
+
+        // R-041: the background generated a resume this tab could not download. The adapter
+        // cannot report this (it just saw "no blob", same as any other absence), so content.ts
+        // owns the reason: pushed into skipped_reasons so it rides R-010's exact rails -
+        // selectNeedsYouReasons lists it on the card, skippedReasonsNeedReview holds
+        // auto-submit. The counts are left alone: the adapter already counted the missing
+        // resume as a skip, this entry is the WHY.
+        if (!resumeBlob) {
+          fillResult.skipped_reasons.push(resumeFetchSkipReason);
         }
 
         const autoSubmitOn = await getAutoSubmitEnabled();
@@ -802,6 +904,9 @@ export default defineContentScript({
         // committed with asksForLink false on an input[type=text] - the population that fills a
         // URL unconditionally. Shipped with the telemetry this event already posts, only when
         // non-empty, so one real label off a real board can finally say what the R-030 fix is.
+        // The same drain also carries R-039's tagged populations ("r039-veto:..." where the
+        // location-commitment veto suppressed a fill, "r039-third-party:..." where a bare
+        // name/email/city matcher fired on a third-party label) - same field, same contract.
         const r030Labels = drainR030CandidateLabels();
 
         const reportEvent = (autoSubmitted: boolean) => {
@@ -819,11 +924,11 @@ export default defineContentScript({
         };
 
         // Same dismissal check as after the generation await, for the stretch the fill itself
-        // takes (legitimately up to 90s on an essay-heavy form). A dismissal that lands while the
-        // fill is running must not be followed by an auto-submit countdown: the card is the
-        // student's only handle on that countdown's context, and an application they closed the
-        // card on is one they chose to finish themselves. The fill above already happened, so
-        // report it honestly and hand the form back without submitting.
+        // takes (potentially multiple healthy request waves on an essay-heavy form). A dismissal
+        // that lands while the fill is running must not be followed by an auto-submit countdown:
+        // the card is the student's only handle on that countdown's context, and an application
+        // they closed the card on is one they chose to finish themselves. The fill above already
+        // happened, so report it honestly and hand the form back without submitting.
         if (!card.isConnected) {
           reportEvent(false);
           return;
@@ -835,7 +940,7 @@ export default defineContentScript({
         // attached, and no required field is still empty (native validation would block the submit
         // anyway, after we'd already reported it sent). Otherwise fall through to highlight-and-
         // hand-back. It always fires from THIS student's own logged-in session, on data they
-        // generated and can still cancel - never something RoleQuick decides on its own.
+        // generated and can still cancel - never something Litos decides on its own.
         // document.hidden: never START a countdown while the student isn't looking at the tab (they
         // can't see the window to back out); going hidden mid-countdown is handled separately.
         const autoSubmitHeld =
@@ -856,6 +961,11 @@ export default defineContentScript({
         // Surface WHAT still needs the student (resume, agreements, unmatched/required blanks), not
         // just a filled count - the adapters compute this precisely and it used to be discarded.
         renderFillSummary(statusEl, fillResult, { resumeMissing, autoSubmitHeld });
+
+        // E-015: after the student's own submit attempt, the form may refuse with a validation
+        // list naming required fields no sweep saw. That list is the authority - re-read it and
+        // re-render the card from it.
+        armValidationAuthority(statusEl, fillResult, resumeMissing);
 
         // Highlight the real final-submit control if there is one; never click it here (PRD-v2
         // Section 5 Step 4). On a multi-step form still mid-flow there is no final submit yet, so
@@ -909,7 +1019,7 @@ export default defineContentScript({
       submitBtn.style.borderRadius = getComputedStyle(submitBtn).borderRadius || '8px';
 
       const overlay = document.createElement('div');
-      overlay.id = 'rolequick-autosubmit-overlay';
+      overlay.id = 'litos-autosubmit-overlay';
       overlay.style.cssText =
         'position:fixed;inset:0;z-index:2147483647;pointer-events:none;' +
         "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;";
@@ -999,7 +1109,7 @@ export default defineContentScript({
       // on isTrusted so the adapter's own programmatic fill events never trip it, and scoped to
       // ignore clicks on our own overlay.
       const isOurNode = (t: EventTarget | null) =>
-        t instanceof Element && !!t.closest('#rolequick-autosubmit-overlay, [id*="rolequick"]');
+        t instanceof Element && !!t.closest('#litos-autosubmit-overlay, [id*="litos"]');
       const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') cancel(); };
       // Going hidden does NOT cancel: the interval tick below freezes while document.hidden (it
       // never decrements or fires the click), so the countdown simply pauses and resumes when the
@@ -1089,7 +1199,7 @@ export default defineContentScript({
     }
 
     // ─── Workday account-creation speed-up (2026-07-03) ────────────────────────
-    // RoleQuick doesn't create the account itself, and only ever fills the email field - password,
+    // Litos doesn't create the account itself, and only ever fills the email field - password,
     // clicking Create Account, and completing email verification are entirely the student's own
     // steps by explicit product decision. Not a fill-and-stop-with-countdown card like the
     // others: there's no button to auto-submit toward, since the form is never actually
@@ -1130,9 +1240,9 @@ export default defineContentScript({
     }
 
     function injectWorkdayAccountCreationCard() {
-      if (document.getElementById('rolequick-account-card')) return;
+      if (document.getElementById('litos-account-card')) return;
       const card = document.createElement('div');
-      card.id = 'rolequick-account-card';
+      card.id = 'litos-account-card';
       card.innerHTML = accountCreationCardShell();
       getCardStack().appendChild(card);
 
@@ -1177,14 +1287,14 @@ export default defineContentScript({
     }
 
     // Guidance for Workday's "Start Your Application" triage screen (Autofill with Resume /
-    // Apply Manually / Use My Last Application) - previously RoleQuick said nothing here, leaving
+    // Apply Manually / Use My Last Application) - previously Litos said nothing here, leaving
     // the student to guess which option leads anywhere useful. This just points them at the
     // right one and clicks it for them - pure page navigation, not a form submission or account
     // action, so it isn't gated behind the auto-submit toggle the way real submits are.
     function injectWorkdayStartScreenCard() {
-      if (document.getElementById('rolequick-start-card')) return;
+      if (document.getElementById('litos-start-card')) return;
       const card = document.createElement('div');
-      card.id = 'rolequick-start-card';
+      card.id = 'litos-start-card';
       card.innerHTML = `
         <div style="
           position: relative;
@@ -1232,19 +1342,19 @@ export default defineContentScript({
     // Company-hosted application forms (vercel.com/careers, lifeatspotify.com, ...): this
     // only ever runs when the student explicitly injected the script from the popup, since
     // no manifest match covers these domains. Re-clicking the popup button re-enters here
-    // via the __rolequickGenericInit guard at the top of main().
+    // via the __litosGenericInit guard at the top of main().
     function genericInit() {
       if (KNOWN_ATS_HOSTS.some((k) => window.location.hostname.includes(k))) return;
-      document.getElementById('rolequick-resume-card')?.remove();
+      document.getElementById('litos-resume-card')?.remove();
       if (!isLikelyApplicationForm()) {
         const note = document.createElement('div');
-        note.id = 'rolequick-generic-note';
+        note.id = 'litos-generic-note';
         note.style.cssText =
           'position:fixed;bottom:72px;right:20px;z-index:2147483647;background:white;border:1.5px solid #e0e7ff;' +
           'border-radius:14px;padding:12px 16px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;' +
           'font-size:12px;line-height:1.4;color:#374151;box-shadow:0 8px 32px rgba(79,70,229,0.18);max-width:272px;';
         note.textContent = "Litos couldn't find an application form on this page. Open the page with the actual form fields, then try again.";
-        document.getElementById('rolequick-generic-note')?.remove();
+        document.getElementById('litos-generic-note')?.remove();
         document.body.appendChild(note);
         setTimeout(() => note.remove(), 6000);
         return;
@@ -1253,11 +1363,11 @@ export default defineContentScript({
       // Company-hosted forms count too: isLikelyApplicationForm() has already confirmed this page
       // is a real application (resume upload, or name AND email), which is the same bar the ATS
       // path uses. This branch only runs on an on-demand inject from the popup, so the student
-      // has explicitly pointed RoleQuick at this form.
+      // has explicitly pointed Litos at this form.
       startHarvest();
       injectResumeFillCard(job.title, job.company, extractGenericJdText, fillGenericApplication);
     }
-    w.__rolequickGenericInit = genericInit;
+    w.__litosGenericInit = genericInit;
 
     function init() {
       const h = window.location.hostname;
@@ -1355,11 +1465,11 @@ export default defineContentScript({
         activeAutoSubmitCancel?.();
         cardInjected = false;
         approved = false;
-        document.getElementById('rolequick-action-card')?.remove();
-        document.getElementById('rolequick-submit-card')?.remove();
-        document.getElementById('rolequick-resume-card')?.remove();
-        document.getElementById('rolequick-account-card')?.remove();
-        document.getElementById('rolequick-start-card')?.remove();
+        document.getElementById('litos-action-card')?.remove();
+        document.getElementById('litos-submit-card')?.remove();
+        document.getElementById('litos-resume-card')?.remove();
+        document.getElementById('litos-account-card')?.remove();
+        document.getElementById('litos-start-card')?.remove();
         setTimeout(init, NAV_RECHECK_DELAY_MS);
       }
     }).observe(document.body, { childList: true, subtree: true });
@@ -1368,7 +1478,7 @@ export default defineContentScript({
     // application form) without a URL change in some tenants (a same-path client-side
     // re-render rather than a navigation), which the MutationObserver above wouldn't catch via
     // its URL-diff check. A cheap poll (just DOM marker lookups) re-runs init() whenever none of
-    // RoleQuick's three Workday cards is currently showing, so a stage change gets picked up within
+    // Litos's three Workday cards is currently showing, so a stage change gets picked up within
     // ~500ms instead of waiting for the next navigation event.
     if (isWorkdayHost) {
       // Poll for Workday's URL-less stage swaps, but not aggressively or forever: at 500ms this
@@ -1384,9 +1494,9 @@ export default defineContentScript({
           return;
         }
         if (
-          !document.getElementById('rolequick-account-card') &&
-          !document.getElementById('rolequick-resume-card') &&
-          !document.getElementById('rolequick-start-card')
+          !document.getElementById('litos-account-card') &&
+          !document.getElementById('litos-resume-card') &&
+          !document.getElementById('litos-start-card')
         ) {
           init();
         }

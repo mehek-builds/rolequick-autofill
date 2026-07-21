@@ -39,6 +39,7 @@ import {
   unattachableDocumentReasons,
 } from './shared/dom';
 import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
+import { isDraftTargetAvailable, runDraftQueue } from './shared/drafts';
 // Reuse the generic adapter's pure answer-resolution engine so every adapter maps a question to
 // the same answer and picks the same option. Pure (no DOM), covered by the adapter answer tests.
 import { desiredAnswer, isDraftableQuestion, linkQuestion, linkSkipReason, locationQuestion, locationSkipReason, matchOption, noteLinkFillCandidate, unreadableQuestionSkipReason, WORK_ELIGIBILITY_QUESTION, workEligibilitySkipReason, type Desired } from './generic';
@@ -151,7 +152,7 @@ export function isWorkdayApplicationPage(): boolean {
   return hasApplicationFormMarkers();
 }
 
-// 2026-07-03: RoleQuick never creates the Workday account itself (backend-driven third-party
+// 2026-07-03: Litos never creates the Workday account itself (backend-driven third-party
 // account creation was scoped, researched, and explicitly decided against - see project memory
 // for the CFAA/agency-law reasoning). This only pre-fills the signup form's own fields so the
 // student reviews and clicks "Create Account" themselves, same fill-and-stop trust model as
@@ -276,6 +277,7 @@ export interface WorkdayFillParams {
   // EEO questions; draftAnswer AI-drafts an open-ended textarea; onProgress streams counts.
   eeo?: Record<string, string>;
   draftAnswer?: (question: string) => Promise<string | null>;
+  signal?: AbortSignal;
   onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
 }
 
@@ -334,7 +336,7 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
     skipped_reasons.push('resume: no generated resume file available');
   }
 
-  // Documents this form requires that RoleQuick cannot produce (R-010). Reported at fill time, in
+  // Documents this form requires that Litos cannot produce (R-010). Reported at fill time, in
   // the card, so the student learns the form wants a transcript NOW rather than at submit; the
   // "left for" wording holds auto-submit while it sits unattached.
   const documentReasons = unattachableDocumentReasons();
@@ -515,21 +517,22 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
     }
   }
 
-  // Draft every collected essay CONCURRENTLY (each is an independent LLM round trip), writing and
-  // flagging each as it resolves. A failed or empty draft falls back to leaving it blank, unchanged.
+  // Draft through the shared bounded worker pool, writing and flagging each answer as it resolves.
   if (pendingDrafts.length > 0 && draftAnswer) {
-    let pendingEssays = pendingDrafts.length;
-    onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-    await Promise.all(
-      pendingDrafts.map(async ({ el, question }) => {
-        let drafted: string | null = null;
-        try {
-          drafted = (await draftAnswer(question))?.trim() || null;
-        } catch {
-          drafted = null;
-        }
+    await runDraftQueue({
+      items: pendingDrafts,
+      draftAnswer,
+      signal: params.signal,
+      promptFor: ({ question }) => question,
+      onSettled: async ({ el, question }, drafted) => {
+        if (!isDraftTargetAvailable(el)) return;
         if (drafted) {
-          await fillField(el, drafted);
+          const written = await fillField(
+            el,
+            drafted,
+            () => !params.signal?.aborted && isDraftTargetAvailable(el),
+          );
+          if (!written) return;
           markForReview(el);
           ai_drafted++;
           fields_filled++;
@@ -537,10 +540,10 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
           fields_skipped++;
           skipped_reasons.push(`open-ended question left blank: "${question.slice(0, 60)}"`);
         }
-        pendingEssays--;
-        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-      }),
-    );
+      },
+      onProgress: (pendingEssays) =>
+        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays }),
+    });
   }
 
   if (ai_drafted > 0) {
@@ -556,7 +559,7 @@ export interface WorkdayAccountCreationParams {
 
 // Fills only the email field and stops - password is deliberately never touched here (2026-07-03
 // product decision: the student sets and enters their own password, clicks Create Account, and
-// completes email verification entirely on their own). This is the one RoleQuick-fillable field on
+// completes email verification entirely on their own). This is the one Litos-fillable field on
 // the signup form, not a fill-and-stop pattern with a countdown to auto-submit - there's nothing
 // to auto-submit toward since the password field is always left for the student to fill by hand.
 export async function fillWorkdayAccountCreation(params: WorkdayAccountCreationParams): Promise<AutofillResult> {

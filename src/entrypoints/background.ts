@@ -1,14 +1,13 @@
 // Token access goes through lib/storage, so the background reads the exact key the popup
 // writes, including the backward-compatible fallback to the legacy Volley-era key name.
 import { getToken as getStoredToken, migrateLegacyStorage, setToken, setAutoSubmitEnabled } from '../lib/storage';
+import { API_BASE } from '../lib/config';
 import { overloadWaitMs, overloadBudgetRemains, RESUME_OVERLOAD_BUDGET_MS } from '../lib/overload';
 // Pure salary/posting helpers (R-031). adapters/salary is a LEAF module (types only), so this
 // import does not pull the DOM-adjacent adapter graph into the service worker bundle.
 import { parseAshbyPostingRef, selectPostingCompensation, type PostingCompensation } from '../lib/adapters/salary';
-
-// Set VITE_API_BASE at build time (e.g. your Vercel URL) to point at the deployed backend;
-// defaults to the local dev server.
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001';
+import { litosClientHeaders, PRODUCT_NAME, type ProductMeta } from '../lib/product';
+import type { GeneratedResume } from '../lib/types';
 
 // Latched off once the backend reports onboarding complete. Service-worker memory is fine for
 // this: the worst case on a restart is one wasted 403, which re-latches it immediately.
@@ -41,7 +40,7 @@ async function harvestFields(fields: unknown): Promise<{ ok: boolean; stop?: boo
       // A 400 here means the classifier produced a field the server refuses - i.e. the R-004
       // guard failed somewhere upstream. Loud in the log, because it should be impossible:
       // ProfileKey has no member for any denied field.
-      console.warn('[RoleQuick] harvest rejected', res.status, await res.text().catch(() => ''));
+      console.warn('[Litos] harvest rejected', res.status, await res.text().catch(() => ''));
       return { ok: false };
     }
     const body = (await res.json().catch(() => null)) as { kept?: string[] } | null;
@@ -58,7 +57,11 @@ async function harvestFields(fields: unknown): Promise<{ ok: boolean; stop?: boo
 const FETCH_TIMEOUT_MS = 20000;
 const RESUME_FETCH_TIMEOUT_MS = 60000;
 function timeoutFetch(input: string, init: RequestInit = {}, ms = FETCH_TIMEOUT_MS): Promise<Response> {
-  return fetch(input, { ...init, signal: AbortSignal.timeout(ms) });
+  const headers = new Headers(init.headers);
+  if (input.startsWith(API_BASE)) {
+    for (const [name, value] of Object.entries(litosClientHeaders())) headers.set(name, value);
+  }
+  return fetch(input, { ...init, headers, signal: AbortSignal.timeout(ms) });
 }
 
 // ─── Transient model-capacity retry (live QA 2026-07-16, R-003) ──────────────
@@ -273,7 +276,7 @@ async function generateResumeAndProfile(
   // by a model overload; re-running them per attempt would add round trips to a backend that is
   // already telling us it is busy.
   const overloadDeadline = Date.now() + RESUME_OVERLOAD_BUDGET_MS;
-  let resume: { resume_url: string; file_name: string; spec: unknown } | undefined;
+  let resume: GeneratedResume | undefined;
   for (let attempt = 1; ; attempt++) {
     const resumeRes = await timeoutFetch(`${API_BASE}/resume/generate`, {
       method: 'POST',
@@ -326,9 +329,23 @@ async function generateResumeAndProfile(
 }
 
 export default defineBackground(() => {
-  // One-time copy of any legacy Volley-era storage keys to their new rolequick_* names, so a
+  // One-time copy of any legacy Volley-era storage keys to their new litos_* names, so a
   // published update never orphans an existing user's saved token/profile/settings.
   void migrateLegacyStorage();
+
+  // Cache the backend-owned public contract for this service-worker session.
+  // Static fallbacks keep the extension usable offline; the live contract lets
+  // future releases add compatibility gates without another naming migration.
+  void timeoutFetch(`${API_BASE}/v1/meta`)
+    .then(async (res) => {
+      if (!res.ok) return;
+      const meta = (await res.json()) as ProductMeta;
+      if (meta.product.name !== PRODUCT_NAME) {
+        console.warn(`[${PRODUCT_NAME}] backend product contract mismatch`);
+      }
+      await chrome.storage.session.set({ litos_product_meta: meta });
+    })
+    .catch(() => {});
 
   // QA/dev bootstrap: when built with VITE_QA_TOKEN, seed the session once at install/reload so
   // the extension is signed in without driving the popup UI (which automation can't reach).
@@ -339,7 +356,7 @@ export default defineBackground(() => {
     chrome.runtime.onInstalled.addListener(() => {
       setToken(import.meta.env.VITE_QA_TOKEN)
         .then(() => setAutoSubmitEnabled(import.meta.env.VITE_QA_AUTOSUBMIT === '1'))
-        .catch((e) => console.warn('[RoleQuick QA] storage seed failed:', e));
+        .catch((e) => console.warn('[Litos QA] storage seed failed:', e));
     });
   }
 
@@ -488,7 +505,7 @@ export default defineBackground(() => {
         // account email, not a resume, so this skips the /resume/generate call entirely (no
         // point spending a resume-gen quota unit on a step before there's even an application to
         // tailor one for). Password is deliberately not fetched here - the student types their
-        // own (2026-07-03 product decision), RoleQuick never touches that field.
+        // own (2026-07-03 product decision), Litos never touches that field.
         getStoredToken().then(async (token) => {
           if (!token) {
             sendResponse({ error: 'not signed in' });

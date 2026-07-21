@@ -56,6 +56,7 @@ import { classifyField, dateSkipReason, desiredAnswer, fillDateField, isDraftabl
 import { parseAshbyPostingRef, resolveSalary, salarySkipReason, storedSalaryOf, type AshbyPostingRef, type PostingCompensation } from './salary';
 import { isDateControl } from './shared/dates';
 import { htmlToPlainText, JD_UNREADABLE, looksLikeJobDescription } from './shared/jd';
+import { isDraftTargetAvailable, runDraftQueue } from './shared/drafts';
 
 // Resolves once the DOM has gone quiet for `quietMs`, or after `maxMs` regardless - Ashby's
 // React tree re-renders after most field changes, and firing the next fill mid-re-render risks
@@ -151,7 +152,7 @@ function comboControlIn(block: Element): HTMLElement | null {
 // submit control is already excluded by the text list below (it reads "Submit application").
 function buttonOptionsIn(block: Element): Array<{ text: string; el: HTMLButtonElement }> {
   return [...block.querySelectorAll<HTMLButtonElement>('button')]
-    .filter((b) => !b.closest('[id*="rolequick"]'))
+    .filter((b) => !b.closest('[id*="litos"]'))
     .map((b) => ({ text: (b.textContent ?? '').trim(), el: b }))
     .filter(
       (b) =>
@@ -193,7 +194,7 @@ async function answerChoiceBlock(block: Element, desired: Desired): Promise<bool
   // "Select all that apply" checkbox groups (Ashby renders EEO ethnicity / community questions
   // this way): tick the opt-out box for a decline, or the matching box for a value.
   const checkboxes = [...block.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
-    .filter((cb) => !cb.closest('[id*="rolequick"]') && !cb.disabled)
+    .filter((cb) => !cb.closest('[id*="litos"]') && !cb.disabled)
     .map((cb) => ({
       text: (
         document.querySelector(`label[for="${CSS.escape(cb.id)}"]`)?.textContent ??
@@ -324,6 +325,7 @@ export interface AshbyFillParams {
   // EEO questions; draftAnswer AI-drafts an open-ended textarea; onProgress streams counts.
   eeo?: Record<string, string>;
   draftAnswer?: (question: string) => Promise<string | null>;
+  signal?: AbortSignal;
   onProgress?: (partial: { fields_filled: number; fields_skipped: number; ai_drafted: number; pendingEssays: number }) => void;
   // This posting's structured salary range (R-031), fetched by background.ts from the posting API
   // (?includeCompensation=true) and plumbed through the GENERATE_RESUME_AND_FILL_DATA response.
@@ -342,7 +344,7 @@ export function isAshbyApplicationPage(): boolean {
 
 // ─── Job-description extraction (R-013) ─────────────────────────────────────
 //
-// On the Ashby Application tab - the only place the form and RoleQuick's card exist - the job
+// On the Ashby Application tab - the only place the form and Litos's card exist - the job
 // description is NOT in the DOM at all. It lives on the Overview tab and is swapped out on SPA
 // nav. The old extractor could not tell, so every Ashby resume was tailored to the job title and
 // some form labels. See shared/jd.ts for the full failure write-up.
@@ -497,7 +499,7 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
     skipped_reasons.push('resume: no generated resume file available');
   }
 
-  // Documents this form requires that RoleQuick cannot produce (R-010). Reported at fill time, in
+  // Documents this form requires that Litos cannot produce (R-010). Reported at fill time, in
   // the card, so the student learns the form wants a transcript NOW rather than at submit; the
   // "left for" wording holds auto-submit while it sits unattached.
   const documentReasons = unattachableDocumentReasons();
@@ -843,21 +845,18 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
     }
   }
 
-  // Draft every collected essay CONCURRENTLY (each is an independent LLM round trip), writing and
-  // flagging each as it resolves. A failed or empty draft falls back to leaving it blank, unchanged.
+  // Draft through the shared bounded worker pool, writing and flagging each answer as it resolves.
   if (pendingDrafts.length > 0 && draftAnswer) {
-    let pendingEssays = pendingDrafts.length;
-    onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-    await Promise.all(
-      pendingDrafts.map(async ({ el, question }) => {
-        let drafted: string | null = null;
-        try {
-          drafted = (await draftAnswer(question))?.trim() || null;
-        } catch {
-          drafted = null;
-        }
+    await runDraftQueue({
+      items: pendingDrafts,
+      draftAnswer,
+      signal: params.signal,
+      promptFor: ({ question }) => question,
+      onSettled: async ({ el, question }, drafted) => {
+        if (!isDraftTargetAvailable(el)) return;
         if (drafted) {
           await randomDelay();
+          if (params.signal?.aborted || !isDraftTargetAvailable(el)) return;
           el.focus();
           setNativeValue(el, drafted);
           el.blur();
@@ -868,10 +867,10 @@ export async function fillAshbyApplication(params: AshbyFillParams): Promise<Aut
           fields_skipped++;
           skipped_reasons.push(`open-ended question left blank: "${question.slice(0, 60)}"`);
         }
-        pendingEssays--;
-        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays });
-      }),
-    );
+      },
+      onProgress: (pendingEssays) =>
+        onProgress?.({ fields_filled, fields_skipped, ai_drafted, pendingEssays }),
+    });
   }
 
   if (ai_drafted > 0) {

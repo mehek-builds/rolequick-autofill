@@ -2,7 +2,7 @@ interface BrandMarkProps {
   className?: string;
 }
 
-// The RoleQuick "dart" mark: a paper dart mid-flight, two triangles in brand blues.
+// The Litos "dart" mark: a paper dart mid-flight, two triangles in brand blues.
 // Transparent background so it can sit on any fill (brand-600 square, translucent circle, etc).
 export default function BrandMark({ className }: BrandMarkProps) {
   return (
