@@ -6,6 +6,18 @@ export function resumeGenerationProgress(elapsedSeconds: number): string {
   return `Checking layout and accuracy · ${elapsed}s`;
 }
 
+export function resumeGenerationStatus(elapsedSeconds: number, retryMessage: string | null): string {
+  return retryMessage ?? resumeGenerationProgress(elapsedSeconds);
+}
+
+export function escapeApplicationText(value: string): string {
+  return value.replace(/[&<>"']/g, (character) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] as string,
+  );
+}
+
+export const SUBMISSION_MONITOR_TIMEOUT_MS = 60_000;
+
 export function submissionProgress(elapsedSeconds: number): string {
   const elapsed = Math.max(0, Math.floor(elapsedSeconds));
   if (elapsed < 15) return `Waiting for the company portal · ${elapsed}s`;
@@ -26,5 +38,17 @@ export function pageSubmissionFailureMessage(text: string): string | null {
   if (/couldn['’]t submit your application|unable to submit (?:your )?application/i.test(normalized)) {
     return 'The company portal rejected the submission. Review its error message before trying again.';
   }
+  return null;
+}
+
+export type SubmissionOutcome =
+  | { kind: 'failure'; message: string }
+  | { kind: 'confirmed' }
+  | null;
+
+export function classifySubmissionOutcome(text: string): SubmissionOutcome {
+  const failure = pageSubmissionFailureMessage(text);
+  if (failure) return { kind: 'failure', message: failure };
+  if (pageShowsSubmissionConfirmation(text)) return { kind: 'confirmed' };
   return null;
 }

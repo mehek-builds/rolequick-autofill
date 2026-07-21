@@ -22,11 +22,15 @@ import type { Profile, ApplicationProfile, AutofillResult, GeneratedResume } fro
 import type { PostingCompensation } from '../lib/adapters/salary';
 import { buildResumeReviewSummary } from '../lib/resume-review';
 import {
-  pageShowsSubmissionConfirmation,
-  pageSubmissionFailureMessage,
-  resumeGenerationProgress,
+  escapeApplicationText,
   submissionProgress,
 } from '../lib/application-progress';
+import {
+  createResumeGenerationController,
+  createResumeReviewPrompt,
+  createSubmissionOutcomeController,
+  restoreResumeReviewControls,
+} from '../lib/application-task-controller';
 
 export default defineContentScript({
   matches: [
@@ -304,11 +308,7 @@ export default defineContentScript({
 
     // Field labels in skipped_reasons come from the page DOM, so escape before inserting via
     // innerHTML - a hostile <label> must not be able to inject markup into our card.
-    function escapeHtml(s: string): string {
-      return s.replace(/[&<>"']/g, (c) =>
-        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string,
-      );
-    }
+    const escapeHtml = escapeApplicationText;
 
     // Show WHAT still needs the student, not just a filled count (the adapters compute a precise
     // skipped list that content.ts previously discarded). This is the difference between a form that
@@ -532,8 +532,8 @@ export default defineContentScript({
           <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;line-height:1.4;">
             <span style="font-size:20px;flex-shrink:0;margin-top:1px;line-height:1;">🔥</span>
             <div>
-              <div style="font-weight:700;font-size:13px;color:#1e1b4b;line-height:1.4;">${headline}</div>
-              <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;line-height:1.4;">${subline}</div>
+              <div style="font-weight:700;font-size:13px;color:#1e1b4b;line-height:1.4;">${escapeHtml(headline)}</div>
+              <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;line-height:1.4;">${escapeHtml(subline)}</div>
             </div>
           </div>
           <div style="display:flex;gap:8px;">
@@ -612,7 +612,7 @@ export default defineContentScript({
             <span id="wp-submit-icon" style="font-size:20px;flex-shrink:0;line-height:1.4;">⏳</span>
             <div style="line-height:1.4;">
               <div id="wp-submit-title" style="font-weight:700;font-size:13px;color:#1e1b4b;line-height:1.4;">Sending your application</div>
-              <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;line-height:1.4;">${title} at ${company}</div>
+              <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;line-height:1.4;">${escapeHtml(title)} at ${escapeHtml(company)}</div>
               <div id="wp-submit-status" role="status" aria-live="polite" style="font-size:11px;color:#6b7280;margin-top:8px;line-height:1.4;">${submissionProgress(0)}</div>
             </div>
           </div>
@@ -624,61 +624,74 @@ export default defineContentScript({
       const statusEl = card.querySelector<HTMLElement>('#wp-submit-status');
       const titleEl = card.querySelector<HTMLElement>('#wp-submit-title');
       const iconEl = card.querySelector<HTMLElement>('#wp-submit-icon');
-      let finished = false;
       let outcomeObserver: MutationObserver | null = null;
-      const stop = () => {
+      let timer: ReturnType<typeof setInterval>;
+      const outcomeSelectors = [
+        '[role="alert"]',
+        '[role="status"]',
+        '[aria-live]',
+        'h1',
+        'h2',
+        '[class*="error" i]',
+        '[class*="success" i]',
+        '[class*="confirm" i]',
+        '[class*="thank" i]',
+      ].join(',');
+      const readOutcomeText = (): string => [...document.querySelectorAll<HTMLElement>(outcomeSelectors)]
+        .filter((element) => !card.contains(element))
+        .map((element) => element.textContent ?? '')
+        .join(' ');
+      const stopResources = () => {
         clearInterval(timer);
         outcomeObserver?.disconnect();
       };
-      const confirmIfVisible = () => {
-        if (finished || !pageShowsSubmissionConfirmation(document.body.innerText)) return;
-        finished = true;
-        stop();
-        if (iconEl) iconEl.textContent = '✓';
-        if (titleEl) titleEl.textContent = 'Application confirmed';
-        if (statusEl) statusEl.textContent = 'The company portal confirmed receipt.';
-      };
-      const failIfVisible = () => {
-        if (finished) return false;
-        const failure = pageSubmissionFailureMessage(document.body.innerText);
-        if (!failure) return false;
-        finished = true;
-        stop();
-        if (iconEl) iconEl.textContent = '!';
-        if (titleEl) titleEl.textContent = 'Application not submitted';
-        if (statusEl) statusEl.textContent = failure;
-        return true;
-      };
-      const timer = setInterval(() => {
+      const outcomeController = createSubmissionOutcomeController({
+        readText: readOutcomeText,
+        onStop: stopResources,
+        onOutcome: (outcome) => {
+        if (outcome.kind === 'failure') {
+          if (iconEl) iconEl.textContent = '!';
+          if (titleEl) titleEl.textContent = 'Application not submitted';
+          if (statusEl) statusEl.textContent = outcome.message;
+        } else {
+          if (iconEl) iconEl.textContent = '✓';
+          if (titleEl) titleEl.textContent = 'Application confirmed';
+          if (statusEl) statusEl.textContent = 'The company portal confirmed receipt.';
+        }
+        },
+        onUnknown: () => {
+          if (iconEl) iconEl.textContent = '?';
+          if (titleEl) titleEl.textContent = 'Confirmation unknown';
+          if (statusEl) statusEl.textContent = submissionProgress(60);
+        },
+      });
+      timer = setInterval(() => {
         if (!card.isConnected) {
-          stop();
+          outcomeController.stop();
           return;
         }
         const elapsedSeconds = (Date.now() - startedAt) / 1000;
-        if (failIfVisible()) return;
+        if (outcomeController.scan()) return;
         // Native browser validation can reject a click before any request leaves the page. Do not
         // tell the student Litos is waiting on the company when the form is visibly incomplete.
-        if (!finished && elapsedSeconds >= 1 && hasEmptyRequiredFields()) {
+        if (!outcomeController.isFinished() && elapsedSeconds >= 1 && hasEmptyRequiredFields()) {
           if (iconEl) iconEl.textContent = '!';
           if (titleEl) titleEl.textContent = 'Application needs your review';
           if (statusEl) statusEl.textContent = 'The portal did not submit. Complete the required fields, then try again.';
           return;
         }
-        confirmIfVisible();
-        if (!finished && statusEl) {
+        if (!outcomeController.isFinished() && statusEl) {
           statusEl.textContent = submissionProgress(elapsedSeconds);
         }
       }, 1000);
-      outcomeObserver = new MutationObserver(() => {
-        if (!failIfVisible()) confirmIfVisible();
-      });
+      outcomeObserver = new MutationObserver(outcomeController.queueScan);
       outcomeObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
       card.querySelector('#wp-submit-close')?.addEventListener('click', () => {
-        stop();
+        outcomeController.stop();
         card.remove();
         cardInjected = false;
       });
-      confirmIfVisible();
+      outcomeController.scan();
     }
 
     // ─── v2: resume-gen + Lever autofill (fill-and-stop, never clicks Submit) ──────────
@@ -692,15 +705,16 @@ export default defineContentScript({
           font-size: 13px; line-height: 1.4; box-shadow: 0 8px 32px rgba(79,70,229,0.18);
           width: 272px; box-sizing: border-box; animation: wp-slide-in 0.25s ease-out;
         ">
-          <button id="wp-resume-close" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
+          <button id="wp-resume-close" aria-label="Close Litos resume assistant" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
           <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;line-height:1.4;">
             <span style="font-size:20px;flex-shrink:0;margin-top:1px;line-height:1;">📄</span>
             <div>
               <div style="font-weight:700;font-size:13px;color:#1e1b4b;line-height:1.4;">Generate tailored resume + fill this application?</div>
-              <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;line-height:1.4;">${title} at ${company}</div>
+              <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;line-height:1.4;">${escapeHtml(title)} at ${escapeHtml(company)}</div>
             </div>
           </div>
           <div id="wp-resume-status" style="font-size:11px;color:#6b7280;margin-bottom:8px;display:none;line-height:1.4;"></div>
+          <div id="wp-resume-announcer" role="status" aria-live="polite" aria-atomic="true" style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;"></div>
           <div style="display:flex;gap:8px;">
             <button id="wp-resume-yes" style="
               flex:1;background:#4f46e5;color:white;border:none;border-radius:8px;
@@ -760,6 +774,12 @@ export default defineContentScript({
       let jdCache: string | null = null;
       const getJd = (): string => (jdCache ??= extractJdText());
       let resumeGenStartedAt: number | null = null;
+      const announcerEl = card.querySelector<HTMLElement>('#wp-resume-announcer');
+      const statusEl = card.querySelector<HTMLElement>('#wp-resume-status');
+      const generationController = createResumeGenerationController({
+        statusElement: statusEl,
+        announcerElement: announcerEl,
+      });
 
       // Must stay longer than the background's WHOLE budget so its descriptive error surfaces
       // first; this is only the backstop for the worse case where the service worker is torn down
@@ -821,10 +841,9 @@ export default defineContentScript({
       const onRetryPing = (msg: { type?: string; payload?: { company?: string; role?: string; attempt?: number } }) => {
         if (msg?.type !== 'RESUME_GEN_RETRYING') return;
         if (msg.payload?.company !== company || msg.payload?.role !== title) return;
-        const statusEl = card.querySelector<HTMLElement>('#wp-resume-status');
         if (!statusEl || statusEl.style.display === 'none') return;
         const attempt = msg.payload?.attempt ?? 1;
-        statusEl.textContent = `The AI is busy right now. Retrying... (attempt ${attempt + 1})`;
+        generationController.retry(attempt);
       };
       chrome.runtime.onMessage.addListener(onRetryPing);
 
@@ -842,25 +861,24 @@ export default defineContentScript({
       card.querySelector('#wp-resume-close')?.addEventListener('click', dismiss);
       card.querySelector('#wp-resume-no')?.addEventListener('click', dismiss);
       card.querySelector('#wp-resume-yes')?.addEventListener('click', async () => {
-        const statusEl = card.querySelector<HTMLElement>('#wp-resume-status');
         const yesBtn = card.querySelector<HTMLButtonElement>('#wp-resume-yes');
         const noBtn = card.querySelector<HTMLButtonElement>('#wp-resume-no');
         if (yesBtn) yesBtn.disabled = true;
-        if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = resumeGenerationProgress(0); }
+        if (statusEl) statusEl.style.display = 'block';
+        generationController.tick(0);
 
         const progressTimer = setInterval(() => {
           if (!card.isConnected) {
             clearInterval(progressTimer);
             return;
           }
-          if (statusEl) {
-            const startedAt = resumeGenStartedAt ?? Date.now();
-            statusEl.textContent = resumeGenerationProgress((Date.now() - startedAt) / 1000);
-          }
+          const startedAt = resumeGenStartedAt ?? Date.now();
+          generationController.tick((Date.now() - startedAt) / 1000);
         }, 1000);
 
         const result = await startResumeGen();
         clearInterval(progressTimer);
+        generationController.finish();
         // This await can now resolve minutes after the click: the background retries a model
         // overload for up to 150s (R-003), and the retry status above tells the student it will
         // be a while, which is an open invitation to give up, dismiss the card, and fill the form
@@ -872,6 +890,7 @@ export default defineContentScript({
         if (!card.isConnected) return;
         if (!result || result.error || !result.profile || !result.applicationProfile || !result.resume) {
           if (statusEl) statusEl.textContent = `${result?.error || 'Could not generate a resume.'} Nothing was attached or submitted.`;
+          generationController.announce('Resume generation failed. You can retry.');
           if (yesBtn) {
             yesBtn.disabled = false;
             yesBtn.textContent = 'Retry';
@@ -882,6 +901,7 @@ export default defineContentScript({
 
         if (!result.resume.quality?.ready_to_attach || result.resume.quality.issues.length > 0) {
           if (statusEl) statusEl.textContent = 'The resume needs another layout pass. Nothing was attached or submitted.';
+          generationController.announce('The resume needs another layout pass. You can retry.');
           if (yesBtn) {
             yesBtn.disabled = false;
             yesBtn.textContent = 'Retry';
@@ -894,32 +914,16 @@ export default defineContentScript({
             resolve(false);
             return;
           }
-          statusEl.textContent = buildResumeReviewSummary(resume.quality);
-          const actions = document.createElement('div');
-          actions.style.cssText = 'display:flex;gap:8px;margin-top:10px;';
-          const attach = document.createElement('button');
-          attach.type = 'button';
-          attach.textContent = 'Attach and fill';
-          attach.style.cssText = 'flex:1;background:#4f46e5;color:white;border:none;border-radius:8px;padding:8px 6px;font-size:11px;font-weight:600;cursor:pointer;';
-          const cancel = document.createElement('button');
-          cancel.type = 'button';
-          cancel.textContent = 'Not now';
-          cancel.style.cssText = 'flex:1;background:#f3f4f6;color:#374151;border:none;border-radius:8px;padding:8px 6px;font-size:11px;font-weight:600;cursor:pointer;';
-          actions.append(attach, cancel);
-          statusEl.appendChild(actions);
-          yesBtn.style.display = 'none';
-          noBtn.style.display = 'none';
-          attach.addEventListener('click', () => resolve(true), { once: true });
-          cancel.addEventListener('click', () => resolve(false), { once: true });
+          void createResumeReviewPrompt({
+            statusElement: statusEl,
+            yesButton: yesBtn,
+            noButton: noBtn,
+            summary: buildResumeReviewSummary(resume.quality),
+            announce: generationController.announce,
+          }).then(resolve);
         });
         if (!approvedResume) {
-          if (statusEl) statusEl.textContent = 'Resume ready, but not attached. You can review the form or try again.';
-          if (yesBtn) {
-            yesBtn.style.display = '';
-            yesBtn.disabled = false;
-            yesBtn.textContent = 'Review again';
-          }
-          if (noBtn) noBtn.style.display = '';
+          restoreResumeReviewControls({ statusElement: statusEl, yesButton: yesBtn, noButton: noBtn });
           return;
         }
 

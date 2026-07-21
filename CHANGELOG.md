@@ -2,6 +2,23 @@
 
 All notable changes to the Litos extension are documented here.
 
+## [0.4.8] - 2026-07-21
+
+### Added
+
+- Added changing, elapsed resume-generation phases and explicit submission states for waiting, confirmation, rejection, and unknown outcomes.
+- Added inline resume review, persistent post-fill handoff, and a precise list of questions that still need the student.
+- Added regression coverage for hostile portal metadata, retry-state precedence, submission-outcome precedence, and bounded monitoring.
+
+### Fixed
+
+- Fixed portal-controlled job titles and company names being interpreted as card markup.
+- Fixed model-capacity retry messages being overwritten by the generic progress timer.
+- Fixed submission monitoring repeatedly scanning the full portal without a deadline.
+- Fixed Ashby portal styles collapsing Litos submission and review cards.
+- Fixed resume-review focus and screen-reader announcements so keyboard users reach the replacement actions.
+- Fixed completed review handoffs disappearing before the student could act on them.
+
 ## [0.4.7] - 2026-07-21
 
 ### Changed
