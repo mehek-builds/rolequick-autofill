@@ -1,11 +1,11 @@
 # Graph Report - .  (2026-07-21)
 
 ## Corpus Check
-- 86 files · ~120,861 words
+- 86 files · ~121,021 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 463 nodes · 842 edges · 24 communities detected
+- 464 nodes · 843 edges · 25 communities detected
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS
 - Token cost: 0 input · 0 output
 
@@ -39,12 +39,12 @@ Cohesion: 0.07
 Nodes (27): abandonTypedQuery(), closeOpenCombobox(), comboControl(), declaresPhoneAutocomplete(), documentSlotReason(), driveAsyncLocationCombobox(), fileInputLabelText(), fillField() (+19 more)
 
 ### Community 3 - "Community 3"
-Cohesion: 0.05
-Nodes (6): ap(), runFill(), cssEscape(), extractValidationErrors(), label(), nearestFieldEntryLabel()
+Cohesion: 0.06
+Nodes (4): cssEscape(), extractValidationErrors(), label(), nearestFieldEntryLabel()
 
 ### Community 4 - "Community 4"
 Cohesion: 0.11
-Nodes (20): answerChoiceBlock(), blockAlreadyAnsweredForGrade(), buttonOptionsIn(), checkRadio(), comboControlIn(), extractDescriptionHtmlFromSource(), fetchAshbyJdFromApi(), fetchAshbyJdFromPage() (+12 more)
+Nodes (20): answerChoiceBlock(), blockAlreadyAnsweredForGrade(), buttonOptionsIn(), checkRadio(), comboControlIn(), ap(), runFill(), extractDescriptionHtmlFromSource() (+12 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.15
@@ -99,12 +99,12 @@ Cohesion: 0.53
 Nodes (4): coreFields(), markReactManaged(), textInput(), wrapper()
 
 ### Community 18 - "Community 18"
-Cohesion: 0.6
-Nodes (3): isoOnlyPicker(), monthFirstPicker(), pickerThatAccepts()
+Cohesion: 0.4
+Nodes (2): ap(), run()
 
 ### Community 19 - "Community 19"
-Cohesion: 1.0
-Nodes (0): 
+Cohesion: 0.6
+Nodes (3): isoOnlyPicker(), monthFirstPicker(), pickerThatAccepts()
 
 ### Community 20 - "Community 20"
 Cohesion: 1.0
@@ -122,16 +122,20 @@ Nodes (0):
 Cohesion: 1.0
 Nodes (0): 
 
+### Community 24 - "Community 24"
+Cohesion: 1.0
+Nodes (0): 
+
 ## Knowledge Gaps
-- **Thin community `Community 19`** (2 nodes): `storage.test.ts`, `lastError()`
+- **Thin community `Community 20`** (2 nodes): `storage.test.ts`, `lastError()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 20`** (2 nodes): `persistent-badge.ts`, `main()`
+- **Thin community `Community 21`** (2 nodes): `persistent-badge.ts`, `main()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 21`** (1 nodes): `tailwind.config.ts`
+- **Thin community `Community 22`** (1 nodes): `tailwind.config.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 22`** (1 nodes): `postcss.config.js`
+- **Thin community `Community 23`** (1 nodes): `postcss.config.js`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 23`** (1 nodes): `globals.test.ts`
+- **Thin community `Community 24`** (1 nodes): `globals.test.ts`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
@@ -144,7 +148,7 @@ _Questions this graph is uniquely positioned to answer:_
 - **Should `Community 2` be split into smaller, more focused modules?**
   _Cohesion score 0.07 - nodes in this community are weakly interconnected._
 - **Should `Community 3` be split into smaller, more focused modules?**
-  _Cohesion score 0.05 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06 - nodes in this community are weakly interconnected._
 - **Should `Community 4` be split into smaller, more focused modules?**
   _Cohesion score 0.11 - nodes in this community are weakly interconnected._
 - **Should `Community 7` be split into smaller, more focused modules?**
