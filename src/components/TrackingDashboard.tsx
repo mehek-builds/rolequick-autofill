@@ -4,7 +4,7 @@ import type { OutreachEvent, OutreachStatus } from '../lib/types';
 import Avatar from './Avatar';
 import { SkeletonBar } from './Skeleton';
 import WarningBanner from './WarningBanner';
-import { PopupHeader, SectionLabel, StatusDot, textButtonClass } from './ui';
+import { PendingLabel, PopupHeader, SectionLabel, StatusDot, textButtonClass } from './ui';
 
 interface TrackingDashboardProps {
   token: string;
@@ -31,7 +31,7 @@ export default function TrackingDashboard({ token, onBack }: TrackingDashboardPr
   const [events, setEvents] = useState<OutreachEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [updating, setUpdating] = useState<string | null>(null);
+  const [updating, setUpdating] = useState<{ id: string; outcome: 'replied' | 'bounced' } | null>(null);
 
   const loadEvents = () => {
     setLoading(true);
@@ -46,7 +46,7 @@ export default function TrackingDashboard({ token, onBack }: TrackingDashboardPr
   }, [token]);
 
   const handleUpdateStatus = async (event: OutreachEvent, outcome: 'replied' | 'bounced') => {
-    setUpdating(event.id);
+    setUpdating({ id: event.id, outcome });
     try {
       await trackEvent(token, {
         contact_id: event.contact.id,
@@ -70,7 +70,7 @@ export default function TrackingDashboard({ token, onBack }: TrackingDashboardPr
       <main className="flex flex-1 flex-col px-4 py-4">
         {loading ? (
           <div className="flex flex-col gap-3" role="status" aria-live="polite">
-            <p className="text-sm text-gray-600">Loading outreach…</p>
+            <p className="text-sm text-gray-600"><PendingLabel>Loading outreach…</PendingLabel></p>
             {Array.from({ length: 3 }).map((_, index) => (
               <div key={index} className="flex min-h-16 items-center gap-3 border-b border-gray-200 py-2">
                 <div className="skeleton animate-shimmer h-9 w-9 flex-shrink-0 rounded-full" />
@@ -124,18 +124,18 @@ export default function TrackingDashboard({ token, onBack }: TrackingDashboardPr
                             <button
                               type="button"
                               onClick={() => handleUpdateStatus(event, 'replied')}
-                              disabled={updating === event.id}
+                              disabled={updating?.id === event.id}
                               className={textButtonClass}
                             >
-                              Mark replied
+                              {updating?.id === event.id && updating.outcome === 'replied' ? <PendingLabel>Marking…</PendingLabel> : 'Mark replied'}
                             </button>
                             <button
                               type="button"
                               onClick={() => handleUpdateStatus(event, 'bounced')}
-                              disabled={updating === event.id}
+                              disabled={updating?.id === event.id}
                               className={`${textButtonClass} text-danger-700 hover:bg-danger-50 hover:text-danger-700`}
                             >
-                              Mark bounced
+                              {updating?.id === event.id && updating.outcome === 'bounced' ? <PendingLabel>Marking…</PendingLabel> : 'Mark bounced'}
                             </button>
                           </div>
                         )}

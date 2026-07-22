@@ -725,7 +725,7 @@ export default defineContentScript({
           background: white; border: 1.5px solid #e0e7ff; border-radius: 14px;
           padding: 16px 16px 14px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
           font-size: 13px; line-height: 1.4; box-shadow: 0 8px 32px rgba(79,70,229,0.18);
-          width: 272px; box-sizing: border-box; animation: wp-slide-in 0.25s ease-out;
+          width: 300px; box-sizing: border-box; animation: wp-slide-in 0.25s ease-out;
         ">
           <button id="wp-resume-close" aria-label="Close Litos resume assistant" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
           <div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:12px;line-height:1.4;">
@@ -735,9 +735,9 @@ export default defineContentScript({
               <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;line-height:1.4;">${escapeHtml(title)} at ${escapeHtml(company)}</div>
             </div>
           </div>
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;min-width:0;">
             <canvas id="wp-resume-orb" style="display:none;flex-shrink:0;"></canvas>
-            <div id="wp-resume-status" style="font-size:11px;color:#6b7280;display:none;line-height:1.4;"></div>
+            <div id="wp-resume-status" style="font-size:11px;color:#6b7280;display:none;line-height:1.4;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
           </div>
           <div id="wp-resume-announcer" role="status" aria-live="polite" aria-atomic="true" style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;"></div>
           <div style="display:flex;gap:8px;">
@@ -1408,7 +1408,10 @@ export default defineContentScript({
               <div style="font-size:12px;color:#6366f1;margin-top:2px;line-height:1.4;">You'll still set your own password and click Create Account.</div>
             </div>
           </div>
-          <div id="wp-account-status" style="font-size:11px;color:#6b7280;margin-bottom:8px;display:none;line-height:1.4;"></div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;min-width:0;">
+            <canvas id="wp-account-orb" style="display:none;flex-shrink:0;"></canvas>
+            <div id="wp-account-status" style="font-size:11px;color:#6b7280;display:none;line-height:1.4;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+          </div>
           <div style="display:flex;gap:8px;">
             <button id="wp-account-yes" style="
               flex:1;background:#4f46e5;color:white;border:none;border-radius:8px;
@@ -1438,14 +1441,23 @@ export default defineContentScript({
       card.querySelector('#wp-account-yes')?.addEventListener('click', () => {
         const statusEl = card.querySelector<HTMLElement>('#wp-account-status');
         const yesBtn = card.querySelector<HTMLButtonElement>('#wp-account-yes');
+        const orbCanvas = card.querySelector<HTMLCanvasElement>('#wp-account-orb');
+        let stopOrb: (() => void) | null = null;
+        const stopOrbAnd = (setText: () => void) => {
+          stopOrb?.();
+          stopOrb = null;
+          if (orbCanvas) orbCanvas.style.display = 'none';
+          setText();
+        };
         if (yesBtn) yesBtn.disabled = true;
         if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Filling...'; }
+        if (orbCanvas) stopOrb = mountThinkingOrb(orbCanvas, 'working', 20);
 
         chrome.runtime.sendMessage(
           { type: 'GET_ACCOUNT_CREATION_DATA' },
           async (result: { error?: string; email?: string }) => {
             if (!result || result.error) {
-              if (statusEl) statusEl.textContent = result?.error || 'Could not load your account data.';
+              stopOrbAnd(() => { if (statusEl) statusEl.textContent = result?.error || 'Could not load your account data.'; });
               return;
             }
             const fillResult = await fillWorkdayAccountCreation({ email: result.email });
@@ -1461,11 +1473,13 @@ export default defineContentScript({
               },
             });
 
-            if (statusEl) {
-              statusEl.textContent = fillResult.fields_filled > 0
-                ? 'Email filled. Set your own password and click Create Account when ready.'
-                : 'No email on file yet - fill it in yourself, then set your password and click Create Account.';
-            }
+            stopOrbAnd(() => {
+              if (statusEl) {
+                statusEl.textContent = fillResult.fields_filled > 0
+                  ? 'Email filled. Set your own password and click Create Account when ready.'
+                  : 'No email on file yet - fill it in yourself, then set your password and click Create Account.';
+              }
+            });
             setTimeout(dismiss, 6000);
           },
         );

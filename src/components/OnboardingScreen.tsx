@@ -5,10 +5,12 @@ import type { Profile } from '../lib/types';
 import WarningBanner from './WarningBanner';
 import {
   fieldClass,
+  PendingLabel,
   PopupHeader,
   primaryButtonClass,
   textButtonClass,
 } from './ui';
+import { ThinkingOrb } from 'thinking-orbs';
 
 interface OnboardingScreenProps {
   onComplete: (profile: Profile, token: string) => void;
@@ -125,7 +127,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
       <main className="flex flex-1 flex-col px-5 py-5">
         {step === 'uploading' ? (
           <div className="flex flex-1 flex-col items-start justify-center gap-4" role="status" aria-live="polite">
-            <span className="h-8 w-8 animate-spin rounded-full border-2 border-brand-100 border-t-brand-600" aria-hidden="true" />
+            <ThinkingOrb state="composing" size={64} />
             <div>
               <h2 className="text-xl font-semibold text-gray-950">Reading your resume</h2>
               <p className="mt-1 text-sm leading-5 text-gray-600">
@@ -165,7 +167,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
             </div>
 
             <button type="submit" disabled={loading} className={primaryButtonClass}>
-              {loading ? 'Verifying…' : 'Verify and continue'}
+              {loading ? <PendingLabel state="solving" onColor>Verifying…</PendingLabel> : 'Verify and continue'}
             </button>
 
             <div className="flex items-center gap-2">
@@ -250,7 +252,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
             </div>
 
             <button type="submit" disabled={loading} className={primaryButtonClass}>
-              {loading ? 'Sending code…' : 'Continue'}
+              {loading ? <PendingLabel onColor>Sending code…</PendingLabel> : 'Continue'}
             </button>
 
             <p className="border-t border-gray-200 pt-4 text-xs leading-5 text-gray-600">

@@ -5,6 +5,7 @@ import type { Contact, Draft, JobContext, Profile } from '../lib/types';
 import { SkeletonDraft } from './Skeleton';
 import WarningBanner from './WarningBanner';
 import {
+  PendingLabel,
   PopupHeader,
   primaryButtonClass,
   secondaryButtonClass,
@@ -200,7 +201,7 @@ export default function DraftEditor({
               disabled={markingSent || markedSent}
               className={textButtonClass}
             >
-              {markingSent ? 'Saving…' : markedSent ? 'Marked sent' : 'Mark as sent'}
+              {markingSent ? <PendingLabel>Saving…</PendingLabel> : markedSent ? 'Marked sent' : 'Mark as sent'}
             </button>
           </div>
           {(copied || gmailOpened) && (
