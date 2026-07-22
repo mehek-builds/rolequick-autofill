@@ -31,6 +31,7 @@ import {
   createResumeGenerationController,
   createSubmissionOutcomeController,
 } from '../lib/application-task-controller';
+import { mountThinkingOrb } from '../lib/thinking-orb';
 
 export default defineContentScript({
   matches: [
@@ -620,7 +621,7 @@ export default defineContentScript({
         <div style="position:relative;background:white;border:1.5px solid #e0e7ff;border-radius:14px;padding:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;line-height:1.4;box-shadow:0 8px 32px rgba(79,70,229,0.18);width:272px;box-sizing:border-box;animation:wp-slide-in 0.25s ease-out;">
           <button id="wp-submit-close" aria-label="Close Litos submission status" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:17px;opacity:0.4;color:#333;padding:0;line-height:1;">×</button>
           <div style="display:flex;align-items:flex-start;gap:9px;line-height:1.4;">
-            <span id="wp-submit-icon" style="font-size:20px;flex-shrink:0;line-height:1.4;">⏳</span>
+            <span id="wp-submit-icon" style="font-size:20px;flex-shrink:0;line-height:1.4;"><canvas id="wp-submit-orb"></canvas></span>
             <div style="line-height:1.4;">
               <div id="wp-submit-title" style="font-weight:700;font-size:13px;color:#1e1b4b;line-height:1.4;">Sending your application</div>
               <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;line-height:1.4;">${escapeHtml(title)} at ${escapeHtml(company)}</div>
@@ -635,6 +636,14 @@ export default defineContentScript({
       const statusEl = card.querySelector<HTMLElement>('#wp-submit-status');
       const titleEl = card.querySelector<HTMLElement>('#wp-submit-title');
       const iconEl = card.querySelector<HTMLElement>('#wp-submit-icon');
+      const submitOrbCanvas = card.querySelector<HTMLCanvasElement>('#wp-submit-orb');
+      let stopSubmitOrb: (() => void) | null = null;
+      if (submitOrbCanvas) stopSubmitOrb = mountThinkingOrb(submitOrbCanvas, 'searching', 20);
+      const stopSubmitOrbAnd = (setIcon: () => void) => {
+        stopSubmitOrb?.();
+        stopSubmitOrb = null;
+        setIcon();
+      };
       let outcomeObserver: MutationObserver | null = null;
       let timer: ReturnType<typeof setInterval>;
       const outcomeSelectors = [
@@ -661,17 +670,17 @@ export default defineContentScript({
         onStop: stopResources,
         onOutcome: (outcome) => {
         if (outcome.kind === 'failure') {
-          if (iconEl) iconEl.textContent = '!';
+          stopSubmitOrbAnd(() => { if (iconEl) iconEl.textContent = '!'; });
           if (titleEl) titleEl.textContent = 'Application not submitted';
           if (statusEl) statusEl.textContent = outcome.message;
         } else {
-          if (iconEl) iconEl.textContent = '✓';
+          stopSubmitOrbAnd(() => { if (iconEl) iconEl.textContent = '✓'; });
           if (titleEl) titleEl.textContent = 'Application confirmed';
           if (statusEl) statusEl.textContent = 'The company portal confirmed receipt.';
         }
         },
         onUnknown: () => {
-          if (iconEl) iconEl.textContent = '?';
+          stopSubmitOrbAnd(() => { if (iconEl) iconEl.textContent = '?'; });
           if (titleEl) titleEl.textContent = 'Confirmation unknown';
           if (statusEl) statusEl.textContent = submissionProgress(60);
         },
@@ -686,7 +695,7 @@ export default defineContentScript({
         // Native browser validation can reject a click before any request leaves the page. Do not
         // tell the student Litos is waiting on the company when the form is visibly incomplete.
         if (!outcomeController.isFinished() && elapsedSeconds >= 1 && hasEmptyRequiredFields()) {
-          if (iconEl) iconEl.textContent = '!';
+          stopSubmitOrbAnd(() => { if (iconEl) iconEl.textContent = '!'; });
           if (titleEl) titleEl.textContent = 'Application needs your review';
           if (statusEl) statusEl.textContent = 'The portal did not submit. Complete the required fields, then try again.';
           return;
@@ -699,6 +708,8 @@ export default defineContentScript({
       outcomeObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
       card.querySelector('#wp-submit-close')?.addEventListener('click', () => {
         outcomeController.stop();
+        stopSubmitOrb?.();
+        stopSubmitOrb = null;
         card.remove();
         cardInjected = false;
       });
@@ -724,7 +735,10 @@ export default defineContentScript({
               <div style="font-size:12px;color:#6366f1;margin-top:2px;word-break:break-word;line-height:1.4;">${escapeHtml(title)} at ${escapeHtml(company)}</div>
             </div>
           </div>
-          <div id="wp-resume-status" style="font-size:11px;color:#6b7280;margin-bottom:8px;display:none;line-height:1.4;"></div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+            <canvas id="wp-resume-orb" style="display:none;flex-shrink:0;"></canvas>
+            <div id="wp-resume-status" style="font-size:11px;color:#6b7280;display:none;line-height:1.4;"></div>
+          </div>
           <div id="wp-resume-announcer" role="status" aria-live="polite" aria-atomic="true" style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;"></div>
           <div style="display:flex;gap:8px;">
             <button id="wp-resume-yes" style="
@@ -787,6 +801,8 @@ export default defineContentScript({
       let resumeGenStartedAt: number | null = null;
       const announcerEl = card.querySelector<HTMLElement>('#wp-resume-announcer');
       const statusEl = card.querySelector<HTMLElement>('#wp-resume-status');
+      const orbCanvas = card.querySelector<HTMLCanvasElement>('#wp-resume-orb');
+      let stopOrb: (() => void) | null = null;
       const generationController = createResumeGenerationController({
         statusElement: statusEl,
         announcerElement: announcerEl,
@@ -867,6 +883,8 @@ export default defineContentScript({
       const dismiss = () => {
         activeAutoSubmitCancel?.();
         chrome.runtime.onMessage.removeListener(onRetryPing);
+        stopOrb?.();
+        stopOrb = null;
         card.remove();
       };
       card.querySelector('#wp-resume-close')?.addEventListener('click', dismiss);
@@ -876,6 +894,7 @@ export default defineContentScript({
         const noBtn = card.querySelector<HTMLButtonElement>('#wp-resume-no');
         if (yesBtn) yesBtn.disabled = true;
         if (statusEl) statusEl.style.display = 'block';
+        if (orbCanvas) stopOrb = mountThinkingOrb(orbCanvas, 'composing', 20);
         generationController.tick(0);
 
         const progressTimer = setInterval(() => {
@@ -890,6 +909,9 @@ export default defineContentScript({
         const result = await startResumeGen();
         clearInterval(progressTimer);
         generationController.finish();
+        stopOrb?.();
+        stopOrb = null;
+        if (orbCanvas) orbCanvas.style.display = 'none';
         // This await can now resolve minutes after the click: the background retries a model
         // overload for up to 150s (R-003), and the retry status above tells the student it will
         // be a while, which is an open invitation to give up, dismiss the card, and fill the form
