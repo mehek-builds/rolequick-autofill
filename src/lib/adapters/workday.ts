@@ -555,15 +555,18 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
 
 export interface WorkdayAccountCreationParams {
   email?: string;
+  password?: string;
 }
 
-// Fills only the email field and stops - password is deliberately never touched here (2026-07-03
-// product decision: the student sets and enters their own password, clicks Create Account, and
-// completes email verification entirely on their own). This is the one Litos-fillable field on
-// the signup form, not a fill-and-stop pattern with a countdown to auto-submit - there's nothing
-// to auto-submit toward since the password field is always left for the student to fill by hand.
+// Fills email and (from 2026-07-23) the derived portal password, then stops. Supersedes the
+// 2026-07-03 "password never touched, student sets their own" decision: email-only kept Litos out
+// of credential custody but stranded every Workday account behind a password Litos could never
+// reproduce, so status checks and re-applies were impossible the moment a portal required auth.
+// The password comes from portal-password.ts (derived per-tenant, never stored at rest). This is
+// still fill-and-stop, NOT auto-submit: Litos never clicks Create Account and never touches email
+// verification - the student completes both by hand, so re-derivable password is the only change.
 export async function fillWorkdayAccountCreation(params: WorkdayAccountCreationParams): Promise<AutofillResult> {
-  const { email } = params;
+  const { email, password } = params;
   let fields_filled = 0;
   let fields_skipped = 0;
   const skipped_reasons: string[] = [];
@@ -576,6 +579,21 @@ export async function fillWorkdayAccountCreation(params: WorkdayAccountCreationP
     } else {
       fields_skipped++;
       skipped_reasons.push('email: not present in stored profile');
+    }
+  }
+
+  // Password + confirm: Workday renders `password` and `verifyPassword` automation-ids on the signup
+  // step. querySelectorAll returns each node once even when it matches two of the selectors, so the
+  // `password` id and the `type="password"` fallback never double-fill the same input.
+  if (password) {
+    const pwEls = document.querySelectorAll<HTMLInputElement>(
+      'input[data-automation-id="password"], input[data-automation-id="verifyPassword"], input[type="password"]',
+    );
+    for (const pwEl of pwEls) {
+      if (!pwEl.value) {
+        await fillField(pwEl, password);
+        fields_filled++;
+      }
     }
   }
 

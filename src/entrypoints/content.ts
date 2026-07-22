@@ -32,6 +32,7 @@ import {
   createSubmissionOutcomeController,
 } from '../lib/application-task-controller';
 import { mountThinkingOrb } from '../lib/thinking-orb';
+import { derivePortalPassword } from '../lib/portal-password';
 
 export default defineContentScript({
   matches: [
@@ -1460,7 +1461,8 @@ export default defineContentScript({
               stopOrbAnd(() => { if (statusEl) statusEl.textContent = result?.error || 'Could not load your account data.'; });
               return;
             }
-            const fillResult = await fillWorkdayAccountCreation({ email: result.email });
+            const password = await derivePortalPassword(window.location.hostname);
+            const fillResult = await fillWorkdayAccountCreation({ email: result.email, password });
 
             chrome.runtime.sendMessage({
               type: 'AUTOFILL_EVENT',

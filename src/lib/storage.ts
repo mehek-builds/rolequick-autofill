@@ -5,6 +5,7 @@ import type { Profile } from './types';
 const TOKEN_KEY = 'litos_token';
 const PROFILE_KEY = 'litos_profile';
 const AUTO_SUBMIT_KEY = 'litos_auto_submit_enabled';
+const PORTAL_SALT_KEY = 'litos_portal_salt';
 
 const TOKEN_ALIASES = ['rolequick_token', 'volley_token'] as const;
 const PROFILE_ALIASES = ['rolequick_profile', 'volley_profile'] as const;
@@ -119,4 +120,17 @@ export async function getAutoSubmitEnabled(): Promise<boolean> {
 
 export async function setAutoSubmitEnabled(enabled: boolean): Promise<void> {
   return chromeStorageSet(AUTO_SUBMIT_KEY, enabled);
+}
+
+// Per-install random salt for deriving reproducible per-tenant portal passwords (portal-password.ts).
+// Generated once, lazily, then stable for the life of the install. Deliberately NOT cleared by
+// clearAll(): a logout must not change the password Litos would re-derive for a Workday account the
+// student already created, or they'd be locked out of their own application.
+export async function getPortalSalt(): Promise<string> {
+  const existing = await chromeStorageGetCompat<string>(PORTAL_SALT_KEY, []);
+  if (existing) return existing;
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const salt = btoa(String.fromCharCode(...bytes));
+  await chromeStorageSet(PORTAL_SALT_KEY, salt);
+  return salt;
 }
