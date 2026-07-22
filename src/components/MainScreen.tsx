@@ -7,6 +7,7 @@ import WarningBanner from './WarningBanner';
 import {
   fieldClass,
   iconButtonClass,
+  PendingLabel,
   PopupHeader,
   primaryButtonClass,
   secondaryButtonClass,
@@ -287,7 +288,7 @@ export default function MainScreen({
           </section>
 
           <button type="submit" disabled={loading} className={primaryButtonClass}>
-            {loading ? 'Finding contacts…' : 'Find contacts'}
+            {loading ? <PendingLabel state="searching" onColor>Finding contacts…</PendingLabel> : 'Find contacts'}
           </button>
         </form>
 

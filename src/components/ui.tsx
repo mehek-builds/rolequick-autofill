@@ -1,5 +1,6 @@
 import React from 'react';
 import BrandMark from './BrandMark';
+import { ThinkingOrb, type OrbState } from 'thinking-orbs';
 
 export const fieldClass =
   'min-h-11 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-950 placeholder:text-gray-500 transition-[border-color,box-shadow] focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100';
@@ -56,6 +57,26 @@ export function SectionLabel({ children }: { children: React.ReactNode }) {
     <h2 className="text-xs font-semibold uppercase tracking-[0.08em] text-gray-600">
       {children}
     </h2>
+  );
+}
+
+/** Inline pending label: a small orb next to button/status text, never wraps.
+   `onColor` is for white-text buttons on a solid brand background, where the
+   orb must render light dots regardless of the popup's own light/dark mode. */
+export function PendingLabel({
+  children,
+  state = 'working',
+  onColor = false,
+}: {
+  children: React.ReactNode;
+  state?: OrbState;
+  onColor?: boolean;
+}) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap">
+      <ThinkingOrb state={state} size={20} theme={onColor ? 'dark' : 'auto'} />
+      <span className="whitespace-nowrap">{children}</span>
+    </span>
   );
 }
 
