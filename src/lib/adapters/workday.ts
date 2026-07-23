@@ -165,6 +165,25 @@ export function isWorkdayAccountCreationPage(): boolean {
   return hasAccountCreationMarkers();
 }
 
+// Create-account vs sign-in, which isWorkdayAccountCreationPage() deliberately does NOT separate
+// (it fires on both, because the guidance card is useful on either). That conflation was harmless
+// while only the email field was filled. It is NOT harmless once a password is involved: typing a
+// derived password into a RETURNING student's sign-in form submits a wrong password against an
+// account Litos never provisioned (created before this feature, created by hand, or created on
+// another device whose salt differs), and repeated wrong passwords get the Workday account locked.
+//
+// Workday's create-account form carries a confirm-password control (`verifyPassword`, or a second
+// password input); its sign-in form never does. That is the discriminator. Fall back to explicit
+// create-account copy only when no password input has rendered yet, and treat ambiguity as sign-in
+// - refusing to fill is always the safe failure mode here.
+export function isWorkdayCreateAccountStage(): boolean {
+  if (!isWorkdayAccountCreationPage()) return false;
+  if (document.querySelector('input[data-automation-id="verifyPassword"]')) return true;
+  if (document.querySelectorAll('input[type="password"]').length >= 2) return true;
+  if (document.querySelector('input[type="password"]')) return false; // exactly one: sign-in
+  return /create account|create an account/i.test(document.body.innerText);
+}
+
 // The "Start Your Application" triage screen most Workday tenants show before any of the
 // above - three options (Workday's own resume-autofill, "Apply Manually", "Use My Last
 // Application"), none of which are a password field or the real form yet, so neither
@@ -558,13 +577,17 @@ export interface WorkdayAccountCreationParams {
   password?: string;
 }
 
-// Fills email and (from 2026-07-23) the derived portal password, then stops. Supersedes the
+// Fills email, and the derived portal password ONLY when the caller passes one. Supersedes the
 // 2026-07-03 "password never touched, student sets their own" decision: email-only kept Litos out
 // of credential custody but stranded every Workday account behind a password Litos could never
 // reproduce, so status checks and re-applies were impossible the moment a portal required auth.
-// The password comes from portal-password.ts (derived per-tenant, never stored at rest). This is
-// still fill-and-stop, NOT auto-submit: Litos never clicks Create Account and never touches email
-// verification - the student completes both by hand, so re-derivable password is the only change.
+// The password comes from portal-password.ts (derived per-tenant, never stored at rest).
+//
+// This function does NOT decide whether a password is safe to type. content.ts owns that gate and
+// passes `password` only on a genuine create-account stage, or on a sign-in form for an account
+// Litos itself provisioned under the current salt. Everywhere else it passes nothing and this
+// degrades to the original email-only behavior. Still fill-and-stop, NOT auto-submit: Litos never
+// clicks Create Account and never touches email verification - the student completes both by hand.
 export async function fillWorkdayAccountCreation(params: WorkdayAccountCreationParams): Promise<AutofillResult> {
   const { email, password } = params;
   let fields_filled = 0;
@@ -584,17 +607,21 @@ export async function fillWorkdayAccountCreation(params: WorkdayAccountCreationP
 
   // Password + confirm: Workday renders `password` and `verifyPassword` automation-ids on the signup
   // step. querySelectorAll returns each node once even when it matches two of the selectors, so the
-  // `password` id and the `type="password"` fallback never double-fill the same input.
+  // `password` id and the `type="password"` fallback never double-fill the same input. Password and
+  // confirm count as ONE filled field, not two - the card reports what the student conceptually
+  // provided, and "Filled 3 fields" on a two-question form reads as a bug.
   if (password) {
     const pwEls = document.querySelectorAll<HTMLInputElement>(
       'input[data-automation-id="password"], input[data-automation-id="verifyPassword"], input[type="password"]',
     );
+    let wrotePassword = false;
     for (const pwEl of pwEls) {
       if (!pwEl.value) {
         await fillField(pwEl, password);
-        fields_filled++;
+        wrotePassword = true;
       }
     }
+    if (wrotePassword) fields_filled++;
   }
 
   return { ats_name: 'workday', fields_filled, fields_skipped, ai_drafted: 0, skipped_reasons };

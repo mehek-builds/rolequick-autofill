@@ -32,7 +32,7 @@ Object.defineProperty(globalThis, 'chrome', {
   },
 });
 
-const { derivePortalPassword, portalKeyForHost } = await import('./portal-password');
+const { derivePortalPassword, portalKeyForHost, currentSaltFingerprint } = await import('./portal-password');
 const storage = await import('./storage');
 
 const TENANT = 'acme.myworkdayjobs.com';
@@ -95,11 +95,64 @@ describe('derivePortalPassword', () => {
     expect(values.litos_portal_salt).toBe(salt);
   });
 
+  it('hands concurrent callers the same salt', async () => {
+    // Two tabs can hit the generate-then-write window together. If they end up on different salts,
+    // whichever account was provisioned under the loser gets a password nobody can re-derive.
+    const [a, b, c] = await Promise.all([
+      derivePortalPassword(TENANT),
+      derivePortalPassword(TENANT),
+      derivePortalPassword(TENANT),
+    ]);
+    expect(b).toBe(a);
+    expect(c).toBe(a);
+  });
+
   it('keeps the salt through logout so accounts Litos created stay reachable', async () => {
     // clearAll() must never orphan a portal account: drop the salt and the password for every
     // tenant the student ever applied to becomes unreproducible, locking them out for good.
     const before = await derivePortalPassword(TENANT);
     await storage.clearAll();
     expect(await derivePortalPassword(TENANT)).toBe(before);
+  });
+});
+
+describe('salt fingerprint and provisioned-account records', () => {
+  beforeEach(() => {
+    for (const key of Object.keys(values)) delete values[key];
+  });
+
+  it('is stable for one salt and changes when the salt does', async () => {
+    const first = await currentSaltFingerprint();
+    expect(await currentSaltFingerprint()).toBe(first);
+    for (const key of Object.keys(values)) delete values[key]; // reinstall
+    expect(await currentSaltFingerprint()).not.toBe(first);
+  });
+
+  it('does not leak the salt itself', async () => {
+    const fingerprint = await currentSaltFingerprint();
+    expect(fingerprint).toHaveLength(12);
+    expect(values.litos_portal_salt).not.toContain(fingerprint);
+  });
+
+  it('remembers which tenants Litos provisioned, and under which salt', async () => {
+    const saltFingerprint = await currentSaltFingerprint();
+    await storage.recordPortalAccount({ host: TENANT, saltFingerprint, createdAt: 1 });
+    expect((await storage.getPortalAccounts())[TENANT]).toEqual({
+      host: TENANT,
+      saltFingerprint,
+      createdAt: 1,
+    });
+  });
+
+  it('keeps the first record for a host so salt drift stays detectable', async () => {
+    // Overwriting on re-provision would stamp the CURRENT salt onto an account created under an
+    // older one, which is exactly the mismatch the record exists to catch.
+    await storage.recordPortalAccount({ host: TENANT, saltFingerprint: 'original0000', createdAt: 1 });
+    await storage.recordPortalAccount({ host: TENANT, saltFingerprint: 'drifted00000', createdAt: 2 });
+    expect((await storage.getPortalAccounts())[TENANT].saltFingerprint).toBe('original0000');
+  });
+
+  it('returns an empty map before anything is provisioned', async () => {
+    expect(await storage.getPortalAccounts()).toEqual({});
   });
 });

@@ -24,6 +24,17 @@ export function portalKeyForHost(hostname: string): string {
   return hostname.toLowerCase().replace(/^www\./, '');
 }
 
+// Short, non-reversing tag for the CURRENT salt. Stored alongside each account Litos provisions so
+// a later fill can tell "this is the salt that set that password" from "the salt changed under us"
+// (cross-tab generate race, storage cleared, different device). On mismatch the caller must skip the
+// fill: re-deriving under a different salt yields a wrong password, and submitting wrong passwords
+// is what locks a student out of their own Workday account.
+export async function currentSaltFingerprint(): Promise<string> {
+  const salt = await getPortalSalt();
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt)));
+  return btoa(String.fromCharCode(...digest)).replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
+}
+
 const SPECIALS = '!@#$%*?';
 
 // 18 chars, guaranteed to satisfy Workday's classes (upper, lower, digit, special) BY CONSTRUCTION,

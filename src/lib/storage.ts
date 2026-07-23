@@ -6,6 +6,7 @@ const TOKEN_KEY = 'litos_token';
 const PROFILE_KEY = 'litos_profile';
 const AUTO_SUBMIT_KEY = 'litos_auto_submit_enabled';
 const PORTAL_SALT_KEY = 'litos_portal_salt';
+const PORTAL_ACCOUNTS_KEY = 'litos_portal_accounts';
 
 const TOKEN_ALIASES = ['rolequick_token', 'volley_token'] as const;
 const PROFILE_ALIASES = ['rolequick_profile', 'volley_profile'] as const;
@@ -126,11 +127,52 @@ export async function setAutoSubmitEnabled(enabled: boolean): Promise<void> {
 // Generated once, lazily, then stable for the life of the install. Deliberately NOT cleared by
 // clearAll(): a logout must not change the password Litos would re-derive for a Workday account the
 // student already created, or they'd be locked out of their own application.
+//
+// Two content scripts in different tabs can hit the generate-then-write window at the same time.
+// chrome.storage has no compare-and-swap, so this cannot be made truly atomic: the in-flight promise
+// collapses the common same-context race, and the re-read after writing adopts whichever salt
+// actually landed rather than trusting the one we just generated. The residual cross-tab window is
+// closed downstream instead - every provisioned account records the salt fingerprint it was created
+// under, so a stale salt is DETECTED at fill time and skipped, never silently used (see
+// portal-password.ts and the account records below).
+let portalSaltInFlight: Promise<string> | null = null;
+
 export async function getPortalSalt(): Promise<string> {
-  const existing = await chromeStorageGetCompat<string>(PORTAL_SALT_KEY, []);
-  if (existing) return existing;
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  const salt = btoa(String.fromCharCode(...bytes));
-  await chromeStorageSet(PORTAL_SALT_KEY, salt);
-  return salt;
+  if (portalSaltInFlight) return portalSaltInFlight;
+  portalSaltInFlight = (async () => {
+    const existing = await chromeStorageGetCompat<string>(PORTAL_SALT_KEY, []);
+    if (existing) return existing;
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    const salt = btoa(String.fromCharCode(...bytes));
+    await chromeStorageSet(PORTAL_SALT_KEY, salt);
+    return (await chromeStorageGetCompat<string>(PORTAL_SALT_KEY, [])) ?? salt;
+  })();
+  try {
+    return await portalSaltInFlight;
+  } finally {
+    portalSaltInFlight = null;
+  }
+}
+
+// Which portal accounts Litos actually provisioned, and under which salt. This is the record that
+// makes re-login safe: Litos re-fills a password ONLY where this says it set that password itself
+// and the salt still matches. No record (account made by hand, or on another device) means no fill,
+// which is why a wrong password can never be submitted on the student's behalf.
+export interface PortalAccountRecord {
+  host: string;
+  saltFingerprint: string;
+  createdAt: number;
+}
+
+export async function getPortalAccounts(): Promise<Record<string, PortalAccountRecord>> {
+  return (await chromeStorageGetCompat<Record<string, PortalAccountRecord>>(PORTAL_ACCOUNTS_KEY, [])) ?? {};
+}
+
+export async function recordPortalAccount(record: PortalAccountRecord): Promise<void> {
+  const accounts = await getPortalAccounts();
+  // First write wins: re-provisioning an existing host would rewrite the fingerprint and mask the
+  // very salt drift this record exists to catch.
+  if (accounts[record.host]) return;
+  accounts[record.host] = record;
+  await chromeStorageSet(PORTAL_ACCOUNTS_KEY, accounts);
 }
