@@ -6,6 +6,7 @@ import {
   pickComboOption,
   closeOpenCombobox,
   unattachableDocumentReasons,
+  isHoneypotField,
 } from './shared/dom';
 import {
   dateOrderCandidates,
@@ -49,6 +50,11 @@ function randomDelay(minMs = 90, maxMs = 260): Promise<void> {
 }
 
 function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
+  // Last line of defense against bot traps. This file keeps its own copy of the write primitive
+  // (the shared one in shared/dom.ts is guarded identically), and several call sites here reach it
+  // without passing through candidateInputs, so the check belongs at the write itself rather than
+  // only at collection. A value in a honeypot marks the whole submission as bot traffic.
+  if (isHoneypotField(el)) return;
   const proto =
     el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype :
     el instanceof HTMLSelectElement ? HTMLSelectElement.prototype :
@@ -185,7 +191,9 @@ function candidateInputs(): Array<HTMLInputElement | HTMLTextAreaElement> {
   // the filler and left silently blank with no skip reason.
   return [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
     'input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input[type="date"], input:not([type]), textarea',
-  )].filter((el) => !el.closest('[id*="litos"]') && !el.disabled && !el.readOnly && isVisible(el));
+  )].filter(
+    (el) => !el.closest('[id*="litos"]') && !el.disabled && !el.readOnly && isVisible(el) && !isHoneypotField(el),
+  );
 }
 
 export function isLikelyApplicationForm(): boolean {

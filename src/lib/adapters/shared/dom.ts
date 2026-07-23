@@ -68,6 +68,21 @@ export function isHoneypotField(el: HTMLElement): boolean {
   if (HONEYPOT_IDENTITY.test(identity)) return true;
   if (HONEYPOT_COPY.test(el.closest('div,label,fieldset,form')?.textContent ?? '')) return true;
 
+  // Combobox typeahead inputs are NEVER honeypots, and they look exactly like one to the structural
+  // check below: react-select and friends render the query input absolutely positioned and about a
+  // pixel wide until it is focused. openCombobox() seeds those through setNativeValue, so without
+  // this exemption the guard would silently break location, school, and every other autocomplete on
+  // every adapter - a regression no jsdom test would catch, because the combobox tests stub rects on
+  // the options and leave the input at 0x0/static.
+  if (
+    el.getAttribute('role') === 'combobox' ||
+    el.hasAttribute('aria-autocomplete') ||
+    el.hasAttribute('aria-controls') ||
+    el.closest('[class*="select__"], [class*="Select-"], [role="combobox"]')
+  ) {
+    return false;
+  }
+
   // Structural: an absolutely-positioned control collapsed to roughly nothing is being hidden from
   // humans while staying in the DOM for scripts to trip over.
   const style = getComputedStyle(el);
@@ -88,6 +103,11 @@ export function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
 // included (R-032's phone country selector is one): a React-controlled <select> ignores a bare
 // `.value =` for the same reason a controlled input does.
 export function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string): void {
+  // Bot-trap backstop, deliberately at the write primitive rather than only at field collection.
+  // fillField() is NOT a universal chokepoint - ashby and generic call this directly in a dozen
+  // places - so guarding collection alone would leave real paths open. Every adapter's writes
+  // funnel through here or through generic.ts's local copy, which carries the same check.
+  if (isHoneypotField(el)) return;
   const proto =
     el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype :
     el instanceof HTMLSelectElement ? HTMLSelectElement.prototype :
