@@ -37,6 +37,7 @@ import {
   blockAlreadyAnswered,
   firstNonEmptyText,
   unattachableDocumentReasons,
+  isHoneypotField,
 } from './shared/dom';
 import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
 import { isDraftTargetAvailable, runDraftQueue } from './shared/drafts';
@@ -575,6 +576,10 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
 export interface WorkdayAccountCreationParams {
   email?: string;
   password?: string;
+  // Why the caller withheld a password, surfaced on the card so a blank password box reads as a
+  // deliberate handoff rather than a fill that quietly failed. Phrased with "left for" so the
+  // existing autosubmit-gate review classifier picks it up.
+  passwordWithheldReason?: string;
 }
 
 // Fills email, and the derived portal password ONLY when the caller passes one. Supersedes the
@@ -589,13 +594,13 @@ export interface WorkdayAccountCreationParams {
 // degrades to the original email-only behavior. Still fill-and-stop, NOT auto-submit: Litos never
 // clicks Create Account and never touches email verification - the student completes both by hand.
 export async function fillWorkdayAccountCreation(params: WorkdayAccountCreationParams): Promise<AutofillResult> {
-  const { email, password } = params;
+  const { email, password, passwordWithheldReason } = params;
   let fields_filled = 0;
   let fields_skipped = 0;
   const skipped_reasons: string[] = [];
 
   const emailEl = document.querySelector<HTMLInputElement>('input[data-automation-id="email"], input[type="email"]');
-  if (emailEl && !emailEl.value) {
+  if (emailEl && !emailEl.value && !isHoneypotField(emailEl)) {
     if (email) {
       await fillField(emailEl, email);
       fields_filled++;
@@ -610,10 +615,18 @@ export async function fillWorkdayAccountCreation(params: WorkdayAccountCreationP
   // `password` id and the `type="password"` fallback never double-fill the same input. Password and
   // confirm count as ONE filled field, not two - the card reports what the student conceptually
   // provided, and "Filled 3 fields" on a two-question form reads as a bug.
+  if (!password && document.querySelector('input[type="password"]')) {
+    // A password box is on screen and Litos is deliberately not touching it. Say so: a silently
+    // blank field is indistinguishable from a fill that broke, and the student needs to know this
+    // one is theirs to complete.
+    fields_skipped++;
+    skipped_reasons.push(passwordWithheldReason ?? 'password: left for you to enter');
+  }
+
   if (password) {
-    const pwEls = document.querySelectorAll<HTMLInputElement>(
+    const pwEls = [...document.querySelectorAll<HTMLInputElement>(
       'input[data-automation-id="password"], input[data-automation-id="verifyPassword"], input[type="password"]',
-    );
+    )].filter((el) => !isHoneypotField(el));
     let wrotePassword = false;
     for (const pwEl of pwEls) {
       if (!pwEl.value) {

@@ -1473,16 +1473,29 @@ export default defineContentScript({
             const creatingAccount = isWorkdayCreateAccountStage();
             const knownAccount = (await getPortalAccounts())[portalHost];
             let password: string | undefined;
+            let passwordWithheldReason: string | undefined;
             if (creatingAccount || knownAccount) {
               const saltFingerprint = await currentSaltFingerprint();
               if (creatingAccount || knownAccount?.saltFingerprint === saltFingerprint) {
                 password = await derivePortalPassword(portalHost);
+              } else {
+                passwordWithheldReason =
+                  'password: left for you to enter - this account was set up on another device, so Litos cannot reproduce its password here';
               }
               if (creatingAccount && password) {
                 await recordPortalAccount({ host: portalHost, saltFingerprint, createdAt: Date.now() });
               }
+            } else {
+              // Signing in to an account Litos never provisioned: created by hand, created before
+              // this feature, or created through Workday's "Sign in with Google" path, where there
+              // is no password at all. Guessing here is what locks students out.
+              passwordWithheldReason = 'password: left for you to enter - Litos did not create this account';
             }
-            const fillResult = await fillWorkdayAccountCreation({ email: result.email, password });
+            const fillResult = await fillWorkdayAccountCreation({
+              email: result.email,
+              password,
+              passwordWithheldReason,
+            });
 
             chrome.runtime.sendMessage({
               type: 'AUTOFILL_EVENT',

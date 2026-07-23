@@ -17,7 +17,8 @@ function setUrl(href: string): void {
 
 const APPLY_URL = 'https://acme.myworkdayjobs.com/en-US/careers/job/Engineer/apply';
 
-const { isWorkdayCreateAccountStage, isWorkdayAccountCreationPage } = await import('./workday');
+const { isWorkdayCreateAccountStage, isWorkdayAccountCreationPage, fillWorkdayAccountCreation } = await import('./workday');
+const { isHoneypotField } = await import('./shared/dom');
 
 describe('isWorkdayCreateAccountStage', () => {
   beforeEach(() => {
@@ -110,5 +111,83 @@ describe('isWorkdayCreateAccountStage', () => {
     setUrl('https://acme.myworkdayjobs.com/en-US/careers');
     document.body.innerHTML = '<input type="password" /><input type="password" />';
     expect(isWorkdayCreateAccountStage()).toBe(false);
+  });
+});
+
+// Workday's bot trap, live-verified 2026-07-23. It is deliberately invisible to the ordinary
+// display/visibility test, which is exactly why generic.ts's isVisible() would wave it through.
+describe('isHoneypotField', () => {
+  beforeEach(() => {
+    setUrl(APPLY_URL);
+    document.body.innerHTML = '';
+  });
+
+  it('catches Workday beecatcher by automation id', () => {
+    document.body.innerHTML = '<input data-automation-id="beecatcher" type="text" />';
+    expect(isHoneypotField(document.querySelector('input')!)).toBe(true);
+  });
+
+  it('catches a trap identified only by its copy', () => {
+    document.body.innerHTML =
+      '<div><label>Enter website. This input is for robots only, do not enter if you\'re human.</label><input name="website2" type="text" /></div>';
+    expect(isHoneypotField(document.querySelector('input')!)).toBe(true);
+  });
+
+  it('catches an sr-only clipped input with no telltale name or copy', () => {
+    document.body.innerHTML =
+      '<input name="q7" type="text" style="position:absolute;clip:rect(1px, 1px, 1px, 1px);width:1px;height:1px" />';
+    expect(isHoneypotField(document.querySelector('input')!)).toBe(true);
+  });
+
+  it('leaves an ordinary visible text input alone', () => {
+    document.body.innerHTML = '<input data-automation-id="email" type="text" />';
+    expect(isHoneypotField(document.querySelector('input')!)).toBe(false);
+  });
+
+  // Natively hidden radios/checkboxes are a legitimate, widespread pattern this repo already
+  // handles; sweeping them up here would break EEO and agreement handling everywhere.
+  it('never claims a hidden checkbox is a honeypot', () => {
+    document.body.innerHTML =
+      '<input type="checkbox" data-automation-id="createAccountCheckbox" style="position:absolute;width:1px;height:1px" />';
+    expect(isHoneypotField(document.querySelector('input')!)).toBe(false);
+  });
+});
+
+describe('fillWorkdayAccountCreation safety', () => {
+  beforeEach(() => {
+    setUrl(APPLY_URL);
+    document.body.innerHTML = '';
+  });
+
+  it('fills the real fields and never the honeypot', async () => {
+    document.body.innerHTML = `
+      <input data-automation-id="email" type="text" />
+      <input data-automation-id="password" type="password" />
+      <input data-automation-id="verifyPassword" type="password" />
+      <input data-automation-id="createAccountCheckbox" type="checkbox" />
+      <input data-automation-id="beecatcher" type="text" />`;
+    const result = await fillWorkdayAccountCreation({ email: 'a@b.com', password: 'Derived1!Aa' });
+    const byId = (id: string) => document.querySelector<HTMLInputElement>(`input[data-automation-id="${id}"]`)!;
+    expect(byId('email').value).toBe('a@b.com');
+    expect(byId('password').value).toBe('Derived1!Aa');
+    expect(byId('verifyPassword').value).toBe('Derived1!Aa');
+    expect(byId('beecatcher').value).toBe('');
+    // The agreement box is the student's to tick, always.
+    expect(byId('createAccountCheckbox').checked).toBe(false);
+    // Password + confirm count as one field, alongside email.
+    expect(result.fields_filled).toBe(2);
+  });
+
+  it('explains a withheld password instead of leaving the box silently blank', async () => {
+    document.body.innerHTML = `
+      <input data-automation-id="email" type="text" />
+      <input data-automation-id="password" type="password" />`;
+    const result = await fillWorkdayAccountCreation({
+      email: 'a@b.com',
+      passwordWithheldReason: 'password: left for you to enter - Litos did not create this account',
+    });
+    expect(document.querySelector<HTMLInputElement>('input[type="password"]')!.value).toBe('');
+    expect(result.fields_skipped).toBe(1);
+    expect(result.skipped_reasons.join(' ')).toMatch(/left for you to enter/);
   });
 });
