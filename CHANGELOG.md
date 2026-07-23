@@ -2,6 +2,12 @@
 
 All notable changes to the Litos extension are documented here.
 
+## [0.4.10] - 2026-07-23
+
+### Changed
+
+- Changed the brand mark to the Stack: a black stack of four tapering bars over a solid block, on a plain white ground. It replaces the paper dart everywhere, matching the website. Toolbar icons at every size are regenerated from that one artwork, and the popup header no longer sits the mark on a coloured square, because the mark carries its own ground.
+
 ## [0.4.9] - 2026-07-23
 
 ### Added
