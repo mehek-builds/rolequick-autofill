@@ -2,6 +2,23 @@
 
 All notable changes to the Litos extension are documented here.
 
+## [0.4.9] - 2026-07-23
+
+### Added
+
+- Added password fill on Workday create-account forms. The password is derived per employer from a device-local secret, so the same account can be signed into again later, and no password is stored anywhere.
+- Added bot-trap detection across every ATS, so hidden fields that exist only to catch automation are never written to.
+- Added an explanation on the card when a password is deliberately left for the student, instead of leaving the box silently blank.
+
+### Changed
+
+- Changed the documented scope: the extension previously never touched password fields at all. It now fills them on Workday create-account forms only, and re-fills one on a sign-in form only for an account Litos itself created on this device. Every other case still leaves the password to the student, because submitting a wrong one locks a student out of their own account. Litos still never clicks Create Account and never completes email verification.
+
+### Fixed
+
+- Fixed the generic adapter treating a hidden bot-trap field as an ordinary question and filling it with the student's website, which marks the whole submission as automated traffic.
+- Fixed password and its confirmation being counted as two filled fields instead of one.
+
 ## [0.4.8] - 2026-07-21
 
 ### Added
