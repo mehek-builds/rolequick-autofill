@@ -37,8 +37,10 @@ export function PopupHeader({ title = 'Litos', subtitle, onBack, children }: Pop
           </svg>
         </button>
       ) : (
-        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-brand-600 text-white" aria-hidden="true">
-          <BrandMark className="h-4 w-4" />
+        // The mark carries its own white ground and is never tinted, so it sits
+        // on no coloured tile: it is the square itself.
+        <span className="flex h-7 w-7 items-center justify-center border border-gray-200" aria-hidden="true">
+          <BrandMark className="h-7 w-7" />
         </span>
       )}
 
