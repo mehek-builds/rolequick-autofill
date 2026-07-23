@@ -45,6 +45,38 @@ export function firstNonEmptyText(...candidates: Array<string | null | undefined
 // the ATS adapters all shared this label-based list verbatim.)
 export const NEVER_FILL_LABEL_PATTERNS = [/social security/i, /ssn\b/i, /driver'?s?\s*licen[sc]e/i, /background check consent/i];
 
+// Bot-trap ("honeypot") inputs, which must never be written to. Filling one is strictly worse than
+// skipping a real field: the field exists only to catch automation, so a value in it marks the whole
+// submission as bot traffic and can sink the application silently.
+//
+// Live-verified on Workday 2026-07-23 (nvidia.wd5.myworkdayjobs.com), which ships one on BOTH its
+// sign-in and create-account forms: `data-automation-id="beecatcher"`, labelled "Enter website. This
+// input is for robots only, do not enter if you're human." It defeats the ordinary visibility test
+// on purpose - display:block, visibility:visible, opacity:1, tabIndex 0 - and hides via the sr-only
+// clip pattern instead (position:absolute, clip:rect(1px,1px,1px,1px), 1x1 box). That is why the
+// structural check below looks at clip/geometry rather than display/visibility.
+//
+// Scoped to free-text controls. Natively hidden radios and checkboxes are a legitimate, widespread
+// pattern (see isVisibleControl in generic.ts) and must not be swept up here.
+const HONEYPOT_IDENTITY = /beecatcher|honeypot|bot-?trap|\bhp[-_]?field\b/i;
+const HONEYPOT_COPY = /for robots only|do not enter if you'?re human|leave this (field |input )?(blank|empty)/i;
+
+export function isHoneypotField(el: HTMLElement): boolean {
+  if (el instanceof HTMLInputElement && /^(radio|checkbox|file|submit|button)$/.test(el.type)) return false;
+
+  const identity = `${el.getAttribute('data-automation-id') ?? ''} ${el.getAttribute('name') ?? ''} ${el.id} ${el.className}`;
+  if (HONEYPOT_IDENTITY.test(identity)) return true;
+  if (HONEYPOT_COPY.test(el.closest('div,label,fieldset,form')?.textContent ?? '')) return true;
+
+  // Structural: an absolutely-positioned control collapsed to roughly nothing is being hidden from
+  // humans while staying in the DOM for scripts to trip over.
+  const style = getComputedStyle(el);
+  if (style.position !== 'absolute' && style.position !== 'fixed') return false;
+  const clipped = /rect\(\s*1px/.test(style.clip) || style.clipPath === 'inset(50%)';
+  const rect = el.getBoundingClientRect();
+  return clipped || rect.width <= 1 || rect.height <= 1;
+}
+
 // Human-like pacing between field writes, so a fill doesn't look like an instant script dump.
 export function randomDelay(minMs = 120, maxMs = 380): Promise<void> {
   const ms = minMs + Math.random() * (maxMs - minMs);

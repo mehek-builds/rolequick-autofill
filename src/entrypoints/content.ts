@@ -3,12 +3,12 @@ import { isGreenhouseApplicationPage, extractGreenhouseJdText, fillGreenhouseApp
 import { isAshbyApplicationPage, extractAshbyJdText, fillAshbyApplication } from '../lib/adapters/ashby';
 import {
   isWorkdayApplicationPage, extractWorkdayJdText, fillWorkdayApplication,
-  isWorkdayAccountCreationPage, fillWorkdayAccountCreation,
+  isWorkdayAccountCreationPage, fillWorkdayAccountCreation, isWorkdayCreateAccountStage,
   isWorkdayStartScreen, findApplyManuallyButton,
 } from '../lib/adapters/workday';
 import { isLinkedInApplicationPage, extractLinkedInJdText, fillLinkedInApplication } from '../lib/adapters/linkedin';
 import { isLikelyApplicationForm, extractGenericJdText, getGenericJobDetails, fillGenericApplication, drainR030CandidateLabels } from '../lib/adapters/generic';
-import { getAutoSubmitEnabled } from '../lib/storage';
+import { getAutoSubmitEnabled, getPortalAccounts, recordPortalAccount } from '../lib/storage';
 import { selectNeedsYouReasons, skippedReasonsNeedReview } from '../lib/autosubmit-gate';
 import {
   extractValidationErrors,
@@ -32,6 +32,7 @@ import {
   createSubmissionOutcomeController,
 } from '../lib/application-task-controller';
 import { mountThinkingOrb } from '../lib/thinking-orb';
+import { derivePortalPassword, portalKeyForHost, currentSaltFingerprint } from '../lib/portal-password';
 
 export default defineContentScript({
   matches: [
@@ -1460,7 +1461,41 @@ export default defineContentScript({
               stopOrbAnd(() => { if (statusEl) statusEl.textContent = result?.error || 'Could not load your account data.'; });
               return;
             }
-            const fillResult = await fillWorkdayAccountCreation({ email: result.email });
+            // Only type a password where Litos KNOWS it is the right one: a genuine create-account
+            // stage (we are setting it right now), or a sign-in form for an account Litos itself
+            // provisioned under the salt still in place. Everything else - account created by hand,
+            // created before this feature, created on another device, salt drifted from a cross-tab
+            // race - falls through to email-only. Submitting a wrong password is what gets a student
+            // locked out of their own Workday account, so "don't know" always means "don't fill".
+            // Nothing here touches storage unless a password is actually in play, so the salt is not
+            // conjured into existence just by opening the card.
+            const portalHost = portalKeyForHost(window.location.hostname);
+            const creatingAccount = isWorkdayCreateAccountStage();
+            const knownAccount = (await getPortalAccounts())[portalHost];
+            let password: string | undefined;
+            let passwordWithheldReason: string | undefined;
+            if (creatingAccount || knownAccount) {
+              const saltFingerprint = await currentSaltFingerprint();
+              if (creatingAccount || knownAccount?.saltFingerprint === saltFingerprint) {
+                password = await derivePortalPassword(portalHost);
+              } else {
+                passwordWithheldReason =
+                  'password: left for you to enter - this account was set up on another device, so Litos cannot reproduce its password here';
+              }
+              if (creatingAccount && password) {
+                await recordPortalAccount({ host: portalHost, saltFingerprint, createdAt: Date.now() });
+              }
+            } else {
+              // Signing in to an account Litos never provisioned: created by hand, created before
+              // this feature, or created through Workday's "Sign in with Google" path, where there
+              // is no password at all. Guessing here is what locks students out.
+              passwordWithheldReason = 'password: left for you to enter - Litos did not create this account';
+            }
+            const fillResult = await fillWorkdayAccountCreation({
+              email: result.email,
+              password,
+              passwordWithheldReason,
+            });
 
             chrome.runtime.sendMessage({
               type: 'AUTOFILL_EVENT',

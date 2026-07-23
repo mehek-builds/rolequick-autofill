@@ -37,6 +37,7 @@ import {
   blockAlreadyAnswered,
   firstNonEmptyText,
   unattachableDocumentReasons,
+  isHoneypotField,
 } from './shared/dom';
 import { gradeQuestion, gradeReviewReason, gradeSkipReason } from './grades';
 import { isDraftTargetAvailable, runDraftQueue } from './shared/drafts';
@@ -163,6 +164,25 @@ export function isWorkdayAccountCreationPage(): boolean {
   if (!h.includes('myworkdayjobs.com') && !h.includes('workday.com')) return false;
   if (!looksLikeApplyUrl()) return false;
   return hasAccountCreationMarkers();
+}
+
+// Create-account vs sign-in, which isWorkdayAccountCreationPage() deliberately does NOT separate
+// (it fires on both, because the guidance card is useful on either). That conflation was harmless
+// while only the email field was filled. It is NOT harmless once a password is involved: typing a
+// derived password into a RETURNING student's sign-in form submits a wrong password against an
+// account Litos never provisioned (created before this feature, created by hand, or created on
+// another device whose salt differs), and repeated wrong passwords get the Workday account locked.
+//
+// Workday's create-account form carries a confirm-password control (`verifyPassword`, or a second
+// password input); its sign-in form never does. That is the discriminator. Fall back to explicit
+// create-account copy only when no password input has rendered yet, and treat ambiguity as sign-in
+// - refusing to fill is always the safe failure mode here.
+export function isWorkdayCreateAccountStage(): boolean {
+  if (!isWorkdayAccountCreationPage()) return false;
+  if (document.querySelector('input[data-automation-id="verifyPassword"]')) return true;
+  if (document.querySelectorAll('input[type="password"]').length >= 2) return true;
+  if (document.querySelector('input[type="password"]')) return false; // exactly one: sign-in
+  return /create account|create an account/i.test(document.body.innerText);
 }
 
 // The "Start Your Application" triage screen most Workday tenants show before any of the
@@ -555,21 +575,32 @@ export async function fillWorkdayApplication(params: WorkdayFillParams): Promise
 
 export interface WorkdayAccountCreationParams {
   email?: string;
+  password?: string;
+  // Why the caller withheld a password, surfaced on the card so a blank password box reads as a
+  // deliberate handoff rather than a fill that quietly failed. Phrased with "left for" so the
+  // existing autosubmit-gate review classifier picks it up.
+  passwordWithheldReason?: string;
 }
 
-// Fills only the email field and stops - password is deliberately never touched here (2026-07-03
-// product decision: the student sets and enters their own password, clicks Create Account, and
-// completes email verification entirely on their own). This is the one Litos-fillable field on
-// the signup form, not a fill-and-stop pattern with a countdown to auto-submit - there's nothing
-// to auto-submit toward since the password field is always left for the student to fill by hand.
+// Fills email, and the derived portal password ONLY when the caller passes one. Supersedes the
+// 2026-07-03 "password never touched, student sets their own" decision: email-only kept Litos out
+// of credential custody but stranded every Workday account behind a password Litos could never
+// reproduce, so status checks and re-applies were impossible the moment a portal required auth.
+// The password comes from portal-password.ts (derived per-tenant, never stored at rest).
+//
+// This function does NOT decide whether a password is safe to type. content.ts owns that gate and
+// passes `password` only on a genuine create-account stage, or on a sign-in form for an account
+// Litos itself provisioned under the current salt. Everywhere else it passes nothing and this
+// degrades to the original email-only behavior. Still fill-and-stop, NOT auto-submit: Litos never
+// clicks Create Account and never touches email verification - the student completes both by hand.
 export async function fillWorkdayAccountCreation(params: WorkdayAccountCreationParams): Promise<AutofillResult> {
-  const { email } = params;
+  const { email, password, passwordWithheldReason } = params;
   let fields_filled = 0;
   let fields_skipped = 0;
   const skipped_reasons: string[] = [];
 
   const emailEl = document.querySelector<HTMLInputElement>('input[data-automation-id="email"], input[type="email"]');
-  if (emailEl && !emailEl.value) {
+  if (emailEl && !emailEl.value && !isHoneypotField(emailEl)) {
     if (email) {
       await fillField(emailEl, email);
       fields_filled++;
@@ -577,6 +608,33 @@ export async function fillWorkdayAccountCreation(params: WorkdayAccountCreationP
       fields_skipped++;
       skipped_reasons.push('email: not present in stored profile');
     }
+  }
+
+  // Password + confirm: Workday renders `password` and `verifyPassword` automation-ids on the signup
+  // step. querySelectorAll returns each node once even when it matches two of the selectors, so the
+  // `password` id and the `type="password"` fallback never double-fill the same input. Password and
+  // confirm count as ONE filled field, not two - the card reports what the student conceptually
+  // provided, and "Filled 3 fields" on a two-question form reads as a bug.
+  if (!password && document.querySelector('input[type="password"]')) {
+    // A password box is on screen and Litos is deliberately not touching it. Say so: a silently
+    // blank field is indistinguishable from a fill that broke, and the student needs to know this
+    // one is theirs to complete.
+    fields_skipped++;
+    skipped_reasons.push(passwordWithheldReason ?? 'password: left for you to enter');
+  }
+
+  if (password) {
+    const pwEls = [...document.querySelectorAll<HTMLInputElement>(
+      'input[data-automation-id="password"], input[data-automation-id="verifyPassword"], input[type="password"]',
+    )].filter((el) => !isHoneypotField(el));
+    let wrotePassword = false;
+    for (const pwEl of pwEls) {
+      if (!pwEl.value) {
+        await fillField(pwEl, password);
+        wrotePassword = true;
+      }
+    }
+    if (wrotePassword) fields_filled++;
   }
 
   return { ats_name: 'workday', fields_filled, fields_skipped, ai_drafted: 0, skipped_reasons };
