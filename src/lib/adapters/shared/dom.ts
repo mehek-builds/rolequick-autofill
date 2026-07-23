@@ -68,6 +68,21 @@ export function isHoneypotField(el: HTMLElement): boolean {
   if (HONEYPOT_IDENTITY.test(identity)) return true;
   if (HONEYPOT_COPY.test(el.closest('div,label,fieldset,form')?.textContent ?? '')) return true;
 
+  // Combobox typeahead inputs are NEVER honeypots, and they look exactly like one to the structural
+  // check below: react-select and friends render the query input absolutely positioned and about a
+  // pixel wide until it is focused. openCombobox() seeds those through setNativeValue, so without
+  // this exemption the guard would silently break location, school, and every other autocomplete on
+  // every adapter - a regression no jsdom test would catch, because the combobox tests stub rects on
+  // the options and leave the input at 0x0/static.
+  if (
+    el.getAttribute('role') === 'combobox' ||
+    el.hasAttribute('aria-autocomplete') ||
+    el.hasAttribute('aria-controls') ||
+    el.closest('[class*="select__"], [class*="Select-"], [role="combobox"]')
+  ) {
+    return false;
+  }
+
   // Structural: an absolutely-positioned control collapsed to roughly nothing is being hidden from
   // humans while staying in the DOM for scripts to trip over.
   const style = getComputedStyle(el);

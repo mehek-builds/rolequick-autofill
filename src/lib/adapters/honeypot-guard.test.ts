@@ -137,3 +137,36 @@ describe('generic adapter fill against a live-shaped honeypot', () => {
     expect(result.fields_filled).toBeGreaterThan(0);
   });
 });
+
+// Regression guard for the combobox exemption. react-select renders its query input absolutely
+// positioned and ~1px wide until focused, which is structurally identical to a honeypot. Without
+// the exemption, openCombobox()'s setNativeValue seed would be dropped and every autocomplete
+// (location, school, degree) would silently stop working on every adapter.
+describe('combobox typeahead inputs are never treated as bot traps', () => {
+  it('exempts a react-select style query input that looks 1px and absolute', () => {
+    const wrap = document.createElement('div');
+    wrap.className = 'select__control';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.setAttribute('role', 'combobox');
+    input.setAttribute('aria-autocomplete', 'list');
+    input.style.cssText = 'position:absolute;width:1px;height:1px';
+    stubRect(input, 1, 1);
+    wrap.appendChild(input);
+    document.body.appendChild(wrap);
+
+    expect(isHoneypotField(input)).toBe(false);
+    setNativeValue(input, 'Dubai');
+    expect(input.value).toBe('Dubai');
+  });
+
+  it('still traps a beecatcher even when it sits inside a select container', () => {
+    const wrap = document.createElement('div');
+    wrap.className = 'select__control';
+    const trap = honeypotInput();
+    wrap.appendChild(trap);
+    document.body.appendChild(wrap);
+    // Identity match runs before the exemption, so a named trap is caught regardless of ancestry.
+    expect(isHoneypotField(trap)).toBe(true);
+  });
+});
