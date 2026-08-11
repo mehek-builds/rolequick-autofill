@@ -274,7 +274,7 @@ describe('desiredAnswer: age-of-majority phrasing (fix #15)', () => {
 
 /* The extension and the backend are two readers of the same form, and the 18+ attestation is the
  * one question where disagreeing is a false legal declaration rather than a blank field. These
- * pin the extension's copy to the backend's (volley-backend src/lib/questionDiscovery.ts,
+ * pin the extension's copy to the backend's (student-outreach-backend src/lib/questionDiscovery.ts,
  * ageAttestationAnswer): each case below is one the two answered DIFFERENTLY before this change. */
 describe('ageOfMajorityAnswer: parity with the backend attestation rule', () => {
   const NOW = new Date('2026-08-09T23:59:59Z');

@@ -601,7 +601,7 @@ export function applicationDecisionSkipReason(context: string): string {
 
 /* THE 18+ ATTESTATION, both framings.
  *
- * Kept deliberately in step with the backend's copy (volley-backend
+ * Kept deliberately in step with the backend's copy (student-outreach-backend
  * src/lib/questionDiscovery.ts, AGE_ATTESTATION_QUESTION). Two readers of the same form that
  * disagree about whether a question is even an age question is the defect this pair keeps
  * re-learning, so the alternatives here are the backend's, verbatim: "18+", "eighteen",
