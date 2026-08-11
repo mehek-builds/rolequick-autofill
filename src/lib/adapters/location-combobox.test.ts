@@ -86,6 +86,15 @@ function asyncLocationPicker(opts: {
   return { entry, input, typed, clicked };
 }
 
+// The student typing into the same box mid-drive: the prototype setter plus a bubbling input event,
+// which is what a real keystroke looks like to everything downstream of the widget. Nothing marks
+// it as hers, which is the point - the driver has to tell it apart from its own writes by content
+// alone, exactly as it would live.
+function studentTypes(input: HTMLInputElement, text: string): void {
+  nativeSet.call(input, text);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 beforeEach(() => {
   document.body.innerHTML = '';
 });
@@ -213,7 +222,71 @@ describe('driveAsyncLocationCombobox', () => {
     });
     const got = await driveAsyncLocationCombobox(w.input, locationComboQueries('city', profile), w.entry, 800, 40);
     expect(got).toBeNull();
-    expect(w.input.value).toBe('');
+    // Refused, but NOT erased. "Berlin, Germany" is the widget's own text - it replaced our query
+    // after a real click, so the box is no longer ours to write to (the same rule pickComboOption
+    // states for the sibling widgets: a commit means the widget owns its box). This site cannot
+    // blank on principle either: the verify loop it sits in is 1500ms of pauses during which the
+    // student can type, and her keystrokes read back exactly as "unrelated" as this does. So the
+    // contract here is the refusal - no fill is claimed, the caller flags the field, and she sees
+    // the wrong value sitting in it rather than a box we silently emptied behind her.
+    expect(w.input.value).toBe('Berlin, Germany');
+  });
+});
+
+// The abandon path is a WRITE into a box the student can be typing in at the same moment, so the
+// half that matters is what it must NOT overwrite. The driver polls up to 4000ms per query and then
+// verifies for another 1500ms, and every pause in there is a window she can use; a bare clear at the
+// end of all that deletes whatever it finds. These lock the same restore-not-blank, only-our-own-
+// text discipline that PR #90 gave the sibling widgets (openCombobox / closeOpenCombobox).
+describe('driveAsyncLocationCombobox: the abandon path only ever retracts its OWN text', () => {
+  it('a box that arrived with a value is RESTORED, not blanked', async () => {
+    // A resumed application: Location already reads a committed answer of hers. Probing it types
+    // over that value, and a failed probe that clears the box has silently deleted an answer the
+    // form was holding - a data loss she never sees until submit bounces on an empty required
+    // field. The equality guard alone cannot save her here; only remembering what was there can.
+    const w = asyncLocationPicker({ optionsFor: () => ['United States'] });
+    nativeSet.call(w.input, 'New York, United States');
+
+    const got = await driveAsyncLocationCombobox(w.input, locationComboQueries('city', profile), w.entry, 800, 40);
+
+    expect(got).toBeNull();
+    expect(w.clicked).toEqual([]);
+    expect(w.input.value).toBe('New York, United States');
+  });
+
+  it('text the student typed during the poll is left exactly alone', async () => {
+    // Single query, so one write and one long poll. She types her own location while the lookup is
+    // in flight; by the time the poll gives up, the box holds HER text and not ours. Retracting
+    // then would blank a field she is actively filling in, on screen, mid-keystroke.
+    const w = asyncLocationPicker({ optionsFor: () => [] });
+    setTimeout(() => studentTypes(w.input, 'Paris, France'), 120);
+
+    const got = await driveAsyncLocationCombobox(
+      w.input,
+      locationComboQueries('country', profile),
+      w.entry,
+      500,
+      40,
+    );
+
+    expect(got).toBeNull();
+    expect(w.input.value).toBe('Paris, France');
+  });
+
+  it('her mid-poll text survives even when a second, barer query is typed over it', async () => {
+    // The two-query path: the fuller query renders nothing, so the driver falls through and types
+    // the bare unit over whatever the box holds now - which is hers. Capturing the prior value per
+    // query, not once before the loop, is what lets the final abandon hand it back.
+    const w = asyncLocationPicker({ optionsFor: () => [] });
+    setTimeout(() => studentTypes(w.input, 'Paris, France'), 120);
+
+    const queries = locationComboQueries('city', profile);
+    expect(queries).toHaveLength(2);
+    const got = await driveAsyncLocationCombobox(w.input, queries, w.entry, 300, 40);
+
+    expect(got).toBeNull();
+    expect(w.typed).toContain('Dubai');
+    expect(w.input.value).toBe('Paris, France');
   });
 });
 

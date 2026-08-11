@@ -948,9 +948,17 @@ export function matchLocationOption(options: ComboOption[], query: string): Comb
 // A failed drive must not leave a filled-LOOKING input. The typed query is visible in the box but
 // nothing was committed, which is exactly the lie the register documents (value="Dubai", form
 // holds nothing) - and worse here, because the card is about to say "left for you" about a field
-// the student sees as full. Clear it and close any open menu so what she sees matches the flag.
-function abandonTypedQuery(input: HTMLInputElement): null {
-  setNativeValue(input, '');
+// the student sees as full. Retract it and close any open menu so what she sees matches the flag.
+//
+// Same discipline as retractPendingQueries above, and for the same two reasons. RESTORE rather than
+// blank: this driver overwrites whatever the box held, and on a resumed application that is a
+// committed answer of the student's, which a bare clear would silently delete. And restore ONLY
+// while the input is still connected and still holds VERBATIM the query we wrote: every await in
+// the caller's poll (up to 4000ms per query) and in its verify loop is a window in which she can
+// type into this same box, and the moment its content is no longer our text it is hers, not ours to
+// touch. `wrote` is captured per query by the caller for exactly that reason.
+function abandonTypedQuery(input: HTMLInputElement, wrote: { text: string; previous: string }): null {
+  if (input.isConnected && input.value === wrote.text) setNativeValue(input, wrote.previous);
   closeOpenCombobox();
   return null;
 }
@@ -984,12 +992,19 @@ export async function driveAsyncLocationCombobox(
   // fullest-first; a later, barer query only gets typed when the fuller one rendered nothing
   // (preloaded pickers filter by containment and need the bare unit).
   let options: ComboOption[] = [];
-  let typed = '';
+  // What we last TYPED into this box, and what the box held immediately before we wrote it - the
+  // pair abandonTypedQuery needs to put the field back instead of blanking it.
+  let wrote = { text: '', previous: '' };
   for (const query of queries) {
-    typed = query;
     input.focus();
     pressSequence(input);
     input.click();
+    // Re-read `previous` per query rather than capturing it once before the loop. A query that
+    // renders nothing falls through to a barer one, and between the two sits a whole poll's worth
+    // of pauses in which the student can type into this very box; whatever it holds now is HERS
+    // and must survive the abandon, unless it is verbatim the query we wrote last time round, in
+    // which case the value worth restoring is still the one from before we ever typed.
+    wrote = { text: query, previous: input.value === wrote.text ? wrote.previous : input.value };
     setNativeValue(input, query);
     // Poll for the async listbox - never a fixed sleep. ~700ms is the measured latency; the
     // budget is a few multiples of it, and the poll exits the moment options render.
@@ -1004,7 +1019,7 @@ export async function driveAsyncLocationCombobox(
   // Match against the FULLEST query regardless of which one rendered the options: it names every
   // stored unit, so it is the strictest containment test available.
   const match = matchLocationOption(options, queries[0]);
-  if (!match) return abandonTypedQuery(input);
+  if (!match) return abandonTypedQuery(input, wrote);
 
   // Commit with a real element.click(). E-009 caught synthetic-only mouse events not landing on
   // React handlers, and the harness run that proved this sequence used a real click; the pointer
@@ -1023,17 +1038,17 @@ export async function driveAsyncLocationCombobox(
       input.getAttribute('aria-expanded') !== 'true' && readRenderedOptions(input).length === 0;
     if (settled) {
       const got = readCommittedValue(input, scope);
-      if (!got) return abandonTypedQuery(input);
+      if (!got) return abandonTypedQuery(input, wrote);
       const g = normalizeOptionText(got);
       const opt = normalizeOptionText(match.text);
-      const q = normalizeOptionText(typed);
+      const q = normalizeOptionText(wrote.text);
       // The committed text must be RELATED to what was chosen or asked for, in either containment
       // direction. Anything else means the widget committed something we did not choose - report
       // that as not-committed and let the human see the flag, never claim it as a fill.
       if (g === opt || opt.includes(g) || g.includes(opt) || q.includes(g) || g.includes(q)) return got;
-      return abandonTypedQuery(input);
+      return abandonTypedQuery(input, wrote);
     }
-    if (Date.now() >= verifyDeadline) return abandonTypedQuery(input);
+    if (Date.now() >= verifyDeadline) return abandonTypedQuery(input, wrote);
     await pause(pollMs);
   }
 }
